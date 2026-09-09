@@ -1,590 +1,801 @@
-from tkinter import IntVar
-import time
-from typing import Any, Dict, List
-from modules.eip import PLC
-from threading import Lock, Thread
-from logging import getLogger, Logger
-from modules.logging.log_utils import LOGGER_NAME
-from Motor import Motor
-from os import getcwd
-from datetime import date
-from database.database import query_database, update_database
+"""Application state and every command that reaches the machine.
 
-# Authors / Changes Made: TEAM D, COMP523 Fall 23
+The model owns the motor sets, the machine state, and the worker thread that
+talks to the PLC.  Screens call the commands here and are told what happened
+through a :class:`UiBridge`; they never touch the PLC themselves and never wait
+on it, so the window stays responsive while the machine works.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from enum import Enum
+from logging import Logger, getLogger
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol
+
+from app import params, paths, plc as plc_module, tags
+from app.plc import PlcError, Transport
+from Motor import Motor
+from modules.logging.log_utils import LOGGER_NAME
+
+LOGGER: Logger = getLogger(LOGGER_NAME)
+
+# --- Timings -----------------------------------------------------------------
+# The PLC acts on a command bit while it is held high, so the application sets a
+# bit, waits, and clears it.  These are the wait lengths the machine has always
+# been driven with.  They are named constants so the test suite can shorten them
+# and so nobody has to guess what a bare ``time.sleep(5)`` was waiting for.
+
+#: How long Motor_Boot is held high to boot the drives.
+BOOT_PULSE_SECONDS = 5.0
+#: How long Clear_Motor_Error is held high to clear motion faults.
+CLEAR_FAULT_SECONDS = 5.0
+#: How long Run_1 is held high for one stroke.
+SINGLE_STROKE_SECONDS = 5.0
+#: How long Run_Curve is held high for one curve run.
+CURVE_SECONDS = 5.0
+#: Gap between polls of the drives while homing.
+HOME_POLL_SECONDS = 5.0
+#: Polls allowed on the settling pass and on the real pass.
+HOME_SETTLE_POLLS = 2
+HOME_POLLS = 7
+
+
+class MachineState(Enum):
+    """Where the machine is in the prepare-run-stop cycle.
+
+    This replaces the bare integers ``-1``, ``0``, ``1`` and ``2`` that used to
+    be assigned in twenty places, several of which disagreed about what each
+    number meant.
+    """
+
+    #: No pistons chosen yet.
+    IDLE = "idle"
+    #: Sets defined but not written and homed. "Prepare" is the next step.
+    READY = "ready"
+    #: Writing parameters or homing. Everything is disabled.
+    PREPARING = "preparing"
+    #: Written and homed. Safe to start.
+    HOMED = "homed"
+    #: Pistons are moving.
+    RUNNING = "running"
+
+
+class RunMode(Enum):
+    SINGLE = "single"
+    CONTINUOUS = "continuous"
+    CURVE = "curve"
+
+
+class UiBridge(Protocol):
+    """How the model reports back to whatever is displaying it.
+
+    Every method is called from the worker thread, so an implementation that
+    drives Tk must hop back to the main thread (see ``View.post``).
+    """
+
+    def status(self, message: str) -> None: ...
+    def state_changed(self, state: "MachineState") -> None: ...
+    def progress(self, fraction: float, label: str) -> None: ...
+    def progress_done(self, artifact: Optional[str]) -> None: ...
+    def problem(self, title: str, message: str) -> None: ...
+
+
+class NullBridge:
+    """A bridge that records instead of displaying. Used before the UI exists,
+    and by the tests."""
+
+    def __init__(self) -> None:
+        self.messages: List[str] = []
+        self.states: List[MachineState] = []
+        self.problems: List[tuple] = []
+
+    def status(self, message: str) -> None:
+        self.messages.append(message)
+
+    def state_changed(self, state: "MachineState") -> None:
+        self.states.append(state)
+
+    def progress(self, fraction: float, label: str) -> None:
+        pass
+
+    def progress_done(self, artifact: Optional[str]) -> None:
+        pass
+
+    def problem(self, title: str, message: str) -> None:
+        self.problems.append((title, message))
+        LOGGER.error("%s: %s", title, message)
+
+
+class MotorSet:
+    """A group of pistons that run together with the same parameters.
+
+    Sets are the reason this application exists: the lab needs several groups of
+    pistons moving with different parameters at the same time.  Each set keeps
+    its own parameters, which is what makes that possible -- the previous
+    version applied every edit to every set at once, so a second set could only
+    ever be a copy of the first.
+    """
+
+    def __init__(self, name: str, motors: Iterable[Motor]) -> None:
+        self.name = name
+        self.motors: Dict[int, Motor] = dict((m.axis, m) for m in motors)
+
+    def __len__(self) -> int:
+        return len(self.motors)
+
+    def __iter__(self) -> Iterator[Motor]:
+        return iter(self.motors.values())
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "MotorSet({0!r}, axes={1})".format(self.name, self.axes)
+
+    @property
+    def axes(self) -> List[int]:
+        return sorted(self.motors)
+
+    def describe(self) -> str:
+        return "{0}: motors {1}".format(self.name, ", ".join(str(a) for a in self.axes))
+
+    # -- parameters -----------------------------------------------------------
+
+    def set_param(self, name: str, value: int) -> None:
+        """Apply one parameter to every piston in this set, and no others."""
+        for motor in self:
+            motor.set_param(name, value)
+
+    def common_value(self, name: str) -> Optional[int]:
+        """The value of ``name`` if every piston agrees, otherwise ``None``.
+
+        A preset can give pistons in one set different values, so the entry box
+        needs a way to say "these differ" rather than silently showing the first
+        piston's value and overwriting the rest on the next keystroke.
+        """
+        values = set(motor.write_params.get(name) for motor in self)
+        if len(values) == 1:
+            return values.pop()
+        return None
+
+    def params_snapshot(self) -> Dict[str, Optional[int]]:
+        return dict((spec.name, self.common_value(spec.name)) for spec in params.PARAMS)
+
+    def validate(self) -> List[str]:
+        problems: List[str] = []
+        for motor in self:
+            problems.extend(motor.validate())
+        return problems
+
+    @property
+    def is_synced(self) -> bool:
+        return all(motor.is_synced for motor in self)
+
 
 class Model:
-    """Model class for organization of all motor and state variables."""
-    IP_ADDRESS: str = '192.168.1.1'
+    """Application state, and the only thing that issues machine commands."""
+
+    IP_ADDRESS: str = "192.168.1.1"
     PROCESSOR_SLOT: int = 1
-    LOGGER: Logger = getLogger(LOGGER_NAME)
-    ALL_PARAM_TIPS: List[str] = ['Position limits after homing are 370mm and - 20 mm',
-                                 'Position limits after homing are 370mm and - 20 mm',
-                                 'Velocity limits are 0 and approx. 900 mm/sec. \nDependant on Current(A) usage',
-                                 'Velocity limits are 0 and approx. 900 mm/sec. \nDependant on Current(A) usage',
-                                 'Acceleration and Deceleration are limited at 50,000 mm/s^2',
-                                 'Acceleration and Deceleration are limited at 50,000 mm/s^2',
-                                 'Acceleration and Deceleration are limited at 50,000 mm/s^2',
-                                 'Acceleration and Deceleration are limited at 50,000 mm/s^2',
-                                 'Jerk in general should be larger than the Acceleration and Deceleration mm/s^3',
-                                 'Jerk in general should be larger than the Acceleration and Deceleration mm/s^3',
-                                 'Default to 0',
-                                 'Default to 0',
-                                 'Trapazoidal(0) \nBestehorn(1) \nS-Curve(2) \nSin(3)',
-                                 'Absolute(0): Based on defined axis. \nIncremental(1): Moves the amount specified in position argument',
-                                 'Used for curves.',
-                                 'Used for curves.',
-                                 'Used for curves.',
-                                 'Used for curves.']
 
-    ALL_PARAMS: List[str] = ['Position 1', 'Position 2', 'Speed 1', 'Speed 2', 'Accel 1', 'Accel 2', 'Decel 1', 'Decel 2', 'Jerk 1',
-                             'Jerk 2', 'Time 1', 'Time 2', 'Profile', 'Move Type', 'Curve ID', 'Time Scale', 'Amplitude Scale', 'Curve Offset']
+    LOGGER: Logger = LOGGER
+    #: Kept for screens and presets that iterate the parameter names.
+    ALL_PARAMS: List[str] = params.PARAM_NAMES
 
-    # VISUAL STATE VARIABLES
-    # diables start, stop and curve buttons when false
-    RUN_ENABLE: bool = False
-    # Dictionary of motor circles vizualized, key is motor num, value is ID in canvas
-    MOT_CIRCLES: Dict[int, Any]
+    def __init__(
+        self,
+        transport: Optional[Transport] = None,
+        is_live: Optional[bool] = None,
+        ip_address: Optional[str] = None,
+        processor_slot: Optional[int] = None,
+        simulate: bool = False,
+    ) -> None:
+        """Build the model.
 
-    # MODEL STATE VARIABLES
-    # on GUI startup the model determines if it is connected to motors
-    CONNECTED: bool = False
-    # which motors to interact with. This can also house non active motors
-    RECORD_ANALYTICS: bool = False
-    ANALYTICS_INTERVAL: float = 0.25
-    ANALYTICS_DURATION: float = 10.0
+        Passing ``transport`` skips the connection attempt entirely, which is
+        how the tests run.  Otherwise the PLC is not contacted here at all: the
+        probe costs up to five seconds when the machine is off, and doing it in
+        the constructor meant the window could not appear until it finished.
+        :meth:`startup` connects from the worker thread instead, and until it
+        does the model is pointed at a simulator so nothing can be left
+        holding ``None``.
+        """
+        self.ip_address = ip_address or self.IP_ADDRESS
+        self.processor_slot = (
+            processor_slot if processor_slot is not None else self.PROCESSOR_SLOT
+        )
+        self._simulate = simulate
+        #: False until :meth:`startup` has tried to reach the PLC.
+        self._connection_attempted = transport is not None
 
-    motdict: Dict[int, int]
-    # The list of motors which are active
-    live_motors: Dict[int, Motor]
-    live_motors_sets: List[Dict[int, Motor]]
-    live_motors_params: List[Dict[str, int]]
-    # Dictionary of attributes associated with each motor,column, or row
-    attrcat: Dict[int, Dict[str, IntVar]]
-    # Dictionary of attributes from CSV
-    csvattrcat:  Dict[str, str]
-    # Used for reading in csv
-    csvlist: List[Dict[str, str]]
+        if transport is not None:
+            self.plc: Transport = transport
+            self.is_live: bool = bool(is_live)
+        else:
+            self.plc = plc_module.SimulatedPlc()
+            self.is_live = False
 
-    # Motor on lock
-    on_lock: Lock
-    # Motor off lock
-    off_lock: Lock
-    # Motor home lock
-    home_lock: Lock
-    # Curve Lock
-    curve_lock: Lock
+        self.bridge: UiBridge = NullBridge()
 
-    def __init__(self):
-        """Initializes all state variables, connects to database, and runs live_motor_reset."""
-        self.motdict = {}
-        self.live_motors = {}
-        self.live_motors_sets=[]
-        self.attrcat = {}
-        self.csvattrcat = {}
-        self.csvlist = []
-        self.MOT_CIRCLES = {}
+        #: Which pistons are ticked in the grid but not yet grouped into a set.
+        self.selection: Dict[int, bool] = dict(
+            (axis, False) for axis in range(tags.MOTOR_COUNT)
+        )
+        #: Parameters the operator is editing for the pending selection.
+        self.pending_params: Dict[str, int] = params.defaults()
+        #: The confirmed sets, in the order they were created.
+        self.sets: List[MotorSet] = []
 
-        self.on_lock = Lock()
-        self.off_lock = Lock()
-        self.home_lock = Lock()
-        self.curve_lock = Lock()
+        self._state = MachineState.IDLE
+        self._busy = threading.Lock()
+        self._stop_requested = threading.Event()
+        self._current_command: Optional[str] = None
 
-        # UNPREPARED_STATE:0, HOMED_STATE:1, RUNNING_STATE:2
-        self.state = -1
+        #: Replaced in tests so commands run inline instead of on a thread.
+        self._spawn: Callable[[str, Callable[[], None]], None] = self._spawn_thread
 
-        # Reset Live motor array on the PLC to all 0s to ensure only operating on intended motors
-        # If the live_motor_reset fails then the motors are not actually connected
-        # we then set CONNECTED to false and run the program in a mock state
+        self.record_analytics: bool = False
+        self.analytics_interval: float = 0.25
+        self.analytics_duration: float = 10.0
+
+        paths.ensure_directories()
+
+    # -- wiring ---------------------------------------------------------------
+
+    def register_bridge(self, bridge: UiBridge) -> None:
+        self.bridge = bridge
+        self.bridge.state_changed(self._state)
+
+    # -- state ----------------------------------------------------------------
+
+    @property
+    def state(self) -> MachineState:
+        return self._state
+
+    def _set_state(self, state: MachineState) -> None:
+        if state is not self._state:
+            self._state = state
+            LOGGER.debug("State -> %s", state.value)
+        self.bridge.state_changed(state)
+
+    def _refresh_idle_state(self) -> None:
+        """Recompute the resting state after the set list or parameters change."""
+        if self._state in (MachineState.PREPARING, MachineState.RUNNING):
+            return
+        self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+
+    @property
+    def busy(self) -> bool:
+        return self._busy.locked()
+
+    @property
+    def all_motors(self) -> List[Motor]:
+        return [motor for motor_set in self.sets for motor in motor_set]
+
+    @property
+    def live_axes(self) -> List[int]:
+        return sorted(motor.axis for motor in self.all_motors)
+
+    # -- selecting pistons ----------------------------------------------------
+
+    def toggle(self, axis: int, selected: bool) -> None:
+        """Tick or untick a piston in the grid."""
+        if axis not in self.selection:
+            raise ValueError("No such motor: {0}".format(axis))
+        self.selection[axis] = bool(selected)
+
+    def selected_axes(self) -> List[int]:
+        return sorted(axis for axis, on in self.selection.items() if on)
+
+    def axis_owner(self, axis: int) -> Optional[MotorSet]:
+        """The set a piston already belongs to, if any."""
+        for motor_set in self.sets:
+            if axis in motor_set.motors:
+                return motor_set
+        return None
+
+    def set_pending_param(self, name: str, value: int) -> None:
+        """Record a parameter for the pistons that have not been grouped yet."""
+        spec = params.BY_NAME.get(name)
+        if spec is None:
+            raise KeyError("Unknown parameter: {0}".format(name))
+        problem = spec.validate(value)
+        if problem:
+            raise ValueError(problem)
+        self.pending_params[name] = value
+
+    def create_set(self, name: Optional[str] = None) -> MotorSet:
+        """Group the ticked pistons into a new set with the current parameters.
+
+        A piston can only be in one set: grouping it again would mean two sets
+        writing different parameters to the same drive, with whichever wrote
+        last silently winning.
+        """
+        axes = self.selected_axes()
+        if not axes:
+            raise ValueError("Tick at least one motor before creating a set.")
+
+        clashes = [
+            (axis, owner.name)
+            for axis, owner in ((axis, self.axis_owner(axis)) for axis in axes)
+            if owner is not None
+        ]
+        if clashes:
+            raise ValueError(
+                "Already in another set: "
+                + ", ".join(
+                    "motor {0} ({1})".format(axis, owner) for axis, owner in clashes
+                )
+            )
+
+        motors = []
+        for axis in axes:
+            motor = Motor(axis)
+            motor.update_params(self.pending_params)
+            motors.append(motor)
+
+        motor_set = MotorSet(name or "Set {0}".format(len(self.sets) + 1), motors)
+        self.sets.append(motor_set)
+
+        for axis in axes:
+            self.selection[axis] = False
+
+        LOGGER.log(15, "Created %s", motor_set.describe())
+        self._refresh_idle_state()
+        return motor_set
+
+    def remove_set(self, motor_set: MotorSet) -> None:
+        """Delete one set, freeing its pistons."""
+        if motor_set not in self.sets:
+            return
+        self.sets.remove(motor_set)
+        for index, remaining in enumerate(self.sets, start=1):
+            if remaining.name.startswith("Set "):
+                remaining.name = "Set {0}".format(index)
+        LOGGER.info("Removed %s", motor_set.name)
+        self._refresh_idle_state()
+
+    def mark_unprepared(self) -> None:
+        """Note that the machine no longer matches what the operator asked for.
+
+        Called after a parameter or set changes.  It never interrupts a run --
+        stopping the machine is an explicit action, not a side effect of typing.
+        """
+        if self._state in (MachineState.HOMED,):
+            self._set_state(MachineState.READY)
+        else:
+            self._refresh_idle_state()
+
+    # -- running commands -----------------------------------------------------
+
+    def _spawn_thread(self, name: str, work: Callable[[], None]) -> None:
+        threading.Thread(target=work, name=name, daemon=True).start()
+
+    def _command(self, name: str, work: Callable[[], None]) -> bool:
+        """Run ``work`` on the worker thread unless another command is running.
+
+        Returns False if the machine was busy.  This is what stops a second
+        click on "Prepare" from starting a second homing sequence alongside the
+        first -- previously each click spawned another thread, and two homing
+        loops would fight over the Home_Button bit.
+        """
+        if not self._busy.acquire(blocking=False):
+            LOGGER.warning(
+                "Ignored %s: %s is still running.", name, self._current_command
+            )
+            return False
+
+        self._current_command = name
+
+        def run() -> None:
+            try:
+                work()
+            except PlcError as exc:
+                LOGGER.error("%s failed: %s", name, exc)
+                self.bridge.problem("Machine error", str(exc))
+                self.bridge.status("{0} failed. See the Feedback tab.".format(name))
+                self._recover_after_failure()
+            except ValueError as exc:
+                LOGGER.error("%s rejected: %s", name, exc)
+                self.bridge.problem("Check the parameters", str(exc))
+                self.bridge.status("{0} cancelled.".format(name))
+                self._recover_after_failure()
+            except Exception as exc:  # pragma: no cover - last resort
+                LOGGER.exception("%s crashed: %s", name, exc)
+                self.bridge.problem("Unexpected error", str(exc))
+                self._recover_after_failure()
+            finally:
+                self._current_command = None
+                self._busy.release()
+
+        self._spawn(name, run)
+        return True
+
+    def _recover_after_failure(self) -> None:
+        """Put the state back somewhere the operator can act from."""
+        if self._state is MachineState.PREPARING:
+            self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+        else:
+            self.bridge.state_changed(self._state)
+
+    def _sleep(self, seconds: float) -> None:
+        """Wait, but wake early if a stop has been requested."""
+        self._stop_requested.wait(seconds)
+
+    # -- machine commands -----------------------------------------------------
+
+    def clear_faults(self) -> None:
+        """Pulse Clear_Motor_Error, which also clears drive motion faults."""
+        self.plc.write(tags.CLEAR_MOTOR_ERROR, 1)
+        self._sleep(CLEAR_FAULT_SECONDS)
+        self.plc.write(tags.CLEAR_MOTOR_ERROR, 0)
+        LOGGER.info("Motion faults cleared.")
+
+    def all_stop(self) -> None:
+        """Drop every run bit.
+
+        Writes zero to all three run bits, so Stop means stop regardless of
+        which mode was started.  The old stop path wrote Run_2 **high** and then
+        low, because it reused the same function for starting and stopping --
+        pressing Stop therefore commanded a moment of continuous motion first.
+        """
+        for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE):
+            self.plc.write(tag, 0)
+
+    def _clear_live_motors(self) -> None:
+        """Zero the Live_Motors array so only chosen pistons can be commanded."""
+        for axis in range(tags.MOTOR_COUNT):
+            self.plc.write(tags.live_motor(axis), 0)
+
+    def _mark_live_motors(self) -> None:
+        """Set the Live_Motors bit for every piston in a set, clear the rest."""
+        live = set(self.live_axes)
+        for axis in range(tags.MOTOR_COUNT):
+            self.plc.write(tags.live_motor(axis), 1 if axis in live else 0)
+
+    def motors_off(self) -> None:
+        """Stop everything, clear faults, and deselect every piston on the PLC.
+
+        This is the safe resting state and is what the application does at
+        startup and at shutdown.
+        """
+        self.all_stop()
+        self.plc.write(tags.HOME_BUTTON, 0)
+        self.clear_faults()
+        self._clear_live_motors()
+        LOGGER.info("Motors off; run bits and motion faults cleared.")
+
+    def boot_motors(self) -> None:
+        """Pulse Motor_Boot to energise the drives."""
+        self.plc.write(tags.MOTOR_BOOT, 1)
+        self._sleep(BOOT_PULSE_SECONDS)
+        self.plc.write(tags.MOTOR_BOOT, 0)
+        LOGGER.log(15, "Motors booted.")
+
+    # -- prepare --------------------------------------------------------------
+
+    def prepare(self) -> bool:
+        """Write parameters to the machine and home every piston.
+
+        This is step one of every run.  It validates first, so a typo is caught
+        before anything is energised rather than raising out of a worker thread
+        half-way through writing.
+        """
+        if not self.sets:
+            self.bridge.problem(
+                "Nothing to prepare",
+                "Add at least one motor set on the Define Motors tab first.",
+            )
+            return False
+
+        problems: List[str] = []
+        for motor_set in self.sets:
+            problems.extend(
+                "{0}: {1}".format(motor_set.name, problem)
+                for problem in motor_set.validate()
+            )
+        if problems:
+            self.bridge.problem("Check the parameters", "\n".join(problems))
+            return False
+
+        return self._command("Prepare", self._prepare_worker)
+
+    def _prepare_worker(self) -> None:
+        self._stop_requested.clear()
+        self._set_state(MachineState.PREPARING)
+
+        self.bridge.status("Selecting motors...")
+        self._mark_live_motors()
+
+        self.bridge.status("Clearing motion faults...")
+        self.clear_faults()
+
+        self.bridge.status("Booting motors...")
+        self.boot_motors()
+
+        total = len(self.all_motors)
+        written = 0
+        for motor_set in self.sets:
+            for motor in motor_set:
+                written += 1
+                self.bridge.status(
+                    "Writing parameters {0}/{1} ({2})...".format(
+                        written, total, motor_set.name
+                    )
+                )
+                motor.write_to(self.plc)
+        LOGGER.log(15, "Parameters written to %s motors.", total)
+
+        if self._home_motors():
+            self._set_state(MachineState.HOMED)
+            self.bridge.status("Motors homed and ready to run.")
+            LOGGER.log(15, "Motors homed.")
+        else:
+            self._set_state(MachineState.READY)
+
+    def _home_motors(self) -> bool:
+        """Home every piston. Returns True once all drives report homed.
+
+        Homing runs twice on purpose.  The first pass is short and exists
+        because the pistons have been observed to home against a high position
+        if commanded from certain starting states; the second pass is the one
+        that counts.  The reason has never been established, so the behaviour is
+        kept as-is -- see docs/OPERATING.md.
+        """
+        passes = ((HOME_SETTLE_POLLS, False), (HOME_POLLS, True))
+
+        for polls, is_final in passes:
+            if self._stop_requested.is_set():
+                self.bridge.status("Homing cancelled.")
+                return False
+
+            self.plc.write(tags.HOME_BUTTON, 0)
+            self._sleep(HOME_POLL_SECONDS)
+            self.plc.write(tags.HOME_BUTTON, 1)
+
+            homed = False
+            try:
+                for poll in range(1, polls + 1):
+                    if self._stop_requested.is_set():
+                        break
+                    self.bridge.status(
+                        "Homing motors, pass {0} of 2 ({1}s)...".format(
+                            2 if is_final else 1, int(poll * HOME_POLL_SECONDS)
+                        )
+                    )
+                    # Keeps the CIP session alive through a long quiet poll.
+                    self.plc.keepalive()
+                    self._sleep(HOME_POLL_SECONDS)
+
+                    if all(motor.is_homed(self.plc) for motor in self.all_motors):
+                        homed = True
+                        break
+            finally:
+                self.plc.write(tags.HOME_BUTTON, 0)
+
+            if is_final:
+                if not homed:
+                    timeout = int(polls * HOME_POLL_SECONDS)
+                    message = "Motors did not home within {0} seconds.".format(timeout)
+                    LOGGER.error(message)
+                    self.bridge.status(message)
+                    self.bridge.problem("Homing failed", message)
+                return homed
+
+        return False
+
+    # -- running --------------------------------------------------------------
+
+    def start(self, mode: RunMode) -> bool:
+        """Start the machine in the given mode."""
+        if self._state is not MachineState.HOMED:
+            self.bridge.problem(
+                "Not ready",
+                "Press Prepare Motor(s) first: parameters must be written and "
+                "the pistons homed before they can run.",
+            )
+            return False
+        return self._command("Start", lambda: self._start_worker(mode))
+
+    def _start_worker(self, mode: RunMode) -> None:
+        self._stop_requested.clear()
+
+        # Parameters may have been edited since homing. Push the differences
+        # rather than making the operator home the machine again.
+        changed = [m for m in self.all_motors if not m.is_synced]
+        if changed:
+            self.bridge.status("Updating {0} changed motor(s)...".format(len(changed)))
+            for motor in changed:
+                motor.write_to(self.plc)
+
+        if mode is RunMode.SINGLE:
+            self._set_state(MachineState.RUNNING)
+            self.bridge.status("Running one stroke...")
+            self.plc.write(tags.RUN_SINGLE, 1)
+            self._sleep(SINGLE_STROKE_SECONDS)
+            self.plc.write(tags.RUN_SINGLE, 0)
+            LOGGER.log(15, "Single stroke complete.")
+            self._set_state(MachineState.HOMED)
+            self.bridge.status("Stroke complete. Ready to run again.")
+
+        elif mode is RunMode.CURVE:
+            if self.plc.read(tags.RUN_CURVE):
+                LOGGER.warning("A curve is already running; ignoring.")
+                return
+            self._set_state(MachineState.RUNNING)
+            self.bridge.status("Running curve...")
+            self.plc.write(tags.RUN_CURVE, 1)
+            try:
+                if self.record_analytics:
+                    self._record_positions(CURVE_SECONDS)
+                else:
+                    self._sleep(CURVE_SECONDS)
+            finally:
+                self.plc.write(tags.RUN_CURVE, 0)
+            LOGGER.log(15, "Curve complete.")
+            self._set_state(MachineState.HOMED)
+            self.bridge.status("Curve complete. Ready to run again.")
+
+        else:  # continuous
+            self._set_state(MachineState.RUNNING)
+            self.plc.write(tags.RUN_CONTINUOUS, 1)
+            LOGGER.log(15, "Continuous motion started.")
+            self.bridge.status("Running continuously. Press Stop when finished.")
+            if self.record_analytics:
+                self._record_positions(self.analytics_duration)
+
+    def stop(self) -> bool:
+        """Stop the machine.
+
+        Deliberately does not go through :meth:`_command`: Stop must work while
+        another command holds the worker, which is exactly when it is needed.
+        The run bits are written straight away on the calling thread.
+        """
+        self._stop_requested.set()
         try:
-            self.live_motor_reset()
-            self.CONNECTED = True
-        except:
-            self.CONNECTED = False
+            self.all_stop()
+        except PlcError as exc:
+            LOGGER.critical("STOP FAILED: %s", exc)
+            self.bridge.problem(
+                "Stop failed",
+                "The machine did not acknowledge the stop command:\n{0}\n\n"
+                "Use the physical stop and check the connection.".format(exc),
+            )
+            return False
 
-    # Runs when any checkButton is ticked, creates motdict: {motor number: ON/OFF (1/0)}
-    def onCheck(self, motnum: int, IO: IntVar):
-        if(self.motdict[motnum] != 2):
-            self.motdict[motnum] = IO.get()
+        LOGGER.log(15, "Motors stopped.")
+        self.bridge.status("Motors stopped.")
+        if self._state in (MachineState.RUNNING, MachineState.PREPARING):
+            self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
+        return True
 
-    def check_run_enable(self):
-        if (len(self.live_motors_sets) == 0) and (len(self.live_motors) == 0):
-            self.RUN_ENABLE = False
-        else:
-            for set in self.live_motors_sets:
-                for motor in set.values():
-                    self.RUN_ENABLE = True
-                    if not motor.valid_write_dict():
-                        self.RUN_ENABLE = False
+    # -- analytics ------------------------------------------------------------
 
-    def write_success(self) -> bool:
-        for set in self.live_motors_sets:
-            for motor in set.values():
-                if not motor.write_success:
-                    return False
-            return True
+    def _record_positions(self, duration: float) -> None:
+        """Sample demanded and actual position while the machine runs.
 
-    def written_matches_current(self) -> bool:
-        for set in self.live_motors_sets:
-            for motor in set.values():
-                for attr in motor.write_params:
-                    if motor.write_params[attr] != motor.current_params[attr]:
-                        return False
-            return True
+        Writes a table to ``analytics/<date>.txt`` and, if MongoDB happens to be
+        running locally, adds the same data there.  The columns are taken from
+        the same motor list the samples are, which they were not before: the
+        header iterated the sets while the rows iterated a separate dictionary,
+        so the numbers could sit under the wrong headings.
+        """
+        motors = self.all_motors
+        if not motors:
+            return
 
+        interval = max(self.analytics_interval, 0.01)
+        target = paths.analytics_file()
+        samples: Dict[str, Dict[str, Dict[str, float]]] = dict(
+            ("Motor {0}".format(m.axis), {}) for m in motors
+        )
 
-    def register_view(self, view):
-        self.view = view
-
-    def notify_view(self):
-        self.view.update_button_status()
-
-    def motor_on(self):
-        """Flip the boolean motor on switch in the PLC code."""
-        #self.on_lock.acquire()
-        if self.CONNECTED:
-            with PLC() as comm:
-                comm.IPAddress = self.IP_ADDRESS
-                comm.ProcessorSlot = self.PROCESSOR_SLOT
-                motor_on_bool = comm.Read('Program:Wave_Control.Motor_Boot')
-                # Writes a 1 to the boolean switch Motor_Boot. The PLC code then executes this command
-                comm.Write('Program:Wave_Control.Motor_Boot', 1)
-                # wait 5 seconds for the command to happen
-                time.sleep(5)
-                # Write a 0 to the boolean switch Motor_Boot to stop execution
-                comm.Write('Program:Wave_Control.Motor_Boot', 0)
-                self.LOGGER.log(15, 'Motor(s) turned ON')
-        else:
-            self.LOGGER.log(15, 'Motor(s) mock turned ON')
-        self.RUN_ENABLE = True
-        #self.on_lock.release()
-
-    def motor_off(self):
-        """Turning off the motors also calls an error clearing method in the PLC code.
-        To clear errors the motor_off function should be called.
-        It should be called before turning on the motors to clear errors."""
-        self.off_lock.acquire()
-        if self.CONNECTED:
-            with PLC() as comm:
-                comm.IPAddress = self.IP_ADDRESS
-                comm.ProcessorSlot = self.PROCESSOR_SLOT
-                # Writes a 1 to the boolean switch Clear_Motor_Error. The PLC executes the correspinding code
-                comm.Write('Program:Wave_Control.Clear_Motor_Error', 1)
-                # Wait 5 seconds
-                time.sleep(5)
-                # Turn the Clear_Motor_Error switch off.
-                comm.Write('Program:Wave_Control.Clear_Motor_Error', 0)
-                self.LOGGER.info(
-                    "Motor(s) Turned Off and Motion Faults Cleared")
-                # Call motion method to stop motors and reset the run Rung in Studio 5000
-                # The 2 for Run_2 and the 1 for tracker
-                self.motion(2, 1)
-                comm.Write('Program:Wave_Control.Run_1', 0)
-                comm.Write('Program:Wave_Control.Run_2', 0)
-                comm.Write('Program:Wave_Control.Clear_Motor_Error', 0)
-                comm.Write('Program:Wave_Control.Home_Button', 0)
-                comm.Write('Program:Wave_Control.Run_Curve', 0)
-            self.live_motor_reset()
-        else:
-            self.live_motor_reset_mock()
-            time.sleep(5)
-            self.LOGGER.info(
-                "Motor(s) mock Turned Off and Motion Faults Cleared")
-        self.RUN_ENABLE = False
-        self.off_lock.release()
-
-
-    def thread_motor_home(self):
-        Thread(target=self.motor_home).start()
-
-    def motor_home(self):
-        """Needs to check if the motors have reached home.
-        This check will come from calling on each of the motors as they have been defined in the motor class.
-        Live_Motors is a dictionary where each key corresponds to an instance of the motorclass."""
-        #self.home_lock.acquire()
-        # exexcuted twice to prevent homing at a wrong position
-        # need further investigation on why will the piston home on a certain high position
-        for count in range(2):
-            # Keeping track of how many motors have successfuly homed
-            motCount: int = 0
-            # Keeping track of how many times the While loop has executed
-            looptrack: int = 0
-            # How many times the While loop will complete before breaking out of the loop
-            loopend: int = 5  *count + 1
-            # Tracking variable to help decide which branch to go down
-            tracker: int = 0
-            if self.CONNECTED:
-                with PLC() as comm:
-                    comm.IPAddress = self.IP_ADDRESS
-                    comm.ProcessorSlot = self.PROCESSOR_SLOT
-                    comm.Write('Program:Wave_Control.Home_Button', 0)
-                    time.sleep(5)
-                    # Reads the value of the home motor button in the PLC code, 0 is off 1 is on
-                    home_bool = comm.Read('Program:Wave_Control.Home_Button')
-                    #print(home_bool)
-                    if home_bool == 0 and tracker == 0:
-                        comm.Write('Program:Wave_Control.Home_Button', 1)
-                        tracker = 1
-
-                    while tracker == 1:
-                        # Wait 5 sec before begining loop and in between loops
-                        looptrack = looptrack+1
-                        self.view.update_msg(f'Homing Motor(s) {count+1} trial ({looptrack*5}/20)')
-                        # A command to keep contacting the PLC so do not lose connection
-                        comm.GetProgramTagList('Program:Wave_Control')
-                        time.sleep(5)
-                        motCount = 0
-                        for set in self.live_motors_sets:
-                            for motor in set.values():
-                                # homed is a method of the motor class which checks the Status Word bit for if the motor is in a home position
-                                if motor.homed(self.IP_ADDRESS, self.PROCESSOR_SLOT) == True:
-                                    motCount += 1
-
-                        total_keys = sum(len(d) for d in self.live_motors_sets)
-                        if motCount == total_keys:
-                            comm.Write('Program:Wave_Control.Home_Button', 0)
-                            tracker = 0
-                            if count == 1:
-                                self.LOGGER.info('Motor(s) Homed')
-                                self.state = 1
-                                self.notify_view()
-                                self.view.update_msg('Motor(s) Homed')
-                            break
-
-                        if looptrack > loopend:
-                            comm.Write('Program:Wave_Control.Home_Button', 0)
-                            if count == 1:
-                                self.notify_view()
-                                self.view.update_msg('Unable to Home Motors: Execution timed out after 40 sec')
-                                self.LOGGER.error('Unable to Home Motors: Execution timed out after 40 sec')
-                            break
-            else:
-                time.sleep(5)
-                self.LOGGER.info('Motor(s) mock Homed')
-                self.state = 1
-                self.notify_view()
-        #self.home_lock.release()
-
-    def motor_define(self):
-        """Uses the dictionary of motor number and whether it is on or off. Dependant on motor class"""
-        # initializes the motor class for the motors specified by the dictionary motdict
-        if (len(self.motdict) == 0):
-            self.RUN_ENABLE = False
-        for key, value in self.motdict.items():
-            print(self.motdict)
-            if value == 1:
-                # Create the instance of the motor class
-                LiveMotor = Motor(key, self.CONNECTED)
-                # Associate that instance of the motor class with the motor number in a dictionary
-                self.live_motors[LiveMotor.axis_ID] = LiveMotor
-                print(self.live_motors)
-                #print(self.live_motor_sets)
-                # Change the boolean switch in the PLC code to correspond with Live_Motors
-                if self.CONNECTED:
-                    with PLC() as comm:
-                        comm.IPAddress = self.IP_ADDRESS
-                        comm.ProcessorSlot = self.PROCESSOR_SLOT
-                        comm.Write(
-                            'Program:Wave_Control.Live_Motors.{0}'.format(key), value)
-            # The value in motdict is 0. So the motor should be turned off and deleted from the Live_Motor dict
-            if value == 2:
-                # Create the instance of the motor class
-                LiveMotor = Motor(key, self.CONNECTED)
-                # Associate that instance of the motor class with the motor number in a dictionary
-                print(self.live_motors)
-                if (key in self.live_motors.keys()):
-                    del self.live_motors[key]
-                # Change the boolean switch in the PLC code to correspond with Live_Motors
-                if self.CONNECTED:
-                    with PLC() as comm:
-                        comm.IPAddress = self.IP_ADDRESS
-                        comm.ProcessorSlot = self.PROCESSOR_SLOT
-                        comm.Write(
-                            'Program:Wave_Control.Live_Motors.{0}'.format(key), value)
-            # The value in motdict is 0. So the motor should be turned off and deleted from the Live_Motor dict
-            if value == 0:
-                if key in self.live_motors:
-                    # turns off the motor as defined by the key from motdict
-                    if self.CONNECTED:
-                        with PLC() as comm:
-                            comm.IPAddress = self.IP_ADDRESS
-                            comm.ProcessorSlot = self.PROCESSOR_SLOT
-                            comm.Write(
-                                'Program:Wave_Control.Live_Motors.{0}'.format(key), value)
-                    # Deletes the entry from the Live_Motors dictionary
-                    del self.live_motors[key]
-        ##self.motor_off()
-            
-        if self.CONNECTED:
-            with PLC() as comm:
-                comm.IPAddress = self.IP_ADDRESS
-                comm.ProcessorSlot = self.PROCESSOR_SLOT
-                comm.Write('Program:Wave_Control.Clear_Motor_Error', 1)
-                time.sleep(5)
-                comm.Write('Program:Wave_Control.Clear_Motor_Error', 0)
-
-        self.motor_on()
-
-
-    def thread_motion(self, stroke, tracker):
-        Thread(target=self.motion, args=(stroke, tracker,)).start()
-
-    def record_positions(self,comm):
-        # Starting dictionary for data to input database
-        db_data = {}
-
-        handle = open(
-            f"{getcwd()}/analytics/{str(date.today())}.txt", "a+")
-        i = 0
-        max_runs = 10000
-        runs = 0
-        handle.write("\n" + "----- Run " + str(time.asctime()) + "-----\n" + "                 ")
-        for set in self.live_motors_sets:
-            for motor in set:
-                # DO NOT DELETE
-                # Creating aux_str to label motor
-                aux_str = "Motor "+str(motor)
-
-                # Creating entry in db_data
-                db_data[aux_str] = {}
-
-                handle.write(f"motor {motor:<18d}")
-        handle.write("\n"+"t           ")
-        for motor in self.live_motors:
-            handle.write("demand      actual      ")
-        handle.write("\n")
-        while i < self.ANALYTICS_DURATION and runs < max_runs:
-            self.view.update_progress_bar(i/self.ANALYTICS_DURATION)
-            handle.write(f"{i:7.4f}")
-            for motor in self.live_motors:
-                demandPositon: Any = comm.Read('Program:Wave_Control.Axis[{0}].ComDemandPosition'.format(
-                    motor))
-                actualPosition: Any = comm.Read(
-                    'Program:Wave_Control.Axis[{0}].ComActualPosition'.format(motor))
-                displacement = abs(demandPositon - actualPosition)
-
-                # DO NOT DELETE
-                # Recreating aux_str to access keys in db_data
-                aux_str = "Motor "+str(motor)
-                
-                # aux_str2 to access interval
-                aux_str2 = str(i)
-
-                # Adding the data to db_data
-                db_data[aux_str][aux_str2] = {"Actual Position": actualPosition, "Expected Position": demandPositon, "Displacement": displacement}
-
-                handle.write(f"{demandPositon:>12d}{actualPosition:>12d}")
-            runs += 1
+        with open(target, "a+", encoding="utf-8") as handle:
+            handle.write("\n----- Run {0} -----\n".format(time.asctime()))
+            handle.write("{0:<12}".format("t"))
+            for motor in motors:
+                handle.write("{0:<24}".format("motor {0}".format(motor.axis)))
+            handle.write("\n{0:<12}".format(""))
+            for _ in motors:
+                handle.write("{0:<12}{1:<12}".format("demand", "actual"))
             handle.write("\n")
-            time.sleep(self.ANALYTICS_INTERVAL)
-            i += self.ANALYTICS_INTERVAL
 
-        # DO NOT DELETE
-        # Adding data to the database
-        update_database(str(time.asctime()), self.ANALYTICS_INTERVAL, self.ANALYTICS_DURATION, db_data)
+            elapsed = 0.0
+            while elapsed < duration and not self._stop_requested.is_set():
+                self.bridge.progress(
+                    min(elapsed / duration, 1.0), "Recording analytics"
+                )
+                handle.write("{0:<12.4f}".format(elapsed))
+                for motor in motors:
+                    reading = motor.read_positions(self.plc)
+                    samples["Motor {0}".format(motor.axis)]["{0}".format(elapsed)] = {
+                        "Actual Position": reading["actual"],
+                        "Expected Position": reading["demand"],
+                        "Displacement": reading["displacement"],
+                    }
+                    handle.write(
+                        "{0:<12}{1:<12}".format(reading["demand"], reading["actual"])
+                    )
+                handle.write("\n")
+                self._sleep(interval)
+                elapsed += interval
 
-        self.view.destory_progress_bar()
-        handle.close()
+        self.bridge.progress(1.0, "Recording analytics")
+        self._save_to_database(samples)
+        self.bridge.progress_done(str(target))
 
-    def motion(self, stroke, tracker):
-        """This command will commence motion.
-        Stroke should be a 1 or 2 depending on if a single stroke is wanted or cyclical motion."""
+    def _save_to_database(self, samples: Dict) -> None:
+        """Best-effort copy of the run into MongoDB. Never blocks a run."""
+        try:
+            from database.database import update_database
 
-        # For a single stroke, stroke = 1. Run_1 is set to true on the PLC and the code runs. 5 seconds later Run_1 is set False
-        if stroke == 1:
-            if tracker == 1:
-                self.LOGGER.warning(
-                    'Motor(s) are already STOPPED on single stroke run')
-                self.state = 0
-                self.notify_view()
-            else:
-                if self.CONNECTED:
-                    with PLC() as comm:
-                        comm.IPAddress = self.IP_ADDRESS
-                        comm.ProcessorSlot = self.PROCESSOR_SLOT
-                        comm.Write('Program:Wave_Control.Run_1', 1)
-                        self.view.update_msg('Motor(s) Running')
-                        time.sleep(5)
-                        comm.Write('Program:Wave_Control.Run_1', 0)
-                        self.view.update_msg('Motor(s) Stopped')
-                        self.LOGGER.log(15, 'Motor(s) single stroke STARTED')
-                        self.state = 0
-                        self.notify_view()
-                        self.view.curve_button['state'] = 'normal'
-                else:
-                    self.LOGGER.log(15, 'Motor(s) single stroke mock STARTED')
-                    self.state = 0
-                    self.notify_view()
-                    ##time.sleep(5)
-        # For cyclical strokes, stroke = 2. Run_2 is set true. If Motion is called again it needs the second argument tracker.
-        # When tracker = 1 a 0 is written to Run_2, turning off the motion
-        elif stroke == 2:
-            if self.CONNECTED:
-                with PLC() as comm:
-                    comm.IPAddress = self.IP_ADDRESS
-                    comm.ProcessorSlot = self.PROCESSOR_SLOT
-                    comm.Write('Program:wave_Control.Run_2', 1)
-                    self.LOGGER.log(15, 'Motor(s) continuous STARTED')
-                    
-                    if tracker == 1:
-                        comm.Write('Program:Wave_Control.Run_2', 0)
-                        self.LOGGER.log(15, 'Motor(s) STOPPED')
-                        if self.state == -1:
-                            self.state = 0
-                        else:
-                            self.state = 0
-                            self.notify_view()
-                    else:
-                        self.state = 2
-                        self.notify_view()
-                        self.view.update_msg('Motor(s) Running')
-                        if(self.RECORD_ANALYTICS):
-                            # this could be expanded to other analytics.
-                            self.record_positions(comm)
-            else:
-                if tracker == 1:
-                    self.LOGGER.log(15, 'Motor(s) mock STOPPED')
-                    self.state = 0
-                    self.notify_view()
-                else:
-                    # i = 0
-                    # while i < 60:
-                    #     time.sleep(0.25)
-                    #     i += 1
-                    self.LOGGER.log(15, 'Motor(s) mock STARTED')
-                    self.state = 2
-                    self.notify_view()
-                    i=0
-                    while i < self.ANALYTICS_DURATION:
-                        time.sleep(1)
-                        
-                        i+=self.ANALYTICS_INTERVAL
-                        self.view.update_progress_bar(i/self.ANALYTICS_DURATION)
-                    self.view.destory_progress_bar()
+            update_database(
+                time.asctime(), self.analytics_interval, self.analytics_duration, samples
+            )
+        except Exception as exc:  # pragma: no cover - optional dependency
+            LOGGER.info("Analytics not saved to the database: %s", exc)
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def startup(self) -> bool:
+        """Bring the machine to a known resting state.
+
+        Run once, in the background, as the window opens.  Doing this on the
+        main thread was why the application showed nothing at all for the first
+        fifteen seconds after launch.
+        """
+        return self._command("Startup", self._startup_worker)
+
+    def _startup_worker(self) -> None:
+        if not self._connection_attempted:
+            self._connection_attempted = True
+            self.bridge.status("Looking for the PLC at {0}...".format(self.ip_address))
+            self.plc, self.is_live = plc_module.connect(
+                self.ip_address, self.processor_slot, simulate=self._simulate
+            )
+            # Tell the screens, so the connection banner stops saying "looking".
+            self.bridge.state_changed(self._state)
+
+        if self.is_live:
+            self.bridge.status("Connected. Clearing the machine...")
+            self.motors_off()
+            self.bridge.status("Ready. Choose motors on the Define Motors tab.")
         else:
-            self.LOGGER.error(
-                'Failed to start motors. Make sure you\'ve selected either single stroke or continuous.')
+            self.bridge.status(
+                "Simulation mode: no PLC at {0}. Nothing will move.".format(
+                    self.ip_address
+                )
+            )
+        self._set_state(MachineState.IDLE)
 
-    def thread_curve(self):
-        Thread(target=self.curve).start()
+    def reset(self) -> bool:
+        """Return the whole application to its just-launched state."""
+        return self._command("Reset", self._reset_worker)
 
-    def curve(self):
-        #self.curve_lock.acquire()
-        if self.CONNECTED:
-            with PLC() as comm:
-                comm.IPAddress = self.IP_ADDRESS
-                comm.ProcessorSlot = self.PROCESSOR_SLOT
-                curve_bool = comm.Read('Program:Wave_Control.Run_Curve')
+    def _reset_worker(self) -> None:
+        self._stop_requested.set()
+        self.motors_off()
+        self._stop_requested.clear()
 
-                if curve_bool == 1:
-                    self.LOGGER.warning(
-                        'Curve is already running; ignored repeated button press.')
-                elif curve_bool == 0:
+        self.sets = []
+        self.selection = dict((axis, False) for axis in range(tags.MOTOR_COUNT))
+        self.pending_params = params.defaults()
+        self.record_analytics = False
+        self.analytics_interval = 0.25
+        self.analytics_duration = 10.0
 
-                    # comm.Write('Program:Wave_Control.Run_1', 1)
-                    # time.sleep(5)
-                    # comm.Write('Program:Wave_Control.Run_1', 0)
-                    # time.sleep(5)
+        self._set_state(MachineState.IDLE)
+        self.bridge.status("Reset. Choose motors on the Define Motors tab.")
+        LOGGER.info("Application reset to its initial state.")
 
-                    # Writes a 1 to the boolean switch Run_Curve. The PLC executes the correspinding code
-                    comm.Write('Program:Wave_Control.Run_Curve', 1)
-                    # Wait 5 seconds
-                    if(self.RECORD_ANALYTICS):
-                        # this could be expanded to other analytics.
-                        self.ANALYTICS_DURATION = 5
-                        self.record_positions(comm)
-                    else:
-                        time.sleep(5)
-                    # Turn the Run_Curve switch off.
-                    comm.Write('Program:Wave_Control.Run_Curve', 0)
-                    self.LOGGER.log(15, 'Successfully ran curve.')
-        else:
-            time.sleep(5)
-        self.state = 0
-        self.notify_view()
-        #self.curve_lock.release()
-
-    def live_motor_reset(self):
-        """Method to write all zeroes to the Live motors array. 
-        This method is used to check if the motors are connected 
-        on init so it is not protected by a self.CONNECTED check."""
-        for x in range(0, 30):
-            with PLC() as comm:
-                comm.IPAddress = self.IP_ADDRESS
-                comm.ProcessorSlot = self.PROCESSOR_SLOT
-                comm.Write('Program:Wave_Control.Live_Motors.{}'.format(x), 0)
-        self.live_motor_sets = []
-        self.live_motors = {}
-
-    def live_motor_reset_mock(self):
-        """MOCK to write all zeroes to the Live motors array. 
-        This method is used to check if the motors are connected 
-        on init so it is not protected by a self.CONNECTED check."""
-        self.live_motor_sets = []
-        self.live_motors = {}
-
-    def mock_live_motor_reset(self):
-        """Method to mock a live motor reset since the actual
-        live motor reset tries to connect with motors."""
-        self.live_motor_sets = []
-        self.live_motors = {}
-
-    def get_rows(self) -> List[int]:
-        """Creates list of rows that contain live motors."""
-        row_list: List[int] = []
-        for motor in self.live_motors.values():
-            if motor.row not in row_list:
-                row_list.append(motor.row)
-        row_list.sort()
-        return row_list
-
-    def get_row(self, row: int) -> List[Motor]:
-        """Creates list of rows that contain live motors."""
-        row_list: List[Motor] = []
-        for motor in self.live_motors.values():
-            if motor.row == row:
-                row_list.append(motor)
-        return row_list
-
-    def get_columns(self) -> List[int]:
-        """Creates list of columns that contain live motors."""
-        column_list: List[int] = []
-        for motor in self.live_motors.values():
-            if motor.column not in column_list:
-                column_list.append(motor.column)
-        column_list.sort()
-        return column_list
-
-    def get_column(self, column: int) -> List[Motor]:
-        """Creates list of rows that contain live motors."""
-        column_list: List[Motor] = []
-        for motor in self.live_motors.values():
-            if motor.column == column:
-                column_list.append(motor)
-        return column_list
-
-    def get_live_motor_list(self) -> List[int]:
-        """Creates sorted list of all live motors by number."""
-        motor_list: List[int] = []
-        for key in self.live_motors:
-            motor_list.append(key)
-        motor_list.sort()
-        return motor_list
-    
-    def turnOn_motors(self):
-        """Turns on motors AFTER pressing 'prepare motors' on control home"""
-        for set in self.live_motor_sets:
-            for motnum, motor in set.items():
-                if (self.motdict[motnum]==1 or 2):
-                    pass
-
-
-
-    def attr_write(self):
-        """Writes attributes to motors and returns true upon success."""
-        for set in self.live_motors_sets:
-            for motor in set.values():
-                motor.write_to_motor(self.IP_ADDRESS, self.PROCESSOR_SLOT)
-        # for motor in self.live_motors.values():
-        #     motor.write_to_motor(self.IP_ADDRESS, self.PROCESSOR_SLOT)
-
-        self.LOGGER.log(15, 'Successfully wrote to motors.')
+    def shutdown(self) -> None:
+        """Stop the machine and close the connection. Called when the window closes."""
+        self._stop_requested.set()
+        try:
+            self.motors_off()
+        except PlcError as exc:
+            LOGGER.error("Could not clear the machine on shutdown: %s", exc)
+        finally:
+            try:
+                self.plc.close()
+            except Exception:  # pragma: no cover
+                pass

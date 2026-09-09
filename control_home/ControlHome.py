@@ -1,353 +1,398 @@
-import time
+"""Control Home: prepare the machine, run it, stop it.
+
+Which buttons are usable is decided in one place, :meth:`ControlHome.refresh`,
+from the machine state.  Previously button states were poked from a dozen
+places -- including from inside worker threads -- which is how the application
+ended up with a "Start Curve" button that could only be reached by first running
+a single stroke, and a "Prepare" button that stayed disabled forever if a write
+failed.
+"""
+
+from __future__ import annotations
+
 import os
-from os import getcwd
-from datetime import date
-from tkinter import Canvas, ttk
-from tkinter import Button, StringVar, IntVar, Message, Radiobutton, Label, Checkbutton, messagebox, Entry
-from Model import Model  # todo back to model
-from logging import getLogger, Logger
+from logging import Logger, getLogger
+from tkinter import (
+    Canvas,
+    Checkbutton,
+    IntVar,
+    Radiobutton,
+    StringVar,
+    messagebox,
+    ttk,
+)
+from typing import Dict, List, Optional
+
+from Model import MachineState, Model, RunMode
 from modules.logging.log_utils import LOGGER_NAME
+from modules.tooltip import Tooltip
+
+#: Fill colours cycled through so each motor set is distinguishable at a glance.
+SET_COLOURS: List[str] = [
+    "#7ed957",  # green
+    "#4fc3f7",  # blue
+    "#ffb74d",  # orange
+    "#ba68c8",  # purple
+    "#f06292",  # pink
+    "#fff176",  # yellow
+]
+
+IDLE_COLOUR = "white"
 
 
 class ControlHome:
-    """ControlHome class."""
-    tab: ttk.Frame
-    model: Model
+    """The Control Home tab."""
+
     logger: Logger = getLogger(LOGGER_NAME)
 
-    def __init__(self, root: ttk.Notebook, model: Model):
-        """Main Frame and driver for the Control Home tab."""
+    def __init__(self, root: ttk.Notebook, model: Model, view) -> None:
         self.tab = ttk.Frame(root)
         self.model = model
-        self.model.register_view(self)
-        # set up and place title and content frames
-        self.title_frame = ttk.Frame(self.tab, padding=25)
+        self.view = view
+
+        self.title_frame = ttk.Frame(self.tab, padding=(25, 20, 25, 0))
         self.content_frame = ttk.Frame(self.tab, padding=25)
-        self.title_frame.grid(row=0, column=0)
-        self.content_frame.grid(row=1, column=0)
+        self.title_frame.grid(row=0, column=0, sticky="w")
+        self.content_frame.grid(row=1, column=0, sticky="nsew")
 
-        # add title
-        ttk.Label(self.title_frame, text="Control Home",
-                  style="Heading.TLabel").grid()
+        ttk.Label(
+            self.title_frame, text="Control Home", style="Heading.TLabel"
+        ).grid(row=0, column=0, sticky="w")
+        self.connection_label = ttk.Label(self.title_frame, text="")
+        self.connection_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        # Visualize motors with circles
-        self.spacer = ttk.Label(self.content_frame, text='   ',
-                                background="black").grid(row=1, column=0)
-        self.circles = Canvas(self.content_frame, width=1000,
-                              height=150, background="#777A7A")
-        h = 27
-        w = 50
-        for i in range(10):
-            for j in range(3):
-                if h >= 150:
-                    h = 27
-                # create dictionary to easily access motor circles
-                self.model.MOT_CIRCLES[i*3 +
-                                       j] = self.create_circle(w, h, 20, self.circles)
-                h += 50
-            w += 100
+        self._build_motor_map()
+        self._build_status()
+        self._build_controls()
+        self._build_analytics()
 
-        self.circles.grid(row=1, column=1, columnspan=10, rowspan=3)
-        
-        # Message Box
-        self.msgvar = StringVar()
-        self.msg_box = Message(
-            self.content_frame, textvariable=self.msgvar, padx=5, pady=5, width=400)
-        self.msgvar.set('Visit the define motors frame to activate motors.')
-        # Selections for run button
-        self.run = IntVar()
-        self.run1 = Radiobutton(
-            self.content_frame, text='One Stroke', variable=self.run, value=1)
-        self.run2 = Radiobutton(
-            self.content_frame, text='Continuous', variable=self.run, value=2)
-        self.run1.select()
-        self.run.set(1)
+        self.refresh(model.state)
+        root.add(self.tab, text=" Control Home")
 
-        self.prepare_button = ttk.Button(self.content_frame, text='Prepare Motor(s)',
-                                         command=lambda: self.prepare_motors(self.run.get(), False))
-        # Run Button
-        self.start_button = ttk.Button(self.content_frame, text='Start Motor(s)',
-                                       command=lambda: self.start_motors(self.run.get(), False))
-        # Stop button for motor
+    # -- construction ---------------------------------------------------------
+
+    def _build_motor_map(self) -> None:
+        """The three-by-ten picture of the piston array."""
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=0, column=0, sticky="w")
+
+        ttk.Label(frame, text="Motor layout").grid(row=0, column=0, sticky="w")
+        self.circles = Canvas(
+            frame, width=1040, height=170, background="#777A7A", highlightthickness=0
+        )
+        self.circles.grid(row=1, column=0, pady=(6, 0))
+
+        self.motor_circles: Dict[int, int] = {}
+        self.motor_labels: Dict[int, int] = {}
+        for column in range(10):
+            for row in range(3):
+                axis = column * 3 + row
+                x = 55 + column * 100
+                y = 32 + row * 50
+                self.motor_circles[axis] = self.circles.create_oval(
+                    x - 20, y - 20, x + 20, y + 20, fill=IDLE_COLOUR, outline="#555"
+                )
+                self.motor_labels[axis] = self.circles.create_text(
+                    x, y, text=str(axis), fill="#333"
+                )
+
+        self.legend = ttk.Label(frame, text="No motors selected.")
+        self.legend.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+    def _build_status(self) -> None:
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=1, column=0, sticky="ew", pady=(20, 0))
+
+        self.step_label = ttk.Label(frame, text="", style="Step.TLabel")
+        self.step_label.grid(row=0, column=0, sticky="w")
+
+        self.statusvar = StringVar(
+            value="Visit the Define Motors tab to choose which motors to run."
+        )
+        self.status_label = ttk.Label(
+            frame, textvariable=self.statusvar, wraplength=980, justify="left"
+        )
+        self.status_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        self.progress_frame = ttk.Frame(frame)
+        self.progress_label = ttk.Label(self.progress_frame, text="")
+        self.progress_label.grid(row=0, column=0, sticky="w")
+        self.progress_bar = ttk.Progressbar(
+            self.progress_frame, length=460, mode="determinate", maximum=100
+        )
+        self.progress_bar.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        # Gridded and removed on demand rather than created and destroyed, so a
+        # run that ends unexpectedly cannot leave a stray widget behind.
+        self.progress_frame.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.progress_frame.grid_remove()
+
+    def _build_controls(self) -> None:
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=2, column=0, sticky="w", pady=(20, 0))
+
+        mode_frame = ttk.Frame(frame)
+        mode_frame.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(mode_frame, text="Run mode:").grid(row=0, column=0, padx=(0, 10))
+        self.run_mode = IntVar(value=1)
+        self.run_single = Radiobutton(
+            mode_frame, text="One stroke", variable=self.run_mode, value=1
+        )
+        self.run_continuous = Radiobutton(
+            mode_frame, text="Continuous", variable=self.run_mode, value=2
+        )
+        self.run_single.grid(row=0, column=1, sticky="w")
+        self.run_continuous.grid(row=0, column=2, sticky="w", padx=(10, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=1, column=0, sticky="w")
+
+        self.prepare_button = ttk.Button(
+            buttons, text="1. Prepare Motor(s)", width=22, command=self.prepare
+        )
+        self.start_button = ttk.Button(
+            buttons, text="2. Start Motor(s)", width=22, command=self.start
+        )
+        self.curve_button = ttk.Button(
+            buttons, text="2. Start Curve", width=22, command=self.start_curve
+        )
         self.stop_button = ttk.Button(
-            self.content_frame, text='Stop Motor(s)',  command=lambda: self.stop_motors(self.run.get()))
-        self.curve_id_label = Label(self.content_frame, text='Curve ID')
-        self.curve_button = ttk.Button(self.content_frame, text='Start Curve',
-                                       command=lambda: self.start_motors(self.run.get(), True))
-        self.off_and_reset_button = ttk.Button(self.content_frame, text='Off and Reset',
-                                               command=lambda: self.off_and_reset())
+            buttons, text="Stop Motor(s)", width=22, command=self.stop
+        )
+        self.reset_button = ttk.Button(
+            buttons, text="Off and Reset", width=22, command=self.reset
+        )
+
+        for column, button in enumerate(
+            (
+                self.prepare_button,
+                self.start_button,
+                self.curve_button,
+                self.stop_button,
+                self.reset_button,
+            )
+        ):
+            button.grid(row=0, column=column, padx=(0, 10))
+
+        Tooltip(
+            self.prepare_button,
+            "Writes your parameters to the machine and homes every piston.\n"
+            "Required after changing motors or parameters.",
+        )
+        Tooltip(
+            self.start_button,
+            "Runs the motors using the run mode selected above.",
+        )
+        Tooltip(
+            self.curve_button,
+            "Runs the stored curve given by the Curve ID parameter.\n"
+            "Available once the motors are prepared.",
+        )
+        Tooltip(
+            self.stop_button,
+            "Drops every run bit immediately. Works while the machine is busy.",
+        )
+        Tooltip(
+            self.reset_button,
+            "Turns the motors off, clears faults and returns the application\n"
+            "to its just-launched state.",
+        )
+
+    def _build_analytics(self) -> None:
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=3, column=0, sticky="w", pady=(24, 0))
+
+        self.analytics_on = IntVar(value=0)
         self.analytics_checkbox = Checkbutton(
-            self.content_frame, text='Record Analytics', command=lambda: self.flip_analytics())
+            frame,
+            text="Record analytics",
+            variable=self.analytics_on,
+            command=self.toggle_analytics,
+        )
+        self.analytics_checkbox.grid(row=0, column=0, sticky="w")
 
-        self.analytics_info = Button(self.content_frame, text='What is This?', command=lambda: self.show_analytics_info())
-        self.msg_box.grid(row=7, column=2, columnspan=8,
-                          sticky='nsew', pady=20)
-        self.run1.grid(row=8, column=5, columnspan=2, sticky='w', pady=(0, 20))
-        self.run2.grid(row=8, column=6,  columnspan=2,
-                       sticky='w', pady=(0, 20))
+        ttk.Button(frame, text="What is this?", command=self.show_analytics_info).grid(
+            row=0, column=1, padx=(10, 30)
+        )
 
-        self.prepare_button.grid(row=9, column=5, columnspan=2, sticky='nsew')
-        self.start_button.grid(row=10, column=5, columnspan=2, sticky='nsew')
-        self.curve_button.grid(row=11, column=5, columnspan=2, sticky='nsew')
-        self.stop_button.grid(row=12, column=5, columnspan=2,  sticky='nsew')
-        ttk.Label(self.content_frame, text='  ').grid(column=0, row=13)
+        # The interval and duration boxes are always present and simply become
+        # editable. The old code created and destroyed them on every tick, and
+        # unticking before ticking raised AttributeError.
+        self.interval_var = StringVar(value="0.25")
+        self.duration_var = StringVar(value="10.0")
 
-        self.off_and_reset_button.grid(
-            row=14, column=5, columnspan=2, sticky="nesw")
-        ttk.Label(self.content_frame, text='  ').grid(column=0, row=15)
-        self.analytics_info.grid(row=16, column=6)
-        self.analytics_checkbox.grid(row=16, column=5)
-        ttk.Label(self.content_frame, text='  ').grid(column=0, row=17)
+        ttk.Label(frame, text="Interval (s)").grid(row=0, column=2, padx=(0, 6))
+        self.interval_entry = ttk.Entry(frame, textvariable=self.interval_var, width=8)
+        self.interval_entry.grid(row=0, column=3, padx=(0, 20))
 
-        # self.progress_bar=Canvas(self.content_frame,bg="white",width = 450,height = 20)    
-        # self.progress_bar.place(relx=0.3, rely=1)
-        # ttk.Label(self.content_frame, text='  ').grid(column=0, row=18)
-        # self.canvas_shape = self.progress_bar.create_rectangle(0,0,0,25,fill = 'green')
-        # self.percentage = StringVar()
-        # self.percentage.set('0%')
-        # self.label_percentage=Label(self.content_frame,textvariable = self.percentage)
-        # self.label_percentage.place(relx=0.2, rely=1)
+        ttk.Label(frame, text="Duration (s)").grid(row=0, column=4, padx=(0, 6))
+        self.duration_entry = ttk.Entry(frame, textvariable=self.duration_var, width=8)
+        self.duration_entry.grid(row=0, column=5)
 
-        # Disables start,stop, and curve buttons
-        self.disable_run()
+        self.interval_var.trace_add("write", lambda *_: self.read_analytics_settings())
+        self.duration_var.trace_add("write", lambda *_: self.read_analytics_settings())
+        self._set_analytics_enabled(False)
 
-        # Label and pack tab
-        root.add(self.tab, text=' Control Home')
+    # -- display --------------------------------------------------------------
 
-    def onSelect(self):
-        """This method is called when the notebook switched the view to this tab."""
-        self.model.check_run_enable()
-        if (self.model.RUN_ENABLE):
-            self.msgvar.set("Ready to run")
-            self.update_button_status()
-        if not (self.model.RUN_ENABLE):
-            self.disable_run()
-        self.color_motors_green()
+    def onSelect(self) -> None:
+        self.refresh(self.model.state)
 
-    def update_msg(self, var:str):
-        self.msgvar.set(var)
+    def set_status(self, message: str) -> None:
+        self.statusvar.set(message)
 
-    def update_button_status(self):
-        self.disable_run()
-        if (self.model.state == 0):
-            self.prepare_button['state'] = 'normal'
-        elif (self.model.state == 1):
-            #self.curve_button['state'] = 'normal'
-            self.start_button['state'] = 'normal'
-        else:
-            self.stop_button['state'] = 'normal'
-    
-    def destory_progress_bar(self):
-        self.progress_bar.destroy()
-        self.label_percentage.destroy()
-        msg_box = messagebox.askquestion ('Recording Finished','Do you want to open the analytics data?',icon = 'info')
-        if msg_box == 'yes':
-            os.startfile(f"{getcwd()}/analytics/{str(date.today())}.txt")
+    def refresh(self, state: MachineState) -> None:
+        """Set every button from the machine state. The single source of truth."""
+        self.connection_label.configure(text=self._connection_text())
 
-    def create_circle(self, x: int, y: int, r: int, canvasName: Canvas):
-        """Method to create circles for motor vizualization. center coordinates are x/y , radius is r."""
-        x0 = x - r
-        y0 = y - r
-        x1 = x + r
-        y1 = y + r
-        return canvasName.create_oval(x0, y0, x1, y1, fill="white", outline="white")
+        enabled = {
+            MachineState.IDLE: (),
+            MachineState.READY: ("prepare", "reset"),
+            MachineState.PREPARING: ("stop",),
+            MachineState.HOMED: ("start", "curve", "stop", "reset"),
+            MachineState.RUNNING: ("stop",),
+        }[state]
 
-    def color_motors_green(self):
-        """Searches through live motors dictionary and displays motors that are on."""
-        for i in range(0, 30):                
-                self.circles.itemconfig(
-                    self.model.MOT_CIRCLES[i], fill="white")
-        for set in self.model.live_motors_sets:
-            for key in set.keys():
-                self.circles.itemconfig(
-                    self.model.MOT_CIRCLES[key], fill="light green")
+        for key, button in (
+            ("prepare", self.prepare_button),
+            ("start", self.start_button),
+            ("curve", self.curve_button),
+            ("stop", self.stop_button),
+            ("reset", self.reset_button),
+        ):
+            button["state"] = "normal" if key in enabled else "disabled"
 
-    ## this is redundant
-    def enable_run(self):
-        """Enables the button for running the motors and curves."""
-        self.prepare_button['state'] = 'normal'
-        self.start_button['state'] = 'disabled'
-        self.stop_button['state'] = 'disabled'
-        self.curve_button['state'] = 'disabled'
+        if state is MachineState.IDLE:
+            self.reset_button["state"] = "normal" if self.model.sets else "disabled"
 
-    ##
-    def disable_run(self):
-        """Disables the button for running the motors and curves."""
-        self.prepare_button['state'] = 'disabled'
-        self.start_button['state'] = 'disabled'
-        self.stop_button['state'] = 'disabled'
-        self.curve_button['state'] = 'disabled'
+        self.step_label.configure(text=self._step_text(state))
+        self.draw_motor_map()
 
-    def prepare_motors(self, motion_type: int, is_curve: bool):
-        """Part one of the start sequence. Attempts to write to motors."""
-        # self.msgvar.set('Writing attributes to motors...')
-        # self.model.attr_write()
-        # # TODO: need to determine how long to set this time
-        # self.tab.after(2000, lambda: self.home_motors(
-        #     motion_type=motion_type, is_curve=is_curve))
-        # If all the motors are already written to then skip to homing
-        self.prepare_button['state']='disabled'
-        if self.model.write_success() and self.model.written_matches_current():
-            self.msgvar.set('Motors already written .. skipping to homing.')
-            self.tab.after(1000, lambda: self.home_motors(
-                motion_type=motion_type))
-        else:
-            # set message box to writing message
-            self.msgvar.set('Writing attributes to motors...')
-            self.model.attr_write()
-            # TODO: need to determine how long to set this time
-            self.tab.after(2000, lambda: self.home_motors(
-                motion_type=motion_type))
+    def _connection_text(self) -> str:
+        """The banner under the title: whether this is the real machine."""
+        if not getattr(self.model, "_connection_attempted", True):
+            return "Looking for the PLC at {0}...".format(self.model.ip_address)
+        if self.model.is_live:
+            return "Connected to PLC at {0}".format(self.model.ip_address)
+        return "SIMULATION - no PLC at {0}. Nothing will move.".format(
+            self.model.ip_address
+        )
 
-    def home_motors(self, motion_type: int):
-        """Part two of the start sequence. Attempts to home the motors."""
-        if self.model.write_success():
-            self.msgvar.set('Homing motors...')
-            self.model.thread_motor_home()
-            
-            # ready: bool = True
-            # for motor in self.model.live_motors.values():
-            #     if not motor.home:
-            #         ready = False
-            # if ready or not Model.CONNECTED:
-            #     # TODO: need to determine how long to set this time
-            #     self.tab.after(2000, lambda: self.msgvar.set('Motor(s) prepared'))
-            #     ##self.start_button['state'] = 'normal'
-            #     ##self.curve_button['state'] = 'normal'
-            # else:
-            #     self.msgvar.set('Motors not homed, try starting again.')
-        else:
-            self.msgvar.set('Values were not successfully written to motors.')
+    def _step_text(self, state: MachineState) -> str:
+        return {
+            MachineState.IDLE: "Step 1 of 3  -  choose motors on the Define Motors tab",
+            MachineState.READY: "Step 2 of 3  -  press Prepare Motor(s)",
+            MachineState.PREPARING: "Preparing  -  please wait",
+            MachineState.HOMED: "Step 3 of 3  -  press Start Motor(s) or Start Curve",
+            MachineState.RUNNING: "Running  -  press Stop Motor(s) when finished",
+        }[state]
 
-    def start_motors(self, motion_type: int, is_curve: bool):
-        """Part three of the start sequence. Attempts to run the motors."""
-        self.start_button['state'] = 'disabled'
-        self.curve_button['state'] = 'disabled'
-        ##self.prepare_button['state'] = 'disabled'
-        
-        # FIX: Check if parameters have changed since last write and re-write them
-        # This allows parameter updates after stopping without requiring rehoming
-        if not self.model.written_matches_current():
-            self.msgvar.set('Parameters changed - updating motors...')
-            self.model.attr_write()
-            # Wait for write to complete
-            self.tab.after(1000, lambda: self._continue_start_motors(motion_type, is_curve))
-            return
-        
-        self._continue_start_motors(motion_type, is_curve)
-    
-    def _continue_start_motors(self, motion_type: int, is_curve: bool):
-        """Continue starting motors after parameter update (if needed)."""
-        if self.model.RECORD_ANALYTICS and (motion_type == 2 or is_curve):
-            self.update_analytics()
-            self.progress_bar=Canvas(self.content_frame,bg="white",width = 450,height = 20)    
-            self.progress_bar.place(relx=0.3, rely=1)
-            ttk.Label(self.content_frame, text='  ').grid(column=0, row=18)
-            self.canvas_shape = self.progress_bar.create_rectangle(0,0,0,25,fill = 'green')
-            self.percentage = StringVar()
-            self.percentage.set('0%')
-            self.label_percentage=Label(self.content_frame,textvariable = self.percentage)
-            self.label_percentage.place(relx=0.2, rely=1)
-            
-        if is_curve:
-            self.msgvar.set('Starting curve...')
-            self.model.thread_curve()
-            # TODO: need to determine how long to set this time
-            self.tab.after(2000, lambda: self.msgvar.set('Curve running'))
-        else:
-            #self.msgvar.set('Starting motors...')
-            self.model.thread_motion(motion_type, 0)
-            # TODO: need to determine how long to set this time
-            #self.tab.after(2000, lambda: self.msgvar.set('Motors running'))
-        
-        ## may want to wait for the thread to end here
-        
-        ##self.stop_button['state']='normal'
-        ## print(self.model.ANALYTICS_DURATION)
+    def draw_motor_map(self) -> None:
+        """Colour each piston by the set it belongs to."""
+        for axis in range(len(self.motor_circles)):
+            self.circles.itemconfig(self.motor_circles[axis], fill=IDLE_COLOUR)
 
-    def stop_motors(self, motion_type: int):
-        """Method for stopping motors while running."""
-        self.stop_button['state']='disabled'
-        self.msgvar.set('Stopping motors...')
-        self.model.motion(motion_type, 1)
-        self.msgvar.set('Motors stopped')
-        ##self.start_button['state'] = 'normal'
-        ##self.curve_button['state'] = 'normal'
-        ##self.prepare_button['state'] = 'disabled'
-        ##self.stop_button['state']='disabled'
-    
+        legend_parts = []
+        for index, motor_set in enumerate(self.model.sets):
+            colour = SET_COLOURS[index % len(SET_COLOURS)]
+            for axis in motor_set.axes:
+                self.circles.itemconfig(self.motor_circles[axis], fill=colour)
+            legend_parts.append("{0} ({1} motors)".format(motor_set.name, len(motor_set)))
 
-    def off_and_reset(self):
-        self.model.motor_off()
-        self.disable_run()
-        self.color_motors_green()
-        self.msgvar.set('Visit the define motors frame to activate motors.')
+        self.legend.configure(
+            text="   |   ".join(legend_parts) if legend_parts else "No motors selected."
+        )
 
-    def update_progress_bar(self,percent):
-        self.progress_bar.coords(self.canvas_shape,(0,0,int(450*percent),25))
-        self.percentage.set('%0.2f %%' % (percent*100))
+    # -- progress -------------------------------------------------------------
 
-    def flip_analytics(self):
-        self.model.RECORD_ANALYTICS = not self.model.RECORD_ANALYTICS
-        self.analytics_interval_var = StringVar(None)
-        self.analytics_duration_var = StringVar(None)
-        if self.model.RECORD_ANALYTICS:
+    def show_progress(self, fraction: float, label: str) -> None:
+        self.progress_frame.grid()
+        self.progress_label.configure(
+            text="{0}: {1:.0f}%".format(label, min(max(fraction, 0.0), 1.0) * 100)
+        )
+        self.progress_bar["value"] = min(max(fraction, 0.0), 1.0) * 100
 
-            self.interval_label = ttk.Label(self.content_frame, text="Record Interval (s)")
-            self.analytics_interval_entry = ttk.Entry(self.content_frame, textvariable=self.analytics_interval_var)
-            self.duration_label = ttk.Label(self.content_frame, text="Record Time (s)")
-            self.analytics_duration_entry = ttk.Entry(self.content_frame, textvariable=self.analytics_duration_var)
-
-            ## self.update_analytics_button = ttk.Button(self.content_frame, text="Update Analytics Info", command=lambda: self.update_analytics())
-
-            self.interval_label.grid(row=17, column=5)
-            self.analytics_interval_entry.grid(row=17, column=6)
-            self.duration_label.grid(row=18, column=5)
-            self.analytics_duration_entry.grid(row=18, column=6)
-            ## self.update_analytics_button.grid(row=19, column=5, columnspan=2)
-        else:
-            if self.interval_label is not None:
-                self.interval_label.destroy()
-            if self.analytics_duration_entry is not None:
-                self.analytics_duration_entry.destroy()
-            if self.analytics_interval_entry is not None:
-                self.analytics_interval_entry.destroy()
-            if self.duration_label is not None:
-                self.duration_label.destroy()
-            ## if self.update_analytics_button is not None:
-                ## self.update_analytics_button.destroy()
-
-    def update_analytics(self):
-        
-        if self.analytics_interval_var != "":
+    def finish_progress(self, artifact: Optional[str]) -> None:
+        self.progress_frame.grid_remove()
+        self.progress_bar["value"] = 0
+        if artifact and messagebox.askyesno(
+            "Recording finished", "Open the analytics file?", parent=self.tab
+        ):
             try:
-                self.model.ANALYTICS_INTERVAL = float(self.analytics_interval_var.get())
-                self.logger.info(f"Updated analytics interval to every {self.model.ANALYTICS_INTERVAL} seconds.")
-            except:
-                self.logger.error("Could not update analytics interval; an illegal value was passed. Make sure to use decimals instead of fractions.")
-                self.model.ANALYTICS_INTERVAL = 0.25
-        
-        if self.analytics_duration_var != "":
-            try:
-                self.model.ANALYTICS_DURATION = float(self.analytics_duration_var.get())
-                self.logger.info(f"Updated analytics duration to {self.model.ANALYTICS_DURATION} total seconds.")
-            except:
-                self.logger.error("Could not update analytics duration; an illegal value was passed. Make sure to use decimals instead of fractions.")
-                self.model.ANALYTICS_DURATION = 10
-        self.analytics_duration_var.set(f'{self.model.ANALYTICS_DURATION}')
-        self.analytics_interval_var.set(f'{self.model.ANALYTICS_INTERVAL}')
+                os.startfile(artifact)  # noqa: S606 - opening the app's own output
+            except OSError as exc:
+                self.logger.error("Could not open %s: %s", artifact, exc)
 
-    def show_analytics_info(self):
+    # -- commands -------------------------------------------------------------
 
-        msg = """When checked, record analytics will cause the motors to output additional information during runtime. This information will be outputted to an analytics file with the date of the run.
+    def prepare(self) -> None:
+        self.set_status("Preparing motors...")
+        self.model.prepare()
 
-Analytics from multiple runs on the same day will be in the same file, but will be clearly separated.
-    
-This can only be done when the motors are run continuously.
-        
-NOTE: Since this information is pulled during runtime, the motors will appear unresponsive, and can't be stopped (right now) while information is being collected. By default, information is collected every 1/4 of a second for 10 seconds. After 10 seconds, the motors can be stopped.
+    def start(self) -> None:
+        self.read_analytics_settings()
+        mode = RunMode.SINGLE if self.run_mode.get() == 1 else RunMode.CONTINUOUS
+        self.model.start(mode)
 
-We suggest that you test run your parameters first to ensure they won't fault the machine, then run again with analytics.
-    """
+    def start_curve(self) -> None:
+        self.read_analytics_settings()
+        self.model.start(RunMode.CURVE)
 
-        messagebox.showinfo("Record Analytics", msg)
+    def stop(self) -> None:
+        self.model.stop()
+
+    def reset(self) -> None:
+        if messagebox.askyesno(
+            "Off and reset",
+            "Turn the motors off, clear every motor set and return the "
+            "application to its starting state?",
+            parent=self.tab,
+        ):
+            self.model.reset()
+            self.analytics_on.set(0)
+            self.toggle_analytics()
+
+    # -- analytics ------------------------------------------------------------
+
+    def _set_analytics_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self.interval_entry["state"] = state
+        self.duration_entry["state"] = state
+
+    def toggle_analytics(self) -> None:
+        self.model.record_analytics = bool(self.analytics_on.get())
+        self._set_analytics_enabled(self.model.record_analytics)
+        if self.model.record_analytics:
+            self.read_analytics_settings()
+
+    def read_analytics_settings(self) -> None:
+        """Take the interval and duration from the boxes, keeping the last good
+        value if what is typed is not a number."""
+        self.model.analytics_interval = self._positive_float(
+            self.interval_var.get(), self.model.analytics_interval, "interval"
+        )
+        self.model.analytics_duration = self._positive_float(
+            self.duration_var.get(), self.model.analytics_duration, "duration"
+        )
+
+    def _positive_float(self, text: str, fallback: float, what: str) -> float:
+        try:
+            value = float(text)
+        except ValueError:
+            return fallback
+        if value <= 0:
+            self.logger.warning("Analytics %s must be greater than zero.", what)
+            return fallback
+        return value
+
+    def show_analytics_info(self) -> None:
+        messagebox.showinfo(
+            "Record analytics",
+            "With this ticked, the application samples each piston's demanded "
+            "and actual position while it runs, and writes a table to "
+            "analytics/<date>.txt. Runs on the same day are appended to the "
+            "same file and separated by a header.\n\n"
+            "Sampling happens during continuous runs and curve runs.\n\n"
+            "Test your parameters without analytics first, so you know they "
+            "will not fault the machine, then run again with analytics on.",
+            parent=self.tab,
+        )

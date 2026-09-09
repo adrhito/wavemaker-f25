@@ -1,106 +1,157 @@
-from io import TextIOWrapper
-from logging import LogRecord, addLevelName, Handler, DEBUG, CRITICAL, Formatter, getLogger
-import tkinter as tk
-from datetime import date
-from os import getcwd
+"""Logging for the application.
 
-addLevelName(15, "SUCCESS")
+Two destinations:
+
+* ``logs/<date>.log`` -- everything from INFO up, set up at startup so the
+  connection attempt and any early failure are recorded.  Previously the file
+  handler was only attached when the Feedback tab was built and was set to
+  CRITICAL, so a day's log file stayed empty no matter what went wrong.
+* The Feedback tab -- everything, colour-coded, attached when that tab exists.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import tkinter as tk
+from logging import Formatter, Handler, LogRecord, getLogger
+from typing import Optional
+
+from app import paths
+
+#: Between INFO and WARNING: an operator-visible action succeeded.
+SUCCESS = 15
+logging.addLevelName(SUCCESS, "SUCCESS")
+
 LOGGER_NAME = "logger"
 
-# custom handlers
+FORMAT = "%(asctime)s %(name)s#%(levelname)s - %(message)s"
+DATE_FORMAT = "%m/%d/%Y at %I:%M:%S %p"
+
+_LEVEL_COLOURS = {
+    "SUCCESS": "lime green",
+    "DEBUG": "#8ab4f8",
+    "INFO": "#8ab4f8",
+    "WARNING": "orange",
+    "ERROR": "#ff6b6b",
+    "CRITICAL": "crimson",
+}
+
+#: Set once so repeated calls do not stack duplicate handlers, which used to
+#: happen whenever the Feedback tab was rebuilt.
+_file_handler: Optional[Handler] = None
+_textbox_handler: Optional[Handler] = None
+
 
 class TextboxLogHandler(Handler):
-    """Emits all levels of logs to the desired tkinter textbox.
+    """Writes log records into a Tk text widget, coloured by level.
 
-        In the future, this may be modified to work better with a scrollable text box.
+    Records are queued and drained by a timer on the main thread.  Almost every
+    interesting log line is produced by the worker thread that is driving the
+    machine, and touching a Tk widget from another thread raises
+    ``RuntimeError: main thread is not in main loop`` -- or, worse, silently
+    corrupts the interpreter state.
     """
-    text: tk.Text
 
-    def __init__(self, text: tk.Text):
+    #: How often the widget is refreshed from the queue, in milliseconds.
+    DRAIN_INTERVAL_MS = 100
+
+    def __init__(self, text: tk.Text, max_lines: int = 2000):
         Handler.__init__(self)
         self.text = text
+        self.max_lines = max_lines
+        self._pending: "queue.Queue" = queue.Queue()
+        self._stopped = False
+
         self.text.configure(fg="#dedede")
-        self.text.configure(state='normal')
+        for level, colour in _LEVEL_COLOURS.items():
+            self.text.tag_configure(
+                level, foreground=colour, underline=(level == "CRITICAL")
+            )
+        self.text.after(self.DRAIN_INTERVAL_MS, self._drain)
 
-        self.text.tag_configure("SUCCESS", foreground="lime green")
-        self.text.tag_configure("DEBUG", foreground="light blue")
-        self.text.tag_configure("INFO", foreground="light blue")
-        self.text.tag_configure("WARNING", foreground="orange")
-        self.text.tag_configure("ERROR", foreground="red")
-        self.text.tag_configure(
-            "CRITICAL", foreground="crimson", underline=True)
-
-    def emit(self, record: LogRecord):
-        msg = self.format(record)
-        self.text.insert(tk.END, msg + "\n")
-        self.__apply_coloring()
-
-    def __apply_coloring(self):
-        """Applies text coloring to recently added line of log."""
-        text_metadata = self.text.dump(
-            "end-2c linestart", "end", text=True)[0]  # grabs relevant details from dump
-        # gets the line # of text that was just entered
-        linestart_idx: str = text_metadata[2].split(".")[0]
-
-        line_str = text_metadata[1]
-        label_start = line_str.index("#") + 1
-        label_end = line_str.index(" -")
-
-        self.text.tag_add(line_str[label_start:label_end], linestart_idx +
-                          "." + "0", linestart_idx + "." + str(label_end))
-
-
-class FileLogHandler(Handler):
-    """Emits critical logs (level >= 50) to a specified file for persistant storage."""
-
-    file: str
-
-    def __init__(self, file: str):
-        Handler.__init__(self)
-        self.file = file
-
-    def emit(self, record: LogRecord):
-        handle: TextIOWrapper
+    def emit(self, record: LogRecord) -> None:
+        """Called from any thread. Only queues; never touches the widget."""
         try:
-            handle = open(self.file, 'a+')
-        except OSError:
-            handle = open(self.file, 'x')
+            self._pending.put((record.levelname, self.format(record)))
+        except Exception:  # pragma: no cover - logging must not kill the app
+            pass
 
-        msg = self.format(record)
-        handle.write(msg + "\n")
-        handle.close()
+    def close(self) -> None:
+        self._stopped = True
+        Handler.close(self)
+
+    def _drain(self) -> None:
+        """Move queued records into the widget. Main thread only."""
+        try:
+            wrote = False
+            while True:
+                try:
+                    level, message = self._pending.get_nowait()
+                except queue.Empty:
+                    break
+                self.text.configure(state="normal")
+                start = self.text.index("end-1c")
+                self.text.insert(tk.END, message + "\n")
+                # Tag by the record's own level rather than by searching the
+                # formatted text for punctuation, which broke on any message
+                # that happened to contain the separator.
+                self.text.tag_add(level, start, start + " lineend")
+                wrote = True
+            if wrote:
+                self._trim()
+                self.text.see(tk.END)
+                self.text.configure(state="disabled")
+        except tk.TclError:  # window closed
+            self._stopped = True
+            return
+
+        if not self._stopped:
+            try:
+                self.text.after(self.DRAIN_INTERVAL_MS, self._drain)
+            except tk.TclError:  # pragma: no cover - window closed
+                self._stopped = True
+
+    def _trim(self) -> None:
+        """Drop the oldest lines so a long session cannot grow without bound."""
+        lines = int(self.text.index("end-1c").split(".")[0])
+        if lines > self.max_lines:
+            self.text.delete("1.0", "{0}.0".format(lines - self.max_lines))
 
 
-def log_setup(t: tk.Text):
+def setup_file_logging() -> Handler:
+    """Attach the day's log file. Safe to call more than once."""
+    global _file_handler
 
-    # create logger
     logger = getLogger(LOGGER_NAME)
-    logger.setLevel(DEBUG)
+    logger.setLevel(logging.DEBUG)
 
-    th = TextboxLogHandler(t)
-    th.setLevel(DEBUG)
+    if _file_handler is not None:
+        return _file_handler
 
-    fh = FileLogHandler(f"{getcwd()}/logs/{str(date.today())}.log")
-    fh.setLevel(CRITICAL)
-
-    # create formatter
-    formatter = Formatter(
-        '%(asctime)s %(name)s#%(levelname)s - %(message)s', datefmt="%m/%d/%Y at %I:%M:%S %p")
-
-    th.setFormatter(formatter)
-    fh.setFormatter(formatter)
-
-    logger.addHandler(th)
-    logger.addHandler(fh)
-
-    return (th, fh)
+    paths.ensure_directories()
+    handler = logging.FileHandler(str(paths.log_file()), encoding="utf-8")
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(Formatter(FORMAT, datefmt=DATE_FORMAT))
+    logger.addHandler(handler)
+    _file_handler = handler
+    return handler
 
 
-def action(msg: str):
+def log_setup(text: tk.Text):
+    """Attach the Feedback tab's text widget. Safe to call more than once."""
+    global _textbox_handler
+
     logger = getLogger(LOGGER_NAME)
-    logger.log(15, "Started successfully")
-    logger.debug(msg)
-    logger.info(msg)
-    logger.warning(msg)
-    logger.error(msg)
-    logger.critical(msg)
+    logger.setLevel(logging.DEBUG)
+
+    if _textbox_handler is not None:
+        logger.removeHandler(_textbox_handler)
+
+    handler = TextboxLogHandler(text)
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(Formatter(FORMAT, datefmt=DATE_FORMAT))
+    logger.addHandler(handler)
+    _textbox_handler = handler
+
+    return handler, setup_file_logging()

@@ -1,0 +1,17 @@
+# Python bytecode -- these were committed to the repository, so every run
+# produced spurious "modified" entries in git status.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Written by the application at run time.
+logs/*.log
+analytics/*.txt
+analytics/*.log
+
+# macOS metadata (the Spring 24 copy is full of these).
+._*
+.DS_Store

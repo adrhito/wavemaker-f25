@@ -1,0 +1,2 @@
+# For running the test suite: py -3 -m pytest
+pytest>=7.0

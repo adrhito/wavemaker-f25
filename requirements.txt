@@ -1,0 +1,7 @@
+# The interface itself needs only the Python standard library (tkinter) plus
+# the vendored copy of pylogix under modules/. Nothing here is required to run
+# the machine.
+
+# Optional: saves analytics runs to a local MongoDB as well as to analytics/.
+# Without it, runs are still written to analytics/<date>.txt.
+pymongo==4.5.0

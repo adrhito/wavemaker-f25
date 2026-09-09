@@ -1,418 +1,514 @@
-from inspect import trace
-from re import S
-from tkinter import ttk,  StringVar, IntVar, Checkbutton, Label, Button, Entry, messagebox, OptionMenu, Event, EventType
-from typing import Dict, List, Any
+"""Define Motors: choose pistons, group them into sets, and set parameters.
 
-from Model import Model
-from Motor import Motor
-from modules.tooltip import Tooltip
-# use partial when making event handlers with arguments
+The important idea on this tab is that **parameters belong to a set**.  You pick
+what you are editing in the "Editing" list on the left, and what you type goes
+only there.  The previous version applied every keystroke to every motor in
+every set at once, so a second set could never differ from the first -- which
+defeated the whole point of having sets.
+"""
+
+from __future__ import annotations
+
 from functools import partial
+from logging import Logger, getLogger
+from tkinter import Checkbutton, IntVar, Listbox, StringVar, messagebox, ttk
+from typing import Dict, List, Optional
+
+from app import params
+from Model import MachineState, Model, MotorSet
+from modules.logging.log_utils import LOGGER_NAME
+from modules.tooltip import Tooltip
+
+#: Shown in an entry box when the pistons of a set disagree on that parameter,
+#: which a preset can cause. Typing over it sets them all to the new value.
+MIXED = "(varies)"
+
+PENDING_LABEL = "New set (current selection)"
+
+FREE_COLOUR = "#d9d9d9"
+SELECTED_COLOUR = "#7ed957"
+IN_SET_COLOUR = "#f7a1c4"
 
 
 class DefineMotors:
+    """The Define Motors tab."""
 
-    tab: ttk.Frame
-    model: Model
-    isDragging: bool = False
+    logger: Logger = getLogger(LOGGER_NAME)
 
-    dragCoords: List[int] = [-1, -1, -1, -1]
-    root: ttk.Notebook  # need to hold a copy of the root for mouse position
-
-    selected_motors: List[Motor]
-
-    def __init__(self, root: ttk.Notebook, model: Model):
-        """Main Frame and driver for the Define Motors ab."""
+    def __init__(self, root: ttk.Notebook, model: Model, view) -> None:
         self.model = model
+        self.view = view
         self.root = root
-
         self.tab = ttk.Frame(root)
 
-        # set up and place title and content frames
-        self.title_frame = ttk.Frame(self.tab, padding=(25, 25, 0, 0))
+        #: Which set the parameter boxes are editing; ``None`` means the
+        #: not-yet-grouped selection.
+        self.editing: Optional[MotorSet] = None
+        #: Set while the boxes are being refreshed, so filling them in does not
+        #: read back as the operator typing.
+        self._refreshing = False
+        self._invalid: Dict[str, str] = {}
+
+        self._drag_origin: Optional[tuple] = None
+
+        self.title_frame = ttk.Frame(self.tab, padding=(25, 20, 25, 0))
         self.content_frame = ttk.Frame(self.tab, padding=25)
-        self.title_frame.grid(row=0, column=0)
-        self.content_frame.grid(row=1, column=0)
+        self.title_frame.grid(row=0, column=0, sticky="w")
+        self.content_frame.grid(row=1, column=0, sticky="nsew")
 
-        # add title
-        ttk.Label(self.title_frame, text="Define Motors",
-                  style="Heading.TLabel").grid()
+        ttk.Label(
+            self.title_frame, text="Define Motors", style="Heading.TLabel"
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            self.title_frame,
+            text="Tick motors, press Create Set, then give that set its parameters.",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        # add and place content frames
-        self.movement_frame = ttk.Frame(self.content_frame)
-        self.param_frame = ttk.Frame(self.content_frame)
+        self._build_motor_grid()
+        self._build_set_controls()
+        self._build_param_frame()
 
-        self.motor_frame = ttk.Frame(self.content_frame, borderwidth=15)
-        self.motor_frame.bind('<B1-Motion>', self.startDragSelect)
-        self.motor_frame.bind('<ButtonRelease-1>', self.endDragSelect)
-        #self.motor_frame.grid(row=0, column=0)
+        self.refresh(model.state)
+        root.add(self.tab, text=" Define Motors")
 
-        self.button_frame = ttk.Frame(self.content_frame)
-        #self.button_frame.grid(row=1, column=0)
+    # -- construction ---------------------------------------------------------
 
-        self.motor_frame.grid(row=0)
-        self.button_frame.grid(row=1)
-        self.movement_frame.grid(row=2)
-        self.param_frame.grid(row=3)
+    def _build_motor_grid(self) -> None:
+        frame = ttk.Frame(self.content_frame, borderwidth=10)
+        frame.grid(row=0, column=0, columnspan=2, sticky="w")
+        self.motor_frame = frame
 
-        # Create Widgets for self.motor_frame
+        self.check_vars: List[IntVar] = [IntVar() for _ in range(30)]
+        self.check_buttons: List[Checkbutton] = []
+        self.check_tips: List[Tooltip] = []
 
-        self.intVars = [IntVar() for _ in range(30)]
-        self.checkButtons: List[Checkbutton] = []
-        self.checkButtonTips: List[Tooltip] = []
-        for i in range(30):
-            self.checkButtons.append(Checkbutton(
-                self.motor_frame, text=f'Motor {i}', variable=self.intVars[i], command=partial(model.onCheck, i, self.intVars[i])))
-            self.model.motdict[i] = 0
-            self.checkButtonTips.append(
-                Tooltip(self.checkButtons[i], "Deactivated"))
+        for axis in range(30):
+            button = Checkbutton(
+                frame,
+                text="Motor {0}".format(axis),
+                variable=self.check_vars[axis],
+                command=partial(self.on_check, axis),
+            )
+            button.grid(row=axis % 3 + 1, column=axis // 3 + 1, padx=(0, 10), pady=5)
+            self.check_buttons.append(button)
+            self.check_tips.append(Tooltip(button, "Not selected"))
 
-        # Place widgets in self.motor_frame
-        for i in range(10):
-            for j in range(3):
-                self.checkButtons[i * 3 +
-                                  j].grid(row=j + 1, column=i+1, padx=(0, 10), pady=5)
+        frame.bind("<Button-1>", self._drag_start)
+        frame.bind("<ButtonRelease-1>", self._drag_end)
+        root_widget = self.root
+        root_widget.update_idletasks()
 
-        root.update()  # update assigns pixel coordinates for checkbuttons.
+        actions = ttk.Frame(self.content_frame)
+        actions.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 20))
 
-        self.define_button_moved = ttk.Button(self.button_frame,  text="Add Selected Motors to Set",
-                                              command=lambda: self.motor_define()).grid(row=0, column=0)
-        ttk.Label(self.button_frame, text='     ').grid(row=0, column=1)
-        self.off_and_reset = ttk.Button(self.button_frame, text="Turn Off Live Motors and Reset",
-                                        command=lambda: self.motor_off()).grid(row=0, column=2)
-        ttk.Label(self.button_frame, text='     ').grid(row=0, column=3)
+        self.create_button = ttk.Button(
+            actions, text="Create Set from Selection", command=self.create_set
+        )
+        self.create_button.grid(row=0, column=0, padx=(0, 10))
 
-        # Create Widgets for self.movement_frame
-        self.curr_set_label = ttk.Label(self.movement_frame,
-                                  text='Activated Sets: ')
-        
-        self.setsStringVar = StringVar()
-        
-        self.sets_label = ttk.Label(self.movement_frame, text=self.setsStringVar.get())
-        self.confirm_sets_button = ttk.Button(self.button_frame, text = 'Confirm Set', command=lambda: self.confirm_select(), state='disabled')
+        self.select_all_button = ttk.Button(
+            actions, text="Select All Free", command=self.select_all_free
+        )
+        self.select_all_button.grid(row=0, column=1, padx=(0, 10))
 
-        self.param_button = ttk.Button(self.button_frame, text='(Parameter Details)',
-                                       command=lambda: self.param_info_click())
-        
-                # create specification dropdown
-        # self.specify_type_menu = StringVar()
-        # self.specify_type_menu.set("Select Specification Method")
-        # self.specify_type = OptionMenu(
-        #     self.movement_frame, self.specify_type_menu, "Define All Live", "Define All Selected", "Define by Row", "Define by Column", command=self.specify_type_select)
-        self.selected_motors = []
-        self.specify_rc = None
+        self.clear_selection_button = ttk.Button(
+            actions, text="Clear Selection", command=self.clear_selection
+        )
+        self.clear_selection_button.grid(row=0, column=2, padx=(0, 10))
 
-        # Place widgets in self.movement_frame
-        self.curr_set_label.grid(column=0, row=0, pady=30)
-        self.sets_label.grid(column=1,row=0)
-        #self.specify_type.grid(column=2, row=0, padx=(0, 30), pady=15)
-        self.param_button.grid(column=4, row=0, padx=(0, 30))
-        self.confirm_sets_button.grid(column=5,row=0,padx=(0,30))
+        Tooltip(
+            self.create_button,
+            "Groups the ticked motors into a set with the parameters shown below.\n"
+            "Each set keeps its own parameters and can run alongside the others.",
+        )
 
-        # create Widgets for self.param_frame
-        self.param_input_labels = [ttk.Label(self.param_frame, text=param)
-                                   for param in self.model.ALL_PARAMS]
-        for i, param_tip in enumerate(self.model.ALL_PARAM_TIPS):
-            Tooltip(self.param_input_labels[i], param_tip)
-            self.param_input_labels[i]
+    def _build_set_controls(self) -> None:
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=2, column=0, sticky="nw", padx=(0, 30))
 
-        self.param_input_vars = {param: StringVar()
-                                 for param in self.model.ALL_PARAMS}
-        self.param_inputs = [ttk.Entry(self.param_frame, textvariable=self.param_input_vars[param])
-                             for param in self.model.ALL_PARAMS]
-        for param in self.model.ALL_PARAMS:
-            self.param_input_vars[param].trace_add(
-                'write', partial(self.update_motor_write_params, param=param))
+        ttk.Label(frame, text="Editing").grid(row=0, column=0, sticky="w")
+        self.set_list = Listbox(
+            frame,
+            height=9,
+            width=32,
+            exportselection=False,
+            bg="#2b2b2b",
+            fg="#e8e8e8",
+            selectbackground="#777A7A",
+            highlightthickness=0,
+        )
+        self.set_list.grid(row=1, column=0, sticky="w", pady=(4, 6))
+        self.set_list.bind("<<ListboxSelect>>", self._on_set_selected)
 
-        # Parameter Info
-        self.position_msg = 'Position limits after homing are 370mm and - 20 mm \n\n'
-        self.velocity_msg = 'Velocity limits are 0 and approx. 900 mm/sec. Dependant on Current(A) usage\n\n'
-        self.accel_msg = 'Acceleration and Deceleration are limited at 50,000 mm/s^2\n\n'
-        self.jerk_msg = 'Jerk in general should be larger than the Acceleration and Deceleration mm/s^3\n\n'
-        self.profile_msg = 'Profile: Trapazoidal(0) Bestehorn(1) S-Curve(2) Sin(3)\n\n'
-        self.movtype_msg = 'Move Type: Absolute(0): Based on defined axis. Incremental(1): Moves the amount specified in position argument'
+        self.delete_button = ttk.Button(
+            frame, text="Delete Selected Set", command=self.delete_set
+        )
+        self.delete_button.grid(row=2, column=0, sticky="w")
 
-        # Place widgets in self.param_frame
-        for i in range(3):
-            for j in range(6):
-                self.param_input_labels[i * 6 +
-                                        j].grid(column=i * 2, row=j + 1, padx=15, pady=15)
-                self.param_inputs[i * 6 +
-                                  j].grid(column=i * 2 + 1, row=j + 1, padx=15, pady=15)
+        self.reset_button = ttk.Button(
+            frame, text="Turn Off and Reset All", command=self.reset_all
+        )
+        self.reset_button.grid(row=3, column=0, sticky="w", pady=(6, 0))
 
-        # Disable button in movement frame if the on/off buttons aren't enabled
-        #self.movement_frame_enable()
-        self.param_frame_enable()
-        self.color_buttons_green()
+    def _build_param_frame(self) -> None:
+        frame = ttk.Frame(self.content_frame)
+        frame.grid(row=2, column=1, sticky="nw")
+        self.param_frame = frame
 
-        # Add tab name for Define Motors
-        root.add(self.tab, text=' Define Motors')
+        self.editing_label = ttk.Label(frame, text="", style="Step.TLabel")
+        self.editing_label.grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 8))
 
-    def onSelect(self):
-        """This method is called when the notebook switched the view to this tab."""
-        self.update_checkbutton_tips()
-        self.param_frame_enable()
-        self.color_buttons_green()        
+        self.param_vars: Dict[str, StringVar] = {}
+        self.param_entries: Dict[str, ttk.Entry] = {}
 
-    def specify_type_select(self, selected):
-        #THIS FUNCTIONALITY HAS BEEN REMOVED
-        """This method is called when a new type is selected in the specify type dropdown."""
-        if not self.specify_rc == None:
-            self.specify_rc.destroy()
-        if selected == "Define All Live":
-            self.selected_motors = [
-                motor for motor in self.model.live_motors.values()]
-            if len(self.selected_motors) > 0:
-                for param in self.param_input_vars:
-                    self.param_input_vars[param].set(
-                        str(self.selected_motors[0].write_params[param]))
-            self.param_frame_enable()
-        if selected == "Define All Selected":
-            self.selected_motors = []
-            for mot_num in self.model.motdict:
-                if self.model.motdict[mot_num] == 1:
-                    if mot_num in self.model.live_motors:
-                        self.selected_motors.append(
-                            self.model.live_motors[mot_num])
-            if len(self.selected_motors) > 0:
-                for param in self.param_input_vars:
-                    self.param_input_vars[param].set(
-                        str(self.selected_motors[0].write_params[param]))
-            self.param_frame_enable()
-        # TODO: get rid of extra menus when not used
-        if selected == "Define by Row":
-            self.selected_motors = []
+        for index, spec in enumerate(params.PARAMS):
+            column, row = divmod(index, 6)
+            label = ttk.Label(frame, text=spec.name)
+            label.grid(row=row + 1, column=column * 2, padx=(0, 8), pady=6, sticky="e")
+            Tooltip(label, "{0}\n\nAccepted: {1}".format(spec.help, spec.describe_range()))
 
-            self.specify_row_menu = StringVar()
-            self.specify_row_menu.set('Select Row')
-            rows: List[int] = self.model.get_rows()
-            row_strings: List[str] = []
-            for i in rows:
-                row_strings.append(f"Row {i}")
-            self.specify_rc = OptionMenu(
-                self.movement_frame, self.specify_row_menu, *(row_strings), command=self.specify_row_select)
-            self.specify_rc.grid(column=3, row=0, padx=15,
-                                 pady=15, )
-            self.param_frame_enable()
+            var = StringVar()
+            entry = ttk.Entry(frame, textvariable=var, width=12)
+            entry.grid(row=row + 1, column=column * 2 + 1, padx=(0, 24), pady=6)
+            var.trace_add("write", partial(self._on_param_typed, spec.name))
 
-        if selected == "Define by Column":
-            self.selected_motors = []
+            self.param_vars[spec.name] = var
+            self.param_entries[spec.name] = entry
 
-            self.specify_row_menu = StringVar()
-            self.specify_row_menu.set('Select Column')
-            columns: List[int] = self.model.get_columns()
-            column_strings: List[str] = []
-            for i in columns:
-                column_strings.append(f"Column {i}")
-            self.specify_rc = OptionMenu(
-                self.movement_frame, self.specify_row_menu, *(column_strings), command=self.specify_column_select)
+        self.param_message = ttk.Label(frame, text="", wraplength=560, justify="left")
+        self.param_message.grid(row=7, column=0, columnspan=6, sticky="w", pady=(10, 0))
 
-            self.specify_rc.grid(column=3, row=0, padx=15,
-                                 pady=15)
-            self.param_frame_enable()
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=8, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        ttk.Button(buttons, text="Restore Defaults", command=self.restore_defaults).grid(
+            row=0, column=0, padx=(0, 10)
+        )
+        self.copy_button = ttk.Button(
+            buttons, text="Copy These to All Sets", command=self.copy_to_all_sets
+        )
+        self.copy_button.grid(row=0, column=1)
+        Tooltip(
+            self.copy_button,
+            "Applies the values shown above to every set.\n"
+            "Use this when you deliberately want all sets to match.",
+        )
 
-    def specify_row_select(self, selected):
-        row: int = int(selected[4])
-        self.selected_motors = self.model.get_row(row)
-        if len(self.selected_motors) > 0:
-            for param in self.param_input_vars:
-                self.param_input_vars[param].set(
-                    str(self.selected_motors[0].write_params[param]))
-        self.param_frame_enable()
+    # -- selection ------------------------------------------------------------
 
-    def specify_column_select(self, selected):
-        column: int = int(selected[7])
-        self.selected_motors = self.model.get_column(column)
-        if len(self.selected_motors) > 0:
-            for param in self.param_input_vars:
-                self.param_input_vars[param].set(
-                    str(self.selected_motors[0].write_params[param]))
-        self.param_frame_enable()
-
-    def param_info_click(self):
-        messagebox.showinfo("Parameter Details", self.position_msg + self.velocity_msg +
-                            self.accel_msg + self.jerk_msg + self.profile_msg + self.movtype_msg)
-
-    def motorSet_to_string(self):
-        formatted_output = ""
-        for index, motor_dict in enumerate(self.model.live_motors_sets):
-            formatted_output += f"Set {index +1}: Motors {list(motor_dict.keys())}\n"
-        return formatted_output
-    
-    def confirm_set_confirmation(self):
-        res = messagebox.askquestion("Check before proceeding!", "Are you sure the parameter values you entered are correct? \n You will need to clear all sets and re-enter parameters if not!")
-        if res == 'yes':
-            return True
-        if res == 'no':
-            return False
-            
-
-    def confirm_select(self):
-        if(self.confirm_set_confirmation()): 
-            self.model.live_motors_sets.append(self.model.live_motors.copy())
-            self.confirm_sets_button['state'] = 'disabled'
-            self.selected_motors = []
-            for mot_num in self.model.motdict:
-                if self.model.motdict[mot_num] == 1:
-                    if mot_num in self.model.live_motors:
-                        self.selected_motors.append(
-                            self.model.live_motors[mot_num])
-                        self.model.motdict[mot_num] = 2
-                        self.checkButtons[mot_num]['bg'] = 'pink'
-            if len(self.selected_motors) > 0:
-                for param in self.param_input_vars:
-                    self.param_input_vars[param].set(
-                        str(self.selected_motors[0].write_params[param]))            
-            self.param_frame_enable()
-            self.setsStringVar.set(self.motorSet_to_string())
-            self.sets_label.config(text = self.setsStringVar.get())
-            print(self.model.motdict)
-            print(self.selected_motors)
-            print(self.model.live_motors)
-
-
-    def motor_define(self):
-        """Calls motor_define on model then updates UI upon response."""
-        self.model.motor_define()
-        self.confirm_sets_button['state'] = 'enable'
-        self.update_checkbutton_tips()
-        #self.movement_frame_enable()
-        self.color_buttons_green()
-
-    def update_checkbutton_tips(self):
-        for i in range(30):
-            self.checkButtonTips[i].updateText('Unactivated')
-        for set in self.model.live_motors_sets:
-            for key in set.keys():
-                self.checkButtonTips[key].updateText(
-                    set[key].generate_writter_param_str())
-
-    def update_motor_write_params(self, *args, param) -> Any:
-        """When a param is edited, update the write_params of all relevant motors."""
-        new_val: str = self.param_input_vars[param].get()
-        if new_val.lstrip('-').isnumeric():
-            int_val: int = int(new_val)
-            # FIX: Update parameters for ALL motors in all sets, not just selected_motors
-            # This allows parameter changes even after motors are confirmed into sets
-            for motor in self.selected_motors:
-                motor.write_params[param] = int_val
-            # Also update all motors in confirmed sets
-            for motor_set in self.model.live_motors_sets:
-                for motor in motor_set.values():
-                    motor.write_params[param] = int_val
-            self.update_checkbutton_tips()
-
-    def motor_off(self):
-        """Calls motor_off on model then updates UI upon response."""
-        #TODO - CHANGE sets label according to this
-        self.model.motor_off()
-        for i in range(len(self.checkButtons)):
-            if i in self.model.motdict:
-                # turn motor off in motdict if it was checked
-                self.model.motdict[i] = 0
-            self.checkButtons[i].deselect()
-        if self.model.CONNECTED:
-            self.model.live_motor_reset()
-        else:
-            self.model.mock_live_motor_reset()
-        self.model.live_motors_sets.clear()
-        self.setsStringVar.set("")
-        self.sets_label.config(text = self.setsStringVar.get())
-        self.color_buttons_green()
-        self.update_checkbutton_tips()
-        self.param_frame_enable()
-        #self.movement_frame_enable()
-
-    # def movement_frame_enable(self):
-    #     if len(self.model.live_motors) >= 1:
-    #         self.specify_type['state'] = 'normal'
-    #     else:
-    #         self.specify_type['state'] = 'disabled'
-
-    def show_current_param_values(self):
-        ...
-        # FIX: Show parameters from confirmed sets, not just live_motors
-        # This ensures parameter fields display correct values for all motors
-        motors_to_show = []
-        
-        # First check if there are motors in sets
-        if len(self.model.live_motors_sets) > 0:
-            for motor_set in self.model.live_motors_sets:
-                motors_to_show.extend(motor_set.values())
-        # Otherwise check live_motors
-        elif self.model.live_motors != {}:
-            motors_to_show = list(self.model.live_motors.values())
-        
-        if len(motors_to_show) > 0:
-            for param in self.param_input_vars:
-                self.param_input_vars[param].set(
-                    str(motors_to_show[0].write_params[param]))
-
-    def param_frame_enable(self):
-        # FIX: Enable parameter editing if there are motors in sets OR live_motors
-        # This allows parameter changes after motors are confirmed into sets
-        has_motors = (self.model.live_motors != {}) or (len(self.model.live_motors_sets) > 0)
-        
-        if has_motors:
-            for param in self.param_inputs:
-                param['state'] = 'normal'
-            self.show_current_param_values()
-        else:
-            for param in self.param_inputs:
-                param['state'] = 'disabled'
-
-    def color_buttons_green(self):
-        for button in self.checkButtons:
-            button['bg'] = 'light grey'
-        for set in self.model.live_motors_sets:
-            for key in set.keys():
-                self.checkButtons[key]['bg'] = 'pink'
-        for mot, value in self.model.motdict.items():
-            if value == 2:
-                self.checkButtons[mot]['bg'] = 'pink'
-        for key in self.model.live_motors:
-            self.checkButtons[key]['bg'] = 'light green'
-
-    def startDragSelect(self, event):
-        if self.isDragging:
+    def on_check(self, axis: int) -> None:
+        """A checkbox was clicked."""
+        owner = self.model.axis_owner(axis)
+        if owner is not None:
+            # Belongs to a set already; put the tick back and say why.
+            self.check_vars[axis].set(0)
+            self.param_message.configure(
+                text="Motor {0} is already in {1}. Delete that set to free it.".format(
+                    axis, owner.name
+                )
+            )
             return
-        else:
-            # set start coords
-            self.dragCoords[0] = self.root.winfo_pointerx()  # startX
-            self.dragCoords[1] = self.root.winfo_pointery()  # startY
-            self.isDragging = True
+        self.model.toggle(axis, bool(self.check_vars[axis].get()))
+        self._paint_checkboxes()
+        self._refresh_editing_label()
 
-    def endDragSelect(self, event):
-        if not self.isDragging:
+    def select_all_free(self) -> None:
+        for axis in range(30):
+            if self.model.axis_owner(axis) is None:
+                self.check_vars[axis].set(1)
+                self.model.toggle(axis, True)
+        self._paint_checkboxes()
+        self._refresh_editing_label()
+
+    def clear_selection(self) -> None:
+        for axis in range(30):
+            self.check_vars[axis].set(0)
+            self.model.toggle(axis, False)
+        self._paint_checkboxes()
+        self._refresh_editing_label()
+
+    def create_set(self) -> None:
+        try:
+            motor_set = self.model.create_set()
+        except ValueError as exc:
+            messagebox.showwarning("Cannot create set", str(exc), parent=self.tab)
             return
+
+        for axis in motor_set.axes:
+            self.check_vars[axis].set(0)
+
+        self.editing = motor_set
+        self.model.pending_params = params.defaults()
+        self.refresh(self.model.state)
+        self.view.status("{0} created. Prepare the motors when ready.".format(motor_set.name))
+
+    def delete_set(self) -> None:
+        if self.editing is None:
+            messagebox.showinfo(
+                "Nothing to delete",
+                "Choose a set in the Editing list first.",
+                parent=self.tab,
+            )
+            return
+        name = self.editing.name
+        if not messagebox.askyesno(
+            "Delete set", "Delete {0}?".format(name), parent=self.tab
+        ):
+            return
+        self.model.remove_set(self.editing)
+        self.editing = None
+        self.model.mark_unprepared()
+        self.refresh(self.model.state)
+        self.view.status("{0} deleted.".format(name))
+
+    def reset_all(self) -> None:
+        if not messagebox.askyesno(
+            "Turn off and reset",
+            "Turn the motors off, clear every set and return the application "
+            "to its starting state?",
+            parent=self.tab,
+        ):
+            return
+        self.model.reset()
+        self.editing = None
+        self.clear_selection()
+        self.refresh(self.model.state)
+
+    # -- parameters -----------------------------------------------------------
+
+    def _target_description(self) -> str:
+        if self.editing is not None:
+            return "{0} - motors {1}".format(
+                self.editing.name, ", ".join(str(a) for a in self.editing.axes)
+            )
+        selected = self.model.selected_axes()
+        if selected:
+            return "New set - motors {0} (not created yet)".format(
+                ", ".join(str(a) for a in selected)
+            )
+        return "New set - tick some motors above"
+
+    def _refresh_editing_label(self) -> None:
+        self.editing_label.configure(text="Parameters for: " + self._target_description())
+
+    def _on_param_typed(self, name: str, *_args) -> None:
+        """Apply a parameter as it is typed, to the set being edited only."""
+        if self._refreshing:
+            return
+
+        text = self.param_vars[name].get()
+        if text.strip() in ("", "-", MIXED):
+            # A half-typed value is not an error; wait for the rest.
+            return
+
+        try:
+            value = params.parse(name, text)
+        except ValueError as exc:
+            self._invalid[name] = str(exc)
+            self._show_param_problems()
+            return
+
+        self._invalid.pop(name, None)
+
+        if self.editing is not None:
+            self.editing.set_param(name, value)
+            self.model.mark_unprepared()
         else:
-            # set end coords, calculate containing checkboxes, and select them. reset dragging afterwards
-            self.dragCoords[2] = self.root.winfo_pointerx()  # endX
-            self.dragCoords[3] = self.root.winfo_pointery()  # endY
+            self.model.set_pending_param(name, value)
 
-            startX = self.dragCoords[0]
-            startY = self.dragCoords[1]
-            endX = self.dragCoords[2]
-            endY = self.dragCoords[3]
+        self._show_param_problems()
+        self._update_tooltips()
 
-            if(startX > endX):
-                temp = startX
-                startX = endX
-                endX = temp
+    def _show_param_problems(self) -> None:
+        if self._invalid:
+            self.param_message.configure(
+                text="Not applied: " + "; ".join(sorted(self._invalid.values()))
+            )
+        else:
+            self.param_message.configure(text="")
 
-            if(startY > endY):
-                temp = startY
-                startY = endY
-                endY = temp
+    def restore_defaults(self) -> None:
+        defaults = params.defaults()
+        if self.editing is not None:
+            for name, value in defaults.items():
+                self.editing.set_param(name, value)
+            self.model.mark_unprepared()
+        else:
+            self.model.pending_params = defaults
+        self._invalid.clear()
+        self._load_param_values()
+        self._update_tooltips()
 
-            for i in range(30):
-                checkX = self.checkButtons[i].winfo_rootx(
-                ) + (self.checkButtons[i].winfo_width() // 2)
-                checkY = self.checkButtons[i].winfo_rooty(
-                ) + (self.checkButtons[i].winfo_height() // 2)
+    def copy_to_all_sets(self) -> None:
+        """Push the values on screen to every set."""
+        if not self.model.sets:
+            return
+        source = (
+            dict(
+                (spec.name, self.editing.common_value(spec.name))
+                for spec in params.PARAMS
+            )
+            if self.editing is not None
+            else dict(self.model.pending_params)
+        )
+        shared = dict((k, v) for k, v in source.items() if v is not None)
+        if not shared:
+            return
+        if not messagebox.askyesno(
+            "Copy to all sets",
+            "Apply these {0} values to all {1} sets?".format(
+                len(shared), len(self.model.sets)
+            ),
+            parent=self.tab,
+        ):
+            return
+        for motor_set in self.model.sets:
+            for name, value in shared.items():
+                motor_set.set_param(name, value)
+        self.model.mark_unprepared()
+        self.refresh(self.model.state)
+        self.view.status("Parameters copied to all sets.")
 
-                if(startX < checkX < endX and startY < checkY < endY):
-                    self.checkButtons[i].invoke()
+    def _load_param_values(self) -> None:
+        """Fill the boxes from whatever is being edited."""
+        self._refreshing = True
+        try:
+            for spec in params.PARAMS:
+                if self.editing is not None:
+                    value = self.editing.common_value(spec.name)
+                    text = MIXED if value is None else str(value)
+                else:
+                    text = str(self.model.pending_params[spec.name])
+                self.param_vars[spec.name].set(text)
+        finally:
+            self._refreshing = False
 
-            self.dragCoords = [-1, -1, -1, -1]
-            self.isDragging = False
+    # -- painting -------------------------------------------------------------
+
+    def _paint_checkboxes(self) -> None:
+        for axis in range(30):
+            owner = self.model.axis_owner(axis)
+            if owner is not None:
+                self.check_buttons[axis]["bg"] = IN_SET_COLOUR
+                self.check_tips[axis].updateText(
+                    "In {0}\n\n{1}".format(
+                        owner.name, owner.motors[axis].describe_params()
+                    )
+                )
+            elif self.check_vars[axis].get():
+                self.check_buttons[axis]["bg"] = SELECTED_COLOUR
+                self.check_tips[axis].updateText("Selected, not yet in a set")
+            else:
+                self.check_buttons[axis]["bg"] = FREE_COLOUR
+                self.check_tips[axis].updateText("Not selected")
+
+    def _update_tooltips(self) -> None:
+        for axis in range(30):
+            owner = self.model.axis_owner(axis)
+            if owner is not None:
+                self.check_tips[axis].updateText(
+                    "In {0}\n\n{1}".format(
+                        owner.name, owner.motors[axis].describe_params()
+                    )
+                )
+
+    def _rebuild_set_list(self) -> None:
+        self.set_list.delete(0, "end")
+        self.set_list.insert("end", PENDING_LABEL)
+        for motor_set in self.model.sets:
+            self.set_list.insert(
+                "end", "{0}  ({1} motors)".format(motor_set.name, len(motor_set))
+            )
+
+        if self.editing is not None and self.editing in self.model.sets:
+            index = self.model.sets.index(self.editing) + 1
+        else:
+            self.editing = None
+            index = 0
+        self.set_list.selection_clear(0, "end")
+        self.set_list.selection_set(index)
+
+    def _on_set_selected(self, _event: object) -> None:
+        selection = self.set_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        self.editing = None if index == 0 else self.model.sets[index - 1]
+        self._invalid.clear()
+        self._load_param_values()
+        self._refresh_editing_label()
+        self._show_param_problems()
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def onSelect(self) -> None:
+        self.refresh(self.model.state)
+
+    def refresh(self, state: MachineState) -> None:
+        """Redraw from the model. Called on tab switch and on every state change."""
+        busy = state in (MachineState.PREPARING, MachineState.RUNNING)
+
+        self._rebuild_set_list()
+        self._load_param_values()
+        self._refresh_editing_label()
+        self._paint_checkboxes()
+
+        for button in self.check_buttons:
+            button["state"] = "disabled" if busy else "normal"
+        for button in (
+            self.create_button,
+            self.select_all_button,
+            self.clear_selection_button,
+            self.delete_button,
+            self.reset_button,
+            self.copy_button,
+        ):
+            button["state"] = "disabled" if busy else "normal"
+
+        entry_state = "disabled" if busy else "normal"
+        for entry in self.param_entries.values():
+            entry["state"] = entry_state
+
+        if busy:
+            self.param_message.configure(
+                text="The machine is busy. Stop it before changing motors or parameters."
+            )
+        else:
+            self._show_param_problems()
+
+    # -- drag selection -------------------------------------------------------
+
+    def _drag_start(self, _event: object) -> None:
+        self._drag_origin = (
+            self.root.winfo_pointerx(),
+            self.root.winfo_pointery(),
+        )
+
+    def _drag_end(self, _event: object) -> None:
+        """Tick every free motor whose checkbox centre falls inside the drag."""
+        if self._drag_origin is None:
+            return
+        start_x, start_y = self._drag_origin
+        self._drag_origin = None
+        end_x, end_y = self.root.winfo_pointerx(), self.root.winfo_pointery()
+
+        if abs(end_x - start_x) < 5 and abs(end_y - start_y) < 5:
+            return  # a click, not a drag
+
+        left, right = sorted((start_x, end_x))
+        top, bottom = sorted((start_y, end_y))
+
+        changed = False
+        for axis in range(30):
+            if self.model.axis_owner(axis) is not None:
+                continue
+            button = self.check_buttons[axis]
+            centre_x = button.winfo_rootx() + button.winfo_width() // 2
+            centre_y = button.winfo_rooty() + button.winfo_height() // 2
+            if left < centre_x < right and top < centre_y < bottom:
+                self.check_vars[axis].set(1)
+                self.model.toggle(axis, True)
+                changed = True
+
+        if changed:
+            self._paint_checkboxes()
+            self._refresh_editing_label()
