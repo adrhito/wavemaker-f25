@@ -27,8 +27,8 @@ ACROSS_ROWS = "rows"
 ACROSS_SELECTION = "selection"
 
 AXES_CHOICES = (
-    (ACROSS_COLUMNS, "Across columns (1 - 10)"),
-    (ACROSS_ROWS, "Down rows (1 - 3)"),
+    (ACROSS_COLUMNS, "Front to back  (columns 1 - 10)"),
+    (ACROSS_ROWS, "Top to bottom  (rows 1 - 3)"),
     (ACROSS_SELECTION, "In motor-number order"),
 )
 
@@ -40,7 +40,7 @@ MIRROR = "mirror"
 PATTERN_CHOICES = (
     (UNIFORM, "Uniform - the same value everywhere"),
     (RAMP, "Ramp - even steps from a start value to an end value"),
-    (STAGGER, "Stagger - add a fixed step per column, for a travelling wave"),
+    (STAGGER, "Stagger - a fixed step per position, for a travelling wave"),
     (MIRROR, "Mirror - ramp out from the centre, symmetric about it"),
 )
 
@@ -175,10 +175,10 @@ def describe(pattern: str) -> str:
             "Ramping Position 2 tapers the stroke across the array."
         ),
         STAGGER: (
-            "Each position gets the value before it plus a fixed step. Staggering "
-            "a timing or curve offset makes the wave reach one end of the array "
-            "before the other, so it travels along the tank instead of arriving "
-            "everywhere at once."
+            "Each position gets the value before it plus a fixed step. Front to "
+            "back is the direction the chamber runs, so staggering a timing or "
+            "curve offset that way makes the wave reach the back of the chamber "
+            "after the front, rather than the whole array moving together."
         ),
         MIRROR: (
             "The value ramps outward from the centre, the same on both sides. "

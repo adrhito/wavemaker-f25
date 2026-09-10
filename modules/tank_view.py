@@ -12,11 +12,20 @@ Everything is drawn on a plain ``tkinter.Canvas``. The lab PC is offline
 Windows 7, so no drawing library can be installed -- there is no PIL, no
 matplotlib, nothing but what ships with Python.
 
-Coordinates
+Orientation
 -----------
 ``axis`` 0..29. Row is ``axis % 3 + 1`` and column is ``axis // 3 + 1``, which
 is how ``Motor`` has always mapped them: axes 0, 1, 2 are the three rows of
-column 1. Columns run left to right across the drawing.
+column 1.
+
+Physically, columns run **front to back** into the chamber -- column 1 is
+nearest the operator, column 10 is at the back -- and rows run top to bottom.
+So piston 27 (row 1, column 10) is the top back corner and piston 2 (row 3,
+column 1) is the front corner nearest you. The drawing is laid out to match,
+with column 1 on the left.
+
+That makes the column direction the one a wave travels along, which is why the
+pattern tool calls a stagger across columns a "front to back" stagger.
 """
 
 from __future__ import annotations
@@ -57,6 +66,24 @@ SET_COLOURS: List[str] = [
 #: no dependency on the rest of the application and can be previewed alone.
 POSITION_MIN = -20
 POSITION_MAX = 368
+
+
+def describe_place(axis: int) -> str:
+    """Where a piston is, in the chamber's own terms.
+
+    "row 1, column 10" says nothing on its own; "top, back of chamber" is what
+    the operator is actually looking at.
+    """
+    row = axis % ROWS
+    column = axis // ROWS
+    vertical = ("top", "middle", "bottom")[row]
+    if column == 0:
+        depth = "front (nearest you)"
+    elif column == COLUMNS - 1:
+        depth = "back of chamber"
+    else:
+        depth = "column {0} of {1}".format(column + 1, COLUMNS)
+    return "{0}, {1}".format(vertical, depth)
 
 
 class TankView:
@@ -178,7 +205,7 @@ class TankView:
 
         pad_x = 14
         pad_top = 22          # room for the column ruler
-        pad_bottom = 8
+        pad_bottom = 20       # room for the front/back labels
 
         usable_w = width - pad_x * 2
         usable_h = height - pad_top - pad_bottom
@@ -246,7 +273,11 @@ class TankView:
         return "#%02x%02x%02x" % mixed
 
     def _draw_ruler(self, m) -> None:
-        """Column numbers along the top, so 'column 4' means something."""
+        """Column numbers and which way the chamber runs.
+
+        Without this the picture is just a grid, and there is nothing to tell
+        you that the right-hand side is the back of the chamber.
+        """
         c = self.canvas
         for column in range(COLUMNS):
             x = m["pad_x"] + (column + 0.5) * m["cell_w"]
@@ -254,6 +285,23 @@ class TankView:
                 x, 10, text=str(column + 1), fill=LABEL_DIM,
                 font=("Segoe UI", 8),
             )
+
+        baseline = m["height"] - 7
+        c.create_text(
+            m["pad_x"], baseline, text="FRONT - nearest you", anchor="w",
+            fill=LABEL_DIM, font=("Segoe UI", 8),
+        )
+        c.create_text(
+            m["width"] - m["pad_x"], baseline, text="BACK of chamber", anchor="e",
+            fill=LABEL_DIM, font=("Segoe UI", 8),
+        )
+
+        # A thin arrow between the two labels, so the direction reads at a glance.
+        mid = m["width"] / 2.0
+        c.create_line(
+            mid - 62, baseline, mid + 62, baseline,
+            fill="#3f4a56", width=1, arrow="last", arrowshape=(7, 9, 3),
+        )
 
     def _draw_piston(self, axis: int, m) -> None:
         c = self.canvas

@@ -18,7 +18,7 @@ from typing import Dict, Optional
 
 from Model import MachineState, Model, RunMode
 from modules.logging.log_utils import LOGGER_NAME
-from modules.tank_view import TankView
+from modules.tank_view import TankView, describe_place
 from modules.tooltip import Tooltip
 
 
@@ -255,10 +255,16 @@ class ControlHome:
             return
         owner = self.model.axis_owner(axis)
         if owner is None:
-            self.hover_label.configure(text="Motor {0}  -  not in a set".format(axis))
+            self.hover_label.configure(
+                text="Motor {0}  -  {1}  -  not in a set".format(
+                    axis, describe_place(axis)
+                )
+            )
             return
         position = self.tank.positions.get(axis)
-        text = "Motor {0}  -  {1}".format(axis, owner.name)
+        text = "Motor {0}  -  {1}  -  {2}".format(
+            axis, describe_place(axis), owner.name
+        )
         if position is not None:
             text += "  -  at {0:.0f} mm".format(position)
         self.hover_label.configure(text=text)

@@ -22,7 +22,7 @@ from app import params
 from define_motors.PatternDialog import PatternDialog
 from Model import MachineState, Model, MotorSet
 from modules.logging.log_utils import LOGGER_NAME
-from modules.tank_view import TankView
+from modules.tank_view import TankView, describe_place
 from modules.tooltip import Tooltip
 
 #: Shown when the pistons of a set disagree on a parameter, which a preset or a
@@ -246,8 +246,7 @@ class DefineMotors:
             self.hover_label.configure(text=" ")
             return
         owner = self.model.axis_owner(axis)
-        row, column = axis % 3 + 1, axis // 3 + 1
-        where = "Motor {0}  -  row {1}, column {2}".format(axis, row, column)
+        where = "Motor {0}  -  {1}".format(axis, describe_place(axis))
         if owner is None:
             state = "selected" if self.model.selection[axis] else "free"
             self.hover_label.configure(text="{0}  -  {1}".format(where, state))
