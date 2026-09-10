@@ -1009,9 +1009,7 @@ class Model:
             at_rest = True
             for motor in self.all_motors:
                 try:
-                    actual = float(
-                        self.plc.read(tags.axis_field(motor.axis, tags.ACTUAL_POSITION))
-                    )
+                    actual = motor.read_position(self.plc)
                 except (PlcError, TypeError, ValueError):
                     continue
                 ends = (
@@ -1053,6 +1051,7 @@ class Model:
             and self.rest_position != REST_HOLD
             and self._state is MachineState.HOMED
             and self.all_motors
+            and not self._parking.is_set()   # one resting move at a time
         ):
             self._spawn("Rest", self._park_worker)
         else:
@@ -1136,7 +1135,7 @@ class Model:
     def _all_within(self, targets: Dict[int, int], tolerance: float) -> bool:
         for axis, target in targets.items():
             try:
-                actual = float(
+                actual = params.to_mm(
                     self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
                 )
             except (PlcError, TypeError, ValueError):
@@ -1266,7 +1265,7 @@ class Model:
         for motor in self.all_motors:
             axis = motor.axis
             try:
-                actual = float(
+                actual = params.to_mm(
                     self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
                 )
             except (PlcError, TypeError, ValueError):
@@ -1357,6 +1356,7 @@ class Model:
             identity = self.plc.identity()
             if identity:
                 LOGGER.info("Controller: %s", identity)
+            self._check_position_scale()
             self.bridge.status("Connected. Clearing the machine...")
             self.motors_off()
             self.bridge.status("Ready. Choose pistons on the tank.")
@@ -1369,6 +1369,30 @@ class Model:
                 "powered and in Run, then press Reconnect.".format(self.ip_address)
             )
         self._set_state(MachineState.IDLE)
+
+    def _check_position_scale(self) -> None:
+        """Warn if the controller stops reporting positions in drive counts.
+
+        The scale is taken from observed data rather than from documentation,
+        so if it is ever wrong the application should say so instead of quietly
+        misreporting every position by a factor of ten thousand.
+        """
+        try:
+            raw = self.plc.read(tags.axis_field(0, tags.ACTUAL_POSITION))
+        except PlcError:
+            return
+        if params.looks_like_millimetres(raw):
+            LOGGER.warning(
+                "Axis 0 reports position %s, which looks like millimetres "
+                "rather than drive counts. If the controller now publishes "
+                "millimetres, set POSITION_COUNTS_PER_MM to 1 in app/params.py.",
+                raw,
+            )
+        else:
+            LOGGER.info(
+                "Positions read in drive counts; axis 0 at %.1f mm.",
+                params.to_mm(raw),
+            )
 
     def reconnect(self) -> bool:
         """Try the PLC again without restarting the application.

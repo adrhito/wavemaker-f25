@@ -30,6 +30,50 @@ from typing import Dict, List, NamedTuple, Optional
 
 from app import tags
 
+# --- Position units ----------------------------------------------------------
+# Positions are WRITTEN in millimetres -- Pos_1 and Pos_2 have always been set
+# as 0 to 370 and the machine does the right thing.
+#
+# They are READ BACK in drive counts of 0.1 micrometres, which is the LinMot
+# position resolution. ComActualPosition and ComDemandPosition are therefore
+# ten thousand times the millimetre value.
+#
+# Established from a trial log of 11 July 2026: readings ran to 2,960,074 on a
+# machine with a 390 mm stroke, and dividing by 10,000 put every one of them
+# inside -20 to 370 mm -- pistons sat at 0.0 mm after homing and at 295.7 mm on
+# a stroke commanded to 300 mm.
+#
+# Getting this wrong is not cosmetic. Comparing a raw count against a
+# millimetre threshold made every healthy piston look thousands of millimetres
+# out of position, so the array was reported as failing when the real following
+# error was under two and a half millimetres.
+
+#: Drive counts per millimetre, for positions read back from the PLC.
+POSITION_COUNTS_PER_MM = 10000.0
+
+
+def to_mm(counts) -> float:
+    """Convert a position read from the PLC into millimetres."""
+    return float(counts) / POSITION_COUNTS_PER_MM
+
+
+def to_counts(mm) -> float:
+    """Convert millimetres into the drive counts the PLC reports."""
+    return float(mm) * POSITION_COUNTS_PER_MM
+
+
+def looks_like_millimetres(value) -> bool:
+    """Whether a reading is already in millimetres.
+
+    Used as a sanity check at startup: if the controller is ever changed to
+    publish millimetres directly, the scale above becomes wrong and the
+    application should say so rather than quietly misreport every position.
+    """
+    try:
+        return -1000.0 <= float(value) <= 1000.0
+    except (TypeError, ValueError):
+        return False
+
 
 class ParamSpec(NamedTuple):
     """One motion parameter."""

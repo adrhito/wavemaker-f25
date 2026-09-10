@@ -230,13 +230,21 @@ class SimulatedMachine(SimulatedPlc):
             piston.position += reach if gap > 0 else -reach
 
     def _publish(self) -> None:
-        """Write the pistons' state into the tags the application reads."""
+        """Write the pistons' state into the tags the application reads.
+
+        Positions go out in drive counts of 0.1 micrometres, which is what the
+        real controller publishes -- see
+        :data:`app.params.POSITION_COUNTS_PER_MM`. The mock previously published
+        millimetres, which meant it could not have caught the unit mismatch that
+        made every healthy piston look thousands of millimetres out of position
+        on the real machine.
+        """
         for axis, piston in self.pistons.items():
             self.values[tags.axis_field(axis, tags.ACTUAL_POSITION)] = int(
-                round(piston.position)
+                round(params.to_counts(piston.position))
             )
             self.values[tags.axis_field(axis, tags.DEMAND_POSITION)] = int(
-                round(piston.demand)
+                round(params.to_counts(piston.demand))
             )
             # Bit 11 of the status word is the homed bit; see Motor.HOMED_BIT.
             self.values[tags.axis_field(axis, tags.STATUS_WORD)] = (

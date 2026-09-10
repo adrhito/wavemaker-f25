@@ -257,10 +257,22 @@ class Motor:
             self.LOGGER.debug("Could not read status of motor %s: %s", self.axis, exc)
             return False
 
+    def read_position(self, plc: Transport) -> float:
+        """Where this piston actually is, in millimetres.
+
+        The PLC reports drive counts of 0.1 micrometres; see
+        :data:`app.params.POSITION_COUNTS_PER_MM`.
+        """
+        return params.to_mm(plc.read(tags.axis_field(self.axis, tags.ACTUAL_POSITION)))
+
     def read_positions(self, plc: Transport) -> Dict[str, Any]:
-        """Demanded and actual position, for analytics."""
-        demand = plc.read(tags.axis_field(self.axis, tags.DEMAND_POSITION))
-        actual = plc.read(tags.axis_field(self.axis, tags.ACTUAL_POSITION))
+        """Demanded and actual position in millimetres, for analytics."""
+        demand = params.to_mm(
+            plc.read(tags.axis_field(self.axis, tags.DEMAND_POSITION))
+        )
+        actual = params.to_mm(
+            plc.read(tags.axis_field(self.axis, tags.ACTUAL_POSITION))
+        )
         return {
             "demand": demand,
             "actual": actual,

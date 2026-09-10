@@ -19,9 +19,13 @@ class TestAnalytics:
         homed_model.analytics_duration = 0.05
         homed_model.analytics_interval = 0.01
 
+        from app import params
+
         for axis in (0, 1, 2):
-            plc.write(tags.axis_field(axis, tags.DEMAND_POSITION), 100 + axis)
-            plc.write(tags.axis_field(axis, tags.ACTUAL_POSITION), 90 + axis)
+            plc.write(tags.axis_field(axis, tags.DEMAND_POSITION),
+                      int(params.to_counts(100 + axis)))
+            plc.write(tags.axis_field(axis, tags.ACTUAL_POSITION),
+                      int(params.to_counts(90 + axis)))
 
         homed_model.start(RunMode.CONTINUOUS)
 
@@ -34,7 +38,7 @@ class TestAnalytics:
             line for line in text.splitlines() if line and line[0].isdigit()
         ]
         assert data_rows
-        assert data_rows[0].count("100") >= 1
+        assert "100" in data_rows[0]  # demand of piston 0, in mm
 
     def test_analytics_are_skipped_when_not_requested(self, homed_model):
         homed_model.record_analytics = False

@@ -83,7 +83,9 @@ class TestMotion:
         machine.write(tags.RUN_CONTINUOUS, 1)
         settle(machine, 0.3)
 
-        published = machine.read(tags.axis_field(0, tags.ACTUAL_POSITION))
+        from app import params
+
+        published = params.to_mm(machine.read(tags.axis_field(0, tags.ACTUAL_POSITION)))
         assert abs(published - machine.snapshot()[0]) <= 1
 
 
@@ -361,3 +363,83 @@ class TestStragglerDetection:
             model._poll_positions()
             settle(machine, 0.05)
         assert model.lagging_axes == []
+
+
+class TestPositionUnits:
+    """Positions are read back in drive counts, not millimetres.
+
+    From the trial log of 11 July 2026: readings ran to 2,960,074 on a machine
+    with a 390 mm stroke. Comparing those raw counts against millimetre
+    thresholds made every healthy piston look thousands of millimetres out of
+    position, so the array was reported as failing when the real following
+    error was under 2.5 mm. It also meant the resting move could never be seen
+    to arrive, and the live view pegged every piston at the end of its track.
+    """
+
+    def test_the_mock_publishes_counts_like_the_machine(self, machine):
+        from app import params
+
+        machine.write(tags.live_motor(0), 1)
+        machine.write(tags.motor_field(0, "Pos_1"), 0)
+        machine.write(tags.motor_field(0, "Pos_2"), 300)
+        machine.write(tags.motor_field(0, "Spd_1"), 400)
+        machine.write(tags.RUN_CONTINUOUS, 1)
+        settle(machine, 0.4)
+
+        raw = machine.read(tags.axis_field(0, tags.ACTUAL_POSITION))
+        assert raw > 1000, "a real reading is in counts, so far above 1000"
+        assert 0 <= params.to_mm(raw) <= 320
+
+    def test_the_application_reports_millimetres(self, machine, monkeypatch):
+        import app.simulator as sim_module
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        model = make_model(machine, monkeypatch)
+        for axis in range(3):
+            model.toggle(axis, True)
+        model.sets[0].set_param("Position 2", 300)
+        model.sets[0].set_param("Speed 1", 400)
+        model.run(RunMode.CONTINUOUS)
+        settle(machine, 0.4)
+        model._poll_positions()
+
+        for value in model.bridge.last_positions.values():
+            assert -20 <= value <= 370, "positions reach the display in mm"
+
+    def test_the_logged_trial_values_convert_into_the_stroke(self):
+        """The readings that produced the false warnings."""
+        from app import params
+
+        for raw in (2960074, 483315, 419744, 657, -305, 13154):
+            assert -20 <= params.to_mm(raw) <= 370
+
+    def test_the_reported_following_errors_were_small(self):
+        """Every piston flagged in that trial was in fact within 2.5 mm."""
+        from app import params
+
+        for demand, actual in ((483315, 504948), (413865, 437446),
+                               (358069, 382194), (11335, 17164)):
+            error = abs(params.to_mm(demand) - params.to_mm(actual))
+            assert error < 2.5
+
+    def test_the_resting_move_can_now_be_seen_to_arrive(self, machine, monkeypatch):
+        """It never could before: a count of 3,700,000 was compared against a
+        target of 370, so arrival was impossible and every stop warned."""
+        import Model as model_module
+        import app.simulator as sim_module
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        monkeypatch.setattr(model_module, "PARK_SPEED", 4000)
+        monkeypatch.setattr(model_module, "PARK_SECONDS", 3.0)
+        model = make_model(machine, monkeypatch)
+        for axis in range(3):
+            model.toggle(axis, True)
+        model.sets[0].set_param("Position 2", 300)
+        model.sets[0].set_param("Speed 1", 400)
+        model.run(RunMode.CONTINUOUS)
+        settle(machine, 0.2)
+        model.stop(immediate=True)
+        settle(machine, 1.2)
+
+        for axis in range(3):
+            assert abs(machine.snapshot()[axis] - model_module.PARK_POSITION) < 10
