@@ -50,6 +50,7 @@ FREE_EDGE = "#5a5a5e"
 SELECTED_EDGE = "#0a84ff"
 LABEL = "#c8c8cc"
 LABEL_DIM = "#6e6e73"
+GRIP = "#f5f5f7"
 
 #: Fill per group, cycled. Apple's system colours, which stay distinguishable
 #: side by side and against the water.
@@ -63,7 +64,7 @@ SET_COLOURS: List[str] = [
 ]
 
 POSITION_MIN = -20
-POSITION_MAX = 368
+POSITION_MAX = 370
 
 
 def describe_place(axis: int) -> str:
@@ -89,8 +90,9 @@ class TankView:
 
     Callbacks
     ---------
-    ``on_select(axes, additive)``  a click or drag chose these axes.
-    ``on_hover(axis)``             the pointer moved onto a piston, or None.
+    ``on_select(axes, additive)``   a click or drag chose these axes.
+    ``on_hover(axis)``              the pointer moved onto a piston, or None.
+    ``on_stroke(axis, low, high)``  a stroke bar was dragged to a new range.
     """
 
     def __init__(
@@ -98,11 +100,16 @@ class TankView:
         parent,
         on_select: Optional[Callable[[List[int], bool], None]] = None,
         on_hover: Optional[Callable[[Optional[int]], None]] = None,
+        on_stroke: Optional[Callable[[int, int, int], None]] = None,
         height: int = 260,
         interactive: bool = True,
     ) -> None:
         self.on_select = on_select
         self.on_hover = on_hover
+        #: Dragging the bar above a piston sets how far that piston travels.
+        #: Far more obvious than typing two numbers into boxes, and it is the
+        #: only place the stroke of a single piston can be set at all.
+        self.on_stroke = on_stroke
         self.interactive = interactive
 
         self.canvas = Canvas(
@@ -133,6 +140,12 @@ class TankView:
         self._drag_from: Optional[Tuple[float, float]] = None
         self._drag_rect = None
         self._hovered: Optional[int] = None
+
+        # Dragging a stroke bar.
+        self._tracks: Dict[int, Tuple[float, float, float, float]] = {}
+        self._stroke_axis: Optional[int] = None
+        self._stroke_grip: Optional[str] = None
+        self._stroke_origin: Optional[Tuple[int, int, float]] = None
 
         self.canvas.bind("<Configure>", lambda _e: self.redraw())
         if interactive:
@@ -249,6 +262,7 @@ class TankView:
         c.delete("all")
         m = self._metrics()
         self._boxes = {}
+        self._tracks = {}
 
         self._draw_water(m)
         self._draw_ruler(m)
@@ -320,6 +334,7 @@ class TankView:
         track_w = m["cell_w"] * 0.80
         tx0 = cx - track_w / 2.0
         tx1 = cx + track_w / 2.0
+        self._tracks[axis] = (tx0, cy - half_h - 11, tx1, cy - half_h + 2)
         c.create_rectangle(
             tx0, cy - half_h - 6, tx1, cy - half_h - 1,
             fill=TRACK, outline=TRACK_EDGE,
@@ -336,6 +351,13 @@ class TankView:
                 x0, cy - half_h - 6, x1, cy - half_h - 1,
                 fill=self.colour_for(axis), outline="",
             )
+            # Grips, so the bar visibly reads as something you can pull.
+            if self.on_stroke is not None and axis in self.set_of:
+                for x in (x0, x1):
+                    c.create_rectangle(
+                        x - 2, cy - half_h - 10, x + 2, cy - half_h + 2,
+                        fill=GRIP, outline="",
+                    )
 
         # The paddle itself.
         fill = self.colour_for(axis)
@@ -397,10 +419,84 @@ class TankView:
                 return axis
         return None
 
+    # -- dragging a stroke bar ------------------------------------------------
+
+    def _track_at(self, x: float, y: float):
+        """Which stroke bar, and which part of it, is under the pointer."""
+        if self.on_stroke is None:
+            return None
+        for axis, (tx0, ty0, tx1, ty1) in self._tracks.items():
+            if not (ty0 <= y <= ty1 and tx0 - 8 <= x <= tx1 + 8):
+                continue
+            if axis not in self.set_of or axis not in self.strokes:
+                return None  # only a piston in a group has a stroke to set
+            low, high = sorted(self.strokes[axis])
+            xlow = tx0 + (tx1 - tx0) * self._fraction(low)
+            xhigh = tx0 + (tx1 - tx0) * self._fraction(high)
+            if abs(x - xlow) <= 8:
+                return axis, "low"
+            if abs(x - xhigh) <= 8:
+                return axis, "high"
+            if xlow < x < xhigh:
+                return axis, "whole"
+            return axis, "low" if x < xlow else "high"
+        return None
+
+    def _position_at(self, axis: int, x: float) -> int:
+        tx0, _ty0, tx1, _ty1 = self._tracks[axis]
+        fraction = (x - tx0) / max(tx1 - tx0, 1.0)
+        fraction = min(max(fraction, 0.0), 1.0)
+        return int(round(POSITION_MIN + fraction * (POSITION_MAX - POSITION_MIN)))
+
+    def _drag_stroke(self, event) -> None:
+        axis = self._stroke_axis
+        low, high, start_x = self._stroke_origin
+        here = self._position_at(axis, event.x)
+
+        if self._stroke_grip == "low":
+            low = min(here, high - 1)
+        elif self._stroke_grip == "high":
+            high = max(here, low + 1)
+        else:
+            shift = here - self._position_at(axis, start_x)
+            span = high - low
+            low = min(max(low + shift, POSITION_MIN), POSITION_MAX - span)
+            high = low + span
+
+        low = max(POSITION_MIN, min(low, POSITION_MAX))
+        high = max(POSITION_MIN, min(high, POSITION_MAX))
+        self.strokes[axis] = (low, high)
+        self.redraw()
+        self._show_stroke_label(axis, low, high)
+
+    def _show_stroke_label(self, axis: int, low: int, high: int) -> None:
+        m = self._metrics()
+        cx, cy = self._cell_centre(axis, m)
+        self.canvas.delete("strokelabel")
+        self.canvas.create_text(
+            cx, cy - m["paddle_h"] / 2.0 - 22,
+            text="{0} - {1} mm".format(low, high),
+            fill=GRIP, font=("Segoe UI", 8, "bold"), tags="strokelabel",
+        )
+
+    # -- selecting ------------------------------------------------------------
+
     def _on_press(self, event) -> None:
+        grabbed = self._track_at(event.x, event.y)
+        if grabbed is not None:
+            axis, grip = grabbed
+            low, high = sorted(self.strokes[axis])
+            self._stroke_axis = axis
+            self._stroke_grip = grip
+            self._stroke_origin = (low, high, event.x)
+            self.canvas.configure(cursor="sb_h_double_arrow")
+            return
         self._drag_from = (event.x, event.y)
 
     def _on_drag(self, event) -> None:
+        if self._stroke_axis is not None:
+            self._drag_stroke(event)
+            return
         if self._drag_from is None:
             return
         x0, y0 = self._drag_from
@@ -411,6 +507,17 @@ class TankView:
         )
 
     def _on_release(self, event) -> None:
+        if self._stroke_axis is not None:
+            axis = self._stroke_axis
+            low, high = self.strokes[axis]
+            self._stroke_axis = None
+            self._stroke_grip = None
+            self._stroke_origin = None
+            self.canvas.configure(cursor="")
+            self.canvas.delete("strokelabel")
+            if self.on_stroke is not None:
+                self.on_stroke(axis, low, high)
+            return
         if self._drag_from is None:
             return
         x0, y0 = self._drag_from
@@ -442,6 +549,11 @@ class TankView:
             self.on_select(sorted(caught), additive)
 
     def _on_motion(self, event) -> None:
+        if self._stroke_axis is None:
+            over = self._track_at(event.x, event.y)
+            self.canvas.configure(
+                cursor="sb_h_double_arrow" if over is not None else ""
+            )
         self._set_hover(self._axis_at(event.x, event.y))
 
     def _set_hover(self, axis: Optional[int]) -> None:

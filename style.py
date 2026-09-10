@@ -154,6 +154,16 @@ def style_GUI() -> None:
     style.map("TRadiobutton", background=[("active", theme.BACKGROUND)])
 
     style.configure("TSeparator", background=theme.DIVIDER)
+
+    # ttk.Scale on Windows keeps the platform look unless every part is set.
+    style.configure("TScale", background=theme.SURFACE,
+                    troughcolor=theme.SURFACE_2, bordercolor=theme.SURFACE_2,
+                    lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)
+    style.configure("Horizontal.TScale", background=theme.SURFACE,
+                    troughcolor=theme.SURFACE_2, bordercolor=theme.SURFACE_2,
+                    lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)
+    style.map("Horizontal.TScale",
+              background=[("active", theme.SURFACE)])
     style.configure("TProgressbar", background=theme.ACCENT,
                     troughcolor=theme.SURFACE_2, borderwidth=0,
                     lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)

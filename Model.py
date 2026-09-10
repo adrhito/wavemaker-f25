@@ -972,12 +972,9 @@ class Model:
         if mode is RunMode.SINGLE:
             self._set_state(MachineState.RUNNING)
             self.bridge.status("Running one stroke...")
-            self.plc.write(tags.RUN_SINGLE, 1)
-            self._sleep(SINGLE_STROKE_SECONDS)
-            self.plc.write(tags.RUN_SINGLE, 0)
-            LOGGER.log(15, "Single stroke complete.")
+            travel = self._hold_and_watch(tags.RUN_SINGLE, SINGLE_STROKE_SECONDS)
             self._set_state(MachineState.HOMED)
-            self.bridge.status("Stroke complete. Ready to run again.")
+            self._report_travel("stroke", travel)
 
         elif mode is RunMode.CURVE:
             if self.plc.read(tags.RUN_CURVE):
@@ -985,17 +982,17 @@ class Model:
                 return
             self._set_state(MachineState.RUNNING)
             self.bridge.status("Running curve...")
-            self.plc.write(tags.RUN_CURVE, 1)
-            try:
-                if self.record_analytics:
+            if self.record_analytics:
+                self.plc.write(tags.RUN_CURVE, 1)
+                try:
                     self._record_positions(CURVE_SECONDS)
-                else:
-                    self._sleep(CURVE_SECONDS)
-            finally:
-                self.plc.write(tags.RUN_CURVE, 0)
-            LOGGER.log(15, "Curve complete.")
+                finally:
+                    self.plc.write(tags.RUN_CURVE, 0)
+                travel = {}
+            else:
+                travel = self._hold_and_watch(tags.RUN_CURVE, CURVE_SECONDS)
             self._set_state(MachineState.HOMED)
-            self.bridge.status("Curve complete. Ready to run again.")
+            self._report_travel("curve", travel)
 
         else:  # continuous
             self._set_state(MachineState.RUNNING)
@@ -1004,6 +1001,83 @@ class Model:
             self.bridge.status("Running continuously. Press Stop when finished.")
             if self.record_analytics:
                 self._record_positions(self.analytics_duration)
+
+    def _hold_and_watch(self, tag: str, seconds: float) -> Dict[int, float]:
+        """Hold a command bit and record how far each piston actually travels.
+
+        Both the single stroke and the curve used to set a bit, wait a fixed
+        five seconds, clear it and report success -- whether or not anything had
+        moved. That is why they felt like they did nothing: there was no way to
+        tell a working stroke from a bit that the ladder ignored.
+        """
+        lowest: Dict[int, float] = {}
+        highest: Dict[int, float] = {}
+
+        def sample() -> None:
+            for motor in self.all_motors:
+                try:
+                    where = motor.read_position(self.plc)
+                except (PlcError, TypeError, ValueError):
+                    continue
+                axis = motor.axis
+                lowest[axis] = min(lowest.get(axis, where), where)
+                highest[axis] = max(highest.get(axis, where), where)
+
+        sample()
+        self.plc.write(tag, 1)
+        try:
+            deadline = time.time() + seconds
+            while time.time() < deadline and not self._stop_requested.is_set():
+                sample()
+                time.sleep(STOP_POLL_INTERVAL)
+        finally:
+            self.plc.write(tag, 0)
+        sample()
+
+        return dict(
+            (axis, highest[axis] - lowest.get(axis, highest[axis]))
+            for axis in highest
+        )
+
+    def _report_travel(self, what: str, travel: Dict[int, float]) -> None:
+        """Say how far the pistons actually went, rather than merely 'complete'."""
+        if not travel:
+            LOGGER.log(15, "Ran a %s.", what)
+            self.bridge.status("Ran a {0}. Ready to run again.".format(what))
+            return
+
+        furthest = max(travel.values())
+        still = sorted(a for a, d in travel.items() if d < MIN_JUDGED_STROKE)
+
+        if furthest < MIN_JUDGED_STROKE:
+            message = (
+                "The {0} command was sent, but no piston moved more than "
+                "{1:.0f} mm.".format(what, furthest)
+            )
+            LOGGER.warning("%s", message)
+            self.bridge.status(message)
+            self.bridge.problem(
+                "Nothing moved",
+                "{0}{1}{1}The command reached the controller, so this is not a "
+                "connection problem. Likely causes:{1}{1}"
+                "  - for a curve: no curve is loaded on the controller for the "
+                "Curve ID you set, so there is nothing to run{1}"
+                "  - the controller is not in Run{1}"
+                "  - the stroke is set so small there is nothing to see"
+                .format(message, chr(10)),
+            )
+            return
+
+        message = "Ran a {0}. Furthest piston moved {1:.0f} mm.".format(
+            what, furthest
+        )
+        if still:
+            message += " Piston(s) {0} barely moved.".format(
+                ", ".join(str(a) for a in still)
+            )
+            self.lagging_axes = still
+        LOGGER.log(15, "%s", message)
+        self.bridge.status(message + " Ready to run again.")
 
     def stop(self, immediate: bool = False, park: Optional[bool] = None) -> bool:
         """Stop the machine and bring the pistons to rest.

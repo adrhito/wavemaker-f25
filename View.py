@@ -22,6 +22,7 @@ from modules.widgets import RoundedButton
 from Model import MachineState, Model
 from feedback.Feedback import Feedback
 from operate.Operate import Operate
+from wave.WaveDesigner import WaveDesigner
 from preset_options.PresetOptions import PresetOptions
 from style import STATE_COLOURS, style_GUI, theme
 
@@ -57,6 +58,7 @@ class View:
         self.tabControl.grid(row=0, column=0, sticky="nsew")
 
         self.operate = Operate(self.tabControl, model, self)
+        self.wave = WaveDesigner(self.tabControl, model, self)
         self.preset_options = PresetOptions(self.tabControl, model, self)
         self.feedback = Feedback(self.tabControl, model)
         # Older names, so anything still reaching for them keeps working.
@@ -125,6 +127,10 @@ class View:
         self.stop_button.grid(row=0, column=4, padx=(0, theme.GUTTER), pady=10)
         self.stop_button.set_state("disabled")
 
+    def refresh_all(self) -> None:
+        """Redraw every tab from the current state."""
+        self.state_changed(self.model.state)
+
     def set_status_text(self, message: str) -> None:
         self.status_var.set(message)
 
@@ -180,6 +186,7 @@ class View:
         def apply() -> None:
             self._refresh_status_bar(state)
             self.operate.refresh(state)
+            self.wave.refresh(state)
             self.preset_options.refresh(state)
 
         self.post(apply)
@@ -200,7 +207,10 @@ class View:
 
     def _tab_changed(self, _event: object) -> None:
         index = self.tabControl.index(self.tabControl.select())
-        tabs = (self.operate, self.preset_options, self.feedback)
+        tabs = (self.operate, self.wave, self.preset_options, self.feedback)
+        for position, tab in enumerate(tabs):
+            if position != index and hasattr(tab, "onLeave"):
+                tab.onLeave()
         if 0 <= index < len(tabs):
             tabs[index].onSelect()
 

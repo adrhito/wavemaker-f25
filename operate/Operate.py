@@ -106,6 +106,7 @@ class Operate:
             card,
             on_select=self._on_tank_select,
             on_hover=self._on_tank_hover,
+            on_stroke=self._on_stroke_dragged,
             height=250,
         )
         self.tank.grid(row=0, column=0, sticky="nsew")
@@ -318,6 +319,25 @@ class Operate:
         if self.model._implicit_group and len(self.model.sets) > index:
             return self.model.sets[index]
         return None
+
+    def _on_stroke_dragged(self, axis: int, low: int, high: int) -> None:
+        """The operator dragged the stroke bar above one piston."""
+        owner = self.model.axis_owner(axis)
+        if owner is None:
+            return
+        motor = owner.motors[axis]
+        try:
+            motor.set_param("Position 1", low)
+            motor.set_param("Position 2", high)
+        except ValueError as exc:
+            self._say(str(exc))
+            return
+        self.model.mark_unprepared()
+        self._load_values()
+        self.tank.show_strokes(self._strokes())
+        self._say(
+            "Piston {0} now strokes {1} to {2} mm.".format(axis, low, high)
+        )
 
     def _on_tank_hover(self, axis: Optional[int]) -> None:
         if axis is None:
