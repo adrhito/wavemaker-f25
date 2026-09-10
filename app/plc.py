@@ -309,8 +309,13 @@ def connect(
     check for None.
     """
     if simulate:
-        LOGGER.info("Simulation requested: running without the PLC.")
-        return SimulatedPlc(), False
+        # The animated mock, not the inert tag store: this is what someone gets
+        # when they deliberately ask to run without the machine, and a mock in
+        # which nothing moves would be no use for trying the interface.
+        from app.simulator import SimulatedMachine
+
+        LOGGER.info("Mock mode: simulating the wavemaker, no hardware in use.")
+        return SimulatedMachine(), False
 
     client = PlcClient(ip_address, processor_slot, persistent=persistent)
     if client.connect():
@@ -322,5 +327,10 @@ def connect(
         )
         return client, True
 
-    LOGGER.warning("No PLC at %s: running in simulation. Nothing will move.", ip_address)
-    return SimulatedPlc(), False
+    from app.simulator import SimulatedMachine
+
+    LOGGER.warning(
+        "No PLC at %s: falling back to the mock. Nothing physical will move.",
+        ip_address,
+    )
+    return SimulatedMachine(), False

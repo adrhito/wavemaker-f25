@@ -57,6 +57,8 @@ def main():
         "app.tags",
         "app.params",
         "app.plc",
+        "app.simulator",
+        "app.patterns",
         "app.external",
         "modules.eip",
         "modules.tooltip",

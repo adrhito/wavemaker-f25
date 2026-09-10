@@ -1,7 +1,7 @@
 """Wavemaker System Control -- entry point.
 
-    python main.py                 connect to the PLC, fall back to simulation
-    python main.py --simulate      never touch the PLC (training, development)
+    python main.py                 connect to the PLC, fall back to the mock
+    python main.py --mock          simulated wavemaker; no hardware contacted
     python main.py --ip 10.0.0.5   use a different PLC address
 
 Written for the UNC Fluids Lab.
@@ -28,9 +28,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         prog="main.py", description="Wavemaker System Control"
     )
     parser.add_argument(
+        "--mock",
         "--simulate",
+        dest="mock",
         action="store_true",
-        help="run without the PLC; nothing will move",
+        help="run a simulated wavemaker instead of the real one; no hardware "
+        "is contacted and nothing physical moves",
     )
     parser.add_argument(
         "--ip",
@@ -67,7 +70,7 @@ def main(argv=None) -> int:
     model = Model(
         ip_address=args.ip,
         processor_slot=args.slot,
-        simulate=args.simulate,
+        simulate=args.mock,
         persistent_connection=not args.fresh_connection,
     )
 

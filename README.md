@@ -20,11 +20,25 @@ until somebody changes it -- so it is not a per-launch step. If the application
 cannot reach the controller it says so at the top of Control Home and offers
 **Reconnect** and **Open Studio 5000** buttons.
 
+## Trying it without the machine
+
+Double-click **`Mock Wavemaker (no machine).cmd`**. It runs a simulated
+wavemaker: no PLC is contacted and nothing physical can move, so it is safe on
+any laptop, anywhere.
+
+The mock is not an empty shell. Its pistons really stroke between Position 1 and
+Position 2 at the speeds you set, homing takes a moment, and a Curve Offset
+staggered front to back really does produce a wave that travels along the
+chamber, which you can watch in the live view. Use it to learn the interface and
+to build presets before going near the tank.
+
+It does **not** predict how the real machine behaves. It moves rectangles.
+
 From a terminal:
 
 ```
 py -3 main.py                # normal use: connect to the PLC
-py -3 main.py --simulate     # training/development: never touches the machine
+py -3 main.py --mock         # the simulated wavemaker
 py -3 main.py --ip 10.0.0.5  # a different PLC address
 ```
 
