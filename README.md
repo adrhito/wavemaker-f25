@@ -93,12 +93,11 @@ main.py             entry point
 Model.py            application state and every machine command
 Motor.py            one piston: its parameters and drive state
 View.py             the window; routes worker callbacks onto the Tk thread
-app/                paths, PLC tag names, PLC transport, parameter definitions
-control_home/       Control Home tab
-define_motors/      Define Motors tab
+app/                paths, PLC tags, transport, parameters, patterns, the mock
+operate/            the Operate screen and its two dialogs
 preset_options/     Preset Options tab and the preset file reader/writer
 feedback/           Feedback tab
-modules/            vendored pylogix, logging, tooltips
+modules/            vendored pylogix, the tank drawing, drawn widgets, logging
 tests/              test suite; runs with no hardware
 Presets/            saved parameter files
 logs/  analytics/   written at run time

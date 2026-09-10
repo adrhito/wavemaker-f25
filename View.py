@@ -1,9 +1,9 @@
 """The main window.
 
 Two things live outside the tabs, because they matter no matter which tab you
-are on: the machine state and the stop control. Previously Stop existed twice,
-once on Control Home and once on Define Motors, and on the other two tabs there
-was no way to stop the machine at all without switching tab first.
+are on: the machine state and the stop control. Stop used to exist twice, on
+two of the four tabs, and not at all on the other two -- so stopping the machine
+could mean switching tab first.
 
 The view is also the model's :class:`~Model.UiBridge`. Model commands run on a
 worker thread and report back through this class, which hands every update to
