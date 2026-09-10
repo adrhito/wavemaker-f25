@@ -11,13 +11,17 @@ and position to 370, while the code rejected anything above 20,000 and 368.
 Everything now comes from :data:`PARAMS` below, so the entry boxes, the
 tooltips, the defaults, the validation and the PLC field names cannot disagree.
 
-A note on the limits
---------------------
-The ranges here are the ones the application has actually been enforcing.  They
-are deliberately *not* widened to match the old tooltip text: loosening a limit
-on a machine this size is a decision for someone who can watch the pistons, not
-a documentation cleanup.  ``docs/OPERATING.md`` records the discrepancy so it
-can be settled against the drive manual.
+A note on the position limit
+----------------------------
+The code enforced 368 mm for years while the GUI manual, the tooltips and the
+lab's own saved presets all said 370.  That 2 mm gap was not cosmetic: applying
+``Presets/massive.csv``, which stores 370, was rejected outright, so none of its
+other values -- the 20,000 accelerations in particular -- ever reached the
+machine.  That is the "presets do not work" fault the lab has been living with.
+
+370 is what the manual specifies and what the lab actually uses, and it sits
+well inside the drive's own configured limits of -57 to 453 mm with home at
+390 mm (see ``LinMot Drive Config``).  Raised with the lab's agreement.
 """
 
 from __future__ import annotations
@@ -73,8 +77,8 @@ class ParamSpec(NamedTuple):
 
 
 _POSITION_HELP = (
-    "Stroke position in mm. The application accepts -20 to 368; -20 is the top "
-    "of the stroke and 368 the bottom. Positions are measured after homing."
+    "Stroke position in mm. The application accepts -20 to 370; -20 is the top "
+    "of the stroke and 370 the bottom. Positions are measured after homing."
 )
 _SPEED_HELP = (
     "Speed in mm/s, 0 to 900. The achievable top speed depends on the current "
@@ -98,8 +102,8 @@ _CURVE_HELP = "Used by Start Curve only; ignored by single-stroke and continuous
 #: order the values are *written to the PLC* in is separate -- see
 #: :data:`WRITE_ORDER`.
 PARAMS: List[ParamSpec] = [
-    ParamSpec("Position 1", "Pos_1", "motor", 0, -20, 368, _POSITION_HELP),
-    ParamSpec("Position 2", "Pos_2", "motor", 350, -20, 368, _POSITION_HELP),
+    ParamSpec("Position 1", "Pos_1", "motor", 0, -20, 370, _POSITION_HELP),
+    ParamSpec("Position 2", "Pos_2", "motor", 350, -20, 370, _POSITION_HELP),
     ParamSpec("Speed 1", "Spd_1", "motor", 500, 0, 900, _SPEED_HELP),
     ParamSpec("Speed 2", "Spd_2", "motor", 500, 0, 900, _SPEED_HELP),
     ParamSpec("Accel 1", "Accel_1", "motor", 10000, 0, 20000, _ACCEL_HELP),

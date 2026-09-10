@@ -46,18 +46,54 @@ HOME_POLLS = 7
 # usually part-way up. Returning them to the bottom of the stroke leaves the
 # array in a known, tidy resting state.
 #
-# NOTE FOR THE LAB: 368 is the down limit the application enforces (see
-# app/params.py; -20 is the top of the stroke, 368 the bottom). If the piston
+# NOTE FOR THE LAB: 370 is the down limit the application enforces (see
+# app/params.py; -20 is the top of the stroke, 370 the bottom). If the piston
 # should rest somewhere else, this is the one number to change.
 
-#: Where pistons are sent after a stop.
-PARK_POSITION = 368
+#: Where pistons are sent after a stop when resting down: the bottom of travel.
+PARK_POSITION = 370
 #: Speed used to get there -- deliberately gentle, not whatever the run used.
 PARK_SPEED = 200
-#: How long Run_1 is held to complete the parking move.
-PARK_SECONDS = 6.0
+#: Longest the parking move is allowed to take before giving up.
+PARK_SECONDS = 15.0
+#: A piston counts as arrived when it is this close, in mm.
+PARK_TOLERANCE = 6
 #: Set False to leave the pistons where they stop.
 PARK_ON_STOP = True
+
+# Where the pistons come to rest when stopped.
+REST_DOWN = "down"     # the bottom of travel, PARK_POSITION
+REST_UP = "up"         # the top of each piston's own stroke (its Position 1)
+REST_HOLD = "hold"     # wherever the stop caught them
+
+# --- Stopping gracefully -------------------------------------------------------
+# "It's best to hit stop when the motor shafts are up and down" -- the operator
+# had to time the button press. The positions are published continuously, so the
+# application can wait for the end of a stroke instead of making a person do it.
+#
+# Pressing Stop a second time, or Escape, halts immediately without waiting.
+
+#: Longest to wait for the pistons to reach the end of a stroke before halting
+#: anyway. A staggered wave may never have all thirty aligned at once, and the
+#: resting move that follows puts them somewhere known regardless.
+GRACEFUL_STOP_SECONDS = 6.0
+#: How close to Position 1 or Position 2 counts as the end of a stroke, in mm.
+STROKE_END_TOLERANCE = 12
+#: Position polling rate while stopping. Faster than the display's rate, so the
+#: end of a stroke is not missed at speed.
+STOP_POLL_INTERVAL = 0.05
+
+# --- Watching for trouble ------------------------------------------------------
+# Pistons wear at different rates, so they drift out of step, and one can stall
+# entirely -- "the last row, one goes up real slow, then gets stuck". Demanded
+# and actual position are both published, so a piston that stops following its
+# demand can be flagged rather than noticed by eye.
+
+#: How far a piston may sit from its demanded position before it is flagged, mm.
+LAG_TOLERANCE = 40
+#: Consecutive polls it must be out by that much, so a momentary overshoot at
+#: the turn of a stroke does not raise a false alarm.
+LAG_POLLS = 6
 
 #: How often live piston positions are read while the machine runs.
 #: Four times a second is enough for the array to read as moving without
@@ -284,6 +320,10 @@ class Model:
         #: Set while the parking move is running, so a second Stop cancels it.
         self._parking = threading.Event()
         self._cancel_park = threading.Event()
+        #: Set while waiting for the end of a stroke before halting.
+        self._stopping = threading.Event()
+        #: Where the pistons come to rest after a stop.
+        self.rest_position = REST_DOWN
 
         #: Replaced in tests so commands run inline instead of on a thread.
         self._spawn: Callable[[str, Callable[[], None]], None] = self._spawn_thread
@@ -297,6 +337,11 @@ class Model:
         self._monitor_thread: Optional[threading.Thread] = None
         #: Axes whose position could not be read, so the display can flag them.
         self.unreadable_axes: List[int] = []
+        #: Axes that are not keeping up with their demanded position -- a piston
+        #: dragging or stalled. Shown on the tank and logged once.
+        self.lagging_axes: List[int] = []
+        self._lag_counts: Dict[int, int] = {}
+        self._lag_reported: set = set()
 
         paths.ensure_directories()
 
@@ -753,6 +798,7 @@ class Model:
         return self._command("Run", lambda: self._run_worker(mode))
 
     def _run_worker(self, mode: RunMode) -> None:
+        self.clear_lag_warnings()
         if self._state is not MachineState.HOMED:
             self._prepare_worker()
             if self._state is not MachineState.HOMED:
@@ -817,23 +863,87 @@ class Model:
             if self.record_analytics:
                 self._record_positions(self.analytics_duration)
 
-    def stop(self, park: Optional[bool] = None) -> bool:
-        """Stop the machine, then return the pistons to the bottom.
+    def stop(self, immediate: bool = False, park: Optional[bool] = None) -> bool:
+        """Stop the machine and bring the pistons to rest.
 
-        Deliberately does not go through :meth:`_command`: Stop must work while
-        another command holds the worker, which is exactly when it is needed.
-        The run bits are dropped first, on the calling thread, so the halt is
-        never delayed by the tidying that follows.
+        By default this lets each piston finish the stroke it is on before the
+        run bits drop, so the operator no longer has to time the button press,
+        and then moves them to the chosen resting position.
 
-        Parking is a *second* action after the halt, not part of it. It only
-        happens when the machine is homed, because sending a piston to an
-        absolute position is only meaningful once the drive knows where it is.
-        Pressing Stop again while parking cancels the move.
+        ``immediate`` skips the waiting and halts at once. Escape does that, and
+        so does pressing Stop a second time while it is waiting -- so a hard stop
+        is always one keypress or one more click away.
+
+        Never goes through :meth:`_command`: stopping must work while another
+        command holds the worker, which is exactly when it is needed.
         """
-        was_parking = self._parking.is_set()
-        self._stop_requested.set()
+        already_stopping = self._stopping.is_set() or self._parking.is_set()
+        if already_stopping:
+            immediate = True  # second press means "now"
+
         self._cancel_park.set()
 
+        graceful = (
+            not immediate
+            and self._state is MachineState.RUNNING
+            and bool(self.all_motors)
+        )
+        if not graceful:
+            self._stop_requested.set()
+            return self._halt_and_rest(park, waited=False)
+
+        self._spawn("Stop", lambda: self._graceful_stop_worker(park))
+        return True
+
+    def _graceful_stop_worker(self, park: Optional[bool]) -> None:
+        self._stopping.set()
+        try:
+            self.bridge.status("Finishing the stroke...")
+            waited = self._wait_for_stroke_end()
+        except PlcError as exc:
+            LOGGER.warning("Could not follow the pistons while stopping: %s", exc)
+            waited = False
+        finally:
+            self._stopping.clear()
+        self._stop_requested.set()
+        self._halt_and_rest(park, waited=waited)
+
+    def _wait_for_stroke_end(self) -> bool:
+        """Wait until every piston is near an end of its stroke.
+
+        Returns True if they got there, False on timeout. A timeout is not a
+        failure: with a staggered wave the pistons are deliberately out of step
+        and may never all be at an end together, and the resting move that
+        follows puts them somewhere known anyway.
+        """
+        deadline = time.time() + GRACEFUL_STOP_SECONDS
+        while time.time() < deadline:
+            if self._cancel_park.is_set() and not self._stopping.is_set():
+                return False
+            if self._stop_requested.is_set():
+                return False
+            at_rest = True
+            for motor in self.all_motors:
+                try:
+                    actual = float(
+                        self.plc.read(tags.axis_field(motor.axis, tags.ACTUAL_POSITION))
+                    )
+                except (PlcError, TypeError, ValueError):
+                    continue
+                ends = (
+                    motor.write_params["Position 1"],
+                    motor.write_params["Position 2"],
+                )
+                if min(abs(actual - end) for end in ends) > STROKE_END_TOLERANCE:
+                    at_rest = False
+                    break
+            if at_rest:
+                return True
+            time.sleep(STOP_POLL_INTERVAL)
+        return False
+
+    def _halt_and_rest(self, park: Optional[bool], waited: bool) -> bool:
+        """Drop the run bits, then move the pistons to their resting position."""
         try:
             self.all_stop()
         except PlcError as exc:
@@ -845,66 +955,119 @@ class Model:
             )
             return False
 
-        LOGGER.log(15, "Motors stopped.")
+        LOGGER.log(15, "Motors stopped%s.", " at the end of a stroke" if waited else "")
         if self._state in (MachineState.RUNNING, MachineState.PREPARING):
             self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
 
-        if was_parking:
-            self.bridge.status("Stopped. Pistons left where they are.")
-            return True
-
         should_park = PARK_ON_STOP if park is None else park
-        if should_park and self._state is MachineState.HOMED and self.all_motors:
-            self._spawn("Park", self._park_worker)
+        if (
+            should_park
+            and self.rest_position != REST_HOLD
+            and self._state is MachineState.HOMED
+            and self.all_motors
+        ):
+            self._spawn("Rest", self._park_worker)
         else:
             self.bridge.status("Motors stopped.")
         return True
 
+    def emergency_stop(self) -> bool:
+        """Halt at once, without waiting for the end of a stroke."""
+        return self.stop(immediate=True)
+
+    def _rest_target(self, motor: Motor) -> int:
+        """Where this piston should come to rest."""
+        if self.rest_position == REST_UP:
+            # The top of its own stroke: somewhere it was already travelling to,
+            # rather than the top of the machine's travel.
+            return min(motor.write_params["Position 1"], motor.write_params["Position 2"])
+        return PARK_POSITION
+
     def _park_worker(self) -> None:
-        """Send the pistons to the bottom of the stroke and leave them there."""
+        """Move the pistons to their resting position and confirm they arrive."""
         self._cancel_park.clear()
         self._parking.set()
+        where = "top" if self.rest_position == REST_UP else "bottom"
         try:
-            self.bridge.status("Stopped. Returning pistons to the bottom...")
-            self._park_moves()
+            self.bridge.status("Stopped. Returning pistons to the {0}...".format(where))
+            arrived = self._park_moves()
             if self._cancel_park.is_set():
-                self.bridge.status("Stopped. Parking cancelled.")
+                self.bridge.status("Stopped. Pistons left where they are.")
+            elif arrived:
+                self.bridge.status("Stopped. Pistons are at the {0}.".format(where))
+                LOGGER.log(15, "Pistons at rest (%s).", where)
             else:
-                self.bridge.status("Stopped. Pistons are at the bottom.")
-                LOGGER.log(15, "Pistons parked at %s mm.", PARK_POSITION)
+                self.bridge.status(
+                    "Stopped, but not every piston reached the {0}.".format(where)
+                )
+                LOGGER.warning("Pistons did not all reach the resting position.")
         except PlcError as exc:
-            LOGGER.error("Could not park the pistons: %s", exc)
-            self.bridge.status("Stopped, but the pistons could not be parked.")
+            LOGGER.error("Could not rest the pistons: %s", exc)
+            self.bridge.status("Stopped, but the pistons could not be moved to rest.")
         finally:
             self._parking.clear()
 
-    def _park_moves(self) -> None:
+    def _park_moves(self) -> bool:
+        """Command the resting move and watch until the pistons get there.
+
+        Returns True once every piston is within tolerance. The original version
+        held Run_1 high for a fixed six seconds and simply hoped; the positions
+        are published continuously, so there is no need to guess.
+        """
+        targets = {}
         for motor in self.all_motors:
             if self._cancel_park.is_set():
-                return
+                return False
             axis = motor.axis
-            # Absolute, or 368 would be taken as a 368 mm relative lurch.
+            target = self._rest_target(motor)
+            targets[axis] = target
+            # Absolute, or the target would be taken as a relative lurch.
             self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
-            self.plc.write(params.BY_NAME["Position 1"].tag(axis), PARK_POSITION)
-            self.plc.write(params.BY_NAME["Position 2"].tag(axis), PARK_POSITION)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+            self.plc.write(params.BY_NAME["Position 2"].tag(axis), target)
             self.plc.write(params.BY_NAME["Speed 1"].tag(axis), PARK_SPEED)
             self.plc.write(params.BY_NAME["Speed 2"].tag(axis), PARK_SPEED)
 
         if self._cancel_park.is_set():
-            return
+            return False
 
         self.plc.write(tags.RUN_SINGLE, 1)
-        self._cancel_park.wait(PARK_SECONDS)
-        self.plc.write(tags.RUN_SINGLE, 0)
+        arrived = False
+        deadline = time.time() + PARK_SECONDS
+        try:
+            while time.time() < deadline and not self._cancel_park.is_set():
+                if self._all_within(targets, PARK_TOLERANCE):
+                    arrived = True
+                    break
+                time.sleep(STOP_POLL_INTERVAL)
+        finally:
+            self.plc.write(tags.RUN_SINGLE, 0)
+            self._forget_written_params()
+        return arrived
 
-        # The PLC now holds parking values, not the operator's. Forget what we
-        # believed was written, so the real parameters go out again before the
-        # next run instead of being assumed still present.
-        #
-        # The machine stays HOMED on purpose. Parking moves the pistons to a
-        # known place; it does not cost the drives their reference. Marking it
-        # unprepared here would force a full homing cycle -- the better part of
-        # a minute -- after every single stop.
+    def _all_within(self, targets: Dict[int, int], tolerance: float) -> bool:
+        for axis, target in targets.items():
+            try:
+                actual = float(
+                    self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
+                )
+            except (PlcError, TypeError, ValueError):
+                return False
+            if abs(actual - target) > tolerance:
+                return False
+        return True
+
+    def _forget_written_params(self) -> None:
+        """The PLC now holds resting values, not the operator's.
+
+        Forget what we believed was written, so the real parameters go out again
+        before the next run instead of being assumed still present.
+
+        The machine stays HOMED on purpose. Moving to rest puts the pistons
+        somewhere known; it does not cost the drives their reference. Marking it
+        unprepared would force a full homing cycle -- the better part of a
+        minute -- after every single stop.
+        """
         for motor in self.all_motors:
             motor.current_params = {}
             motor.write_success = False
@@ -1010,16 +1173,51 @@ class Model:
     def _poll_positions(self) -> None:
         readings: Dict[int, float] = {}
         unreadable: List[int] = []
+        lagging: List[int] = []
+
         for motor in self.all_motors:
+            axis = motor.axis
             try:
-                readings[motor.axis] = float(
-                    self.plc.read(tags.axis_field(motor.axis, tags.ACTUAL_POSITION))
+                actual = float(
+                    self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
+                )
+                demand = float(
+                    self.plc.read(tags.axis_field(axis, tags.DEMAND_POSITION))
                 )
             except (PlcError, TypeError, ValueError):
-                unreadable.append(motor.axis)
+                unreadable.append(axis)
+                continue
+
+            readings[axis] = actual
+
+            # A piston that stops following its demand is dragging or stuck.
+            # One poll out is normal at the turn of a stroke, so it has to be
+            # out for several in a row before it is called out.
+            if abs(demand - actual) > LAG_TOLERANCE:
+                self._lag_counts[axis] = self._lag_counts.get(axis, 0) + 1
+            else:
+                self._lag_counts[axis] = 0
+            if self._lag_counts[axis] >= LAG_POLLS:
+                lagging.append(axis)
+                if axis not in self._lag_reported:
+                    self._lag_reported.add(axis)
+                    LOGGER.warning(
+                        "Piston %s is not keeping up: demanded %.0f mm, actually "
+                        "at %.0f mm.", axis, demand, actual
+                    )
+
         self.unreadable_axes = unreadable
+        self.lagging_axes = lagging
+        if lagging and len(lagging) != len(self._lag_reported):
+            pass
         if readings:
             self.bridge.positions(readings)
+
+    def clear_lag_warnings(self) -> None:
+        """Forget which pistons were flagged, so a new run starts clean."""
+        self._lag_counts = {}
+        self._lag_reported = set()
+        self.lagging_axes = []
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -1093,6 +1291,7 @@ class Model:
         self.pending_params = params.defaults()
         self._implicit_group = True
         self._live_index = 0
+        self.rest_position = REST_DOWN
         self.record_analytics = False
         self.analytics_interval = 0.25
         self.analytics_duration = 10.0

@@ -29,7 +29,10 @@ from tkinter import StringVar, messagebox, ttk
 from typing import Dict, List, Optional
 
 from app import params
-from Model import MachineState, Model, MotorSet, RunMode
+from Model import (
+    REST_DOWN, REST_HOLD, REST_UP,
+    MachineState, Model, MotorSet, RunMode,
+)
 from modules.logging.log_utils import LOGGER_NAME
 from modules.tank_view import TankView, describe_place
 from modules.tooltip import Tooltip
@@ -113,8 +116,33 @@ class Operate:
 
         self.selection_label = ttk.Label(strip, text="", style="Value.TLabel")
         self.selection_label.grid(row=0, column=0, sticky="w")
+
+        # Choosing by depth: the lab picks "the first N columns from the front"
+        # according to how deep the water is, which used to mean clicking each
+        # piston in turn.
+        depth = ttk.Frame(strip)
+        depth.grid(row=0, column=1, padx=(theme.GUTTER, 0), sticky="w")
+        ttk.Label(depth, text="Select front", style="Dim.TLabel").grid(row=0, column=0)
+        self.depth_var = StringVar(value="4")
+        self.depth_box = ttk.Combobox(
+            depth, textvariable=self.depth_var, state="readonly", width=3,
+            values=[str(n) for n in range(1, 11)],
+        )
+        self.depth_box.grid(row=0, column=1, padx=4)
+        ttk.Label(depth, text="columns", style="Dim.TLabel").grid(row=0, column=2)
+        self.depth_button = RoundedButton(
+            depth, "Select", self.select_by_depth, size="small", width=64
+        )
+        self.depth_button.grid(row=0, column=3, padx=(theme.TIGHT, 0))
+        Tooltip(
+            self.depth_box,
+            "Pick how many columns from the front of the chamber to use,\n"
+            "according to the water depth, then press Select.",
+        )
+
         self.hover_label = ttk.Label(strip, text=" ", style="Dim.TLabel")
-        self.hover_label.grid(row=0, column=1, sticky="e")
+        self.hover_label.grid(row=0, column=2, sticky="e")
+        strip.columnconfigure(2, weight=1)
 
     def _build_controls(self, parent) -> None:
         card = ttk.Frame(parent, style="Card.TFrame",
@@ -224,6 +252,25 @@ class Operate:
         )
         self.start_button.grid(row=0, column=1, padx=(theme.GAP, 0))
 
+        rest = ttk.Frame(run)
+        rest.grid(row=0, column=2, sticky="e", padx=(theme.GUTTER, theme.GAP))
+        ttk.Label(rest, text="When stopped, rest", style="Dim.TLabel").grid(
+            row=0, column=0, padx=(0, theme.TIGHT)
+        )
+        self.rest = Segmented(
+            rest,
+            [(REST_DOWN, "Down"), (REST_UP, "Up"), (REST_HOLD, "Where they are")],
+            command=self._on_rest_changed,
+            width=250,
+            height=28,
+        )
+        self.rest.grid(row=0, column=1)
+        Tooltip(
+            self.rest.canvas,
+            "Where the pistons finish after a stop. They always complete the\n"
+            "stroke they are on first, so there is no need to time the press.",
+        )
+
         self.reset_button = RoundedButton(
             run, "Off and reset", self.reset, variant="ghost", size="small", width=110
         )
@@ -263,8 +310,13 @@ class Operate:
         self.refresh(self.model.state)
 
     def _implicit_group(self) -> Optional[MotorSet]:
-        if self.model._implicit_group and self.model.sets:
-            return self.model.sets[0]
+        return self._live_group()
+
+    def _live_group(self) -> Optional[MotorSet]:
+        """The group the tank selection is currently building."""
+        index = getattr(self.model, "_live_index", 0)
+        if self.model._implicit_group and len(self.model.sets) > index:
+            return self.model.sets[index]
         return None
 
     def _on_tank_hover(self, axis: Optional[int]) -> None:
@@ -375,6 +427,26 @@ class Operate:
             self.model.reset()
             self.editing = None
 
+    def select_by_depth(self) -> None:
+        """Select the first N columns, counting from the front of the chamber."""
+        try:
+            columns = int(self.depth_var.get())
+        except ValueError:
+            return
+        axes = [a for a in range(30) if a // 3 < columns]
+        free = [a for a in axes if self.model.axis_owner(a) is None
+                or self.model.axis_owner(a) is self._live_group()]
+        self.model.set_selection(free)
+        self.refresh(self.model.state)
+        self._say(
+            "Selected the front {0} column(s) - {1} pistons.".format(
+                columns, len(self.model.selected_axes())
+            )
+        )
+
+    def _on_rest_changed(self, value) -> None:
+        self.model.rest_position = value
+
     def add_group(self) -> None:
         try:
             self.model.add_group()
@@ -479,8 +551,15 @@ class Operate:
 
     def show_positions(self, readings: Dict[int, float]) -> None:
         self.tank.show_positions(readings)
-        if self.model.unreadable_axes:
-            self.tank.show_faults(self.model.unreadable_axes)
+        trouble = sorted(set(self.model.unreadable_axes) | set(self.model.lagging_axes))
+        if trouble != sorted(self.tank.faulted):
+            self.tank.show_faults(trouble)
+        if self.model.lagging_axes:
+            self._say(
+                "Not keeping up: piston(s) {0}. They may be dragging or stuck.".format(
+                    ", ".join(str(a) for a in self.model.lagging_axes)
+                )
+            )
 
     # -- display --------------------------------------------------------------
 
@@ -565,6 +644,8 @@ class Operate:
         for entry in (self.pos1_entry, self.pos2_entry, self.speed_entry):
             entry["state"] = entry_state
         self.group_box["state"] = "disabled" if busy else "readonly"
+        self.depth_box["state"] = "disabled" if busy else "readonly"
+        self.rest.set_state("disabled" if busy else "normal")
 
         has_pistons = bool(self.model.sets)
         for button, enabled in (
@@ -573,6 +654,7 @@ class Operate:
             (self.group_button, has_pistons and not busy),
             (self.delete_group_button, has_pistons and not busy),
             (self.reset_button, has_pistons and not busy),
+            (self.depth_button, not busy),
         ):
             button.set_state("normal" if enabled else "disabled")
 

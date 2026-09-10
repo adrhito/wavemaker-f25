@@ -67,7 +67,7 @@ class View:
 
         self.tabControl.bind("<<NotebookTabChanged>>", self._tab_changed)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.bind("<Escape>", lambda _e: self.stop())
+        self.root.bind("<Escape>", lambda _e: self.model.emergency_stop())
 
         model.register_bridge(self)
         self.root.after(PUMP_INTERVAL_MS, self._pump)
@@ -137,6 +137,10 @@ class View:
         self.progress["value"] = 0
 
     def stop(self) -> None:
+        """The Stop button: let the pistons finish the stroke, then rest.
+
+        Escape, and a second press of this button, halt immediately instead.
+        """
         self.model.stop()
 
     def _refresh_status_bar(self, state: MachineState) -> None:

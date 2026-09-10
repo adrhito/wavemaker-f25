@@ -255,3 +255,133 @@ class TestAddingASecondGroup:
                 model.add_group()
         assert [s.name for s in model.sets] == ["Group 1", "Group 2", "Group 3"]
         assert [s.axes for s in model.sets] == [[0, 1], [10, 11], [20, 21]]
+
+
+class TestPresetsActuallyTakeEffect:
+    """The lab's headline complaint: "we hit apply this preset and none of
+    these have changed".
+
+    The cause was the position limit. massive.csv stores Position 2 = 370, the
+    application enforced 368, and one out-of-range value rejected the entire
+    row -- so the 20,000 accelerations in the same row never reached the
+    machine either.
+    """
+
+    def test_massive_preset_delivers_its_accelerations(self, model):
+        from preset_options.PresetProcessor import PresetProcessor
+
+        model.set_selection(list(range(12)))
+        group = model.sets[0]
+        assert group.common_value("Accel 1") == 10000  # the default
+
+        preset = PresetProcessor().load("Presets/massive.csv")
+        for motor in group:
+            motor.update_params(preset.values_for(motor.axis))
+
+        assert group.common_value("Accel 1") == 20000
+        assert group.common_value("Decel 1") == 20000
+        assert group.common_value("Speed 1") == 900
+        assert group.common_value("Position 2") == 370
+
+    def test_the_position_limit_matches_the_manual(self):
+        from app import params
+
+        assert params.BY_NAME["Position 1"].maximum == 370
+        assert params.BY_NAME["Position 2"].maximum == 370
+
+    def test_one_bad_cell_does_not_discard_a_whole_preset(self):
+        """test1.csv stores Accel 2 = 21,000. Everything else in it must still
+        be applied."""
+        from app import params
+        from Motor import Motor
+        from preset_options.PresetProcessor import PresetProcessor
+
+        preset = PresetProcessor().load("Presets/test1.csv")
+        values = preset.values_for(0)
+        assert values["Accel 2"] > params.BY_NAME["Accel 2"].maximum
+
+        motor = Motor(0)
+        safe = {}
+        for name, value in values.items():
+            spec = params.BY_NAME[name]
+            if spec.maximum is not None:
+                value = min(value, spec.maximum)
+            if spec.minimum is not None:
+                value = max(value, spec.minimum)
+            safe[name] = value
+        motor.update_params(safe)
+
+        assert motor.write_params["Accel 2"] == params.BY_NAME["Accel 2"].maximum
+        assert motor.write_params["Speed 1"] == values["Speed 1"]
+
+
+class TestTheShippedPresetLibrary:
+    """The generated presets must all be usable as-is."""
+
+    def _library(self):
+        from app import paths
+
+        return sorted(
+            p for p in paths.PRESET_DIR.glob("*.csv")
+            if p.name != "Preset Outline (COPY ME).csv"
+        )
+
+    def test_every_preset_loads(self):
+        from preset_options.PresetProcessor import PresetProcessor
+
+        processor = PresetProcessor()
+        files = self._library()
+        assert len(files) >= 20
+        for path in files:
+            assert processor.load(str(path)).preview()
+
+    def test_the_generated_presets_are_all_in_range(self):
+        """Anything tools/make_presets.py writes must need no clamping."""
+        from app import params, paths
+        from preset_options.PresetProcessor import PresetProcessor
+
+        generated = [
+            "Gentle - short slow stroke", "Moderate - half stroke",
+            "Full stroke - fast", "Maximum - everything at the limit",
+            "Long period - slow with a pause",
+            "Sharp - hard acceleration, short stroke",
+            "Travelling wave - front to back", "Travelling wave - fast march",
+            "Focused - strongest in the middle", "Tapered - largest at the back",
+            "Shallow water - front four columns",
+        ]
+        processor = PresetProcessor()
+        for name in generated:
+            path = paths.PRESET_DIR / (name + ".csv")
+            assert path.exists(), "{0} is missing".format(name)
+            preset = processor.load(str(path))
+            for axis in range(30):
+                values = preset.values_for(axis)
+                assert values is not None
+                assert params.validate_all(values) == [], "{0} axis {1}".format(
+                    name, axis
+                )
+
+    def test_the_travelling_presets_really_do_stagger(self):
+        """A travelling wave preset is only travelling if its offsets differ."""
+        from app import paths
+        from preset_options.PresetProcessor import PresetProcessor
+
+        preset = PresetProcessor().load(
+            str(paths.PRESET_DIR / "Travelling wave - front to back.csv")
+        )
+        offsets = [preset.values_for(a)["Curve Offset"] for a in range(0, 30, 3)]
+        assert offsets == sorted(offsets)
+        assert len(set(offsets)) == 10
+        assert offsets[0] < offsets[-1]
+
+    def test_the_shallow_preset_covers_the_front_columns(self):
+        from app import paths
+        from preset_options.PresetProcessor import PresetProcessor
+
+        preset = PresetProcessor().load(
+            str(paths.PRESET_DIR / "Shallow water - front four columns.csv")
+        )
+        # Motors 0-11 are the front four columns and carry real motion.
+        assert preset.rows[0]["Speed 1"] > 0
+        assert preset.rows[11]["Speed 1"] > 0
+        assert preset.rows[12]["Speed 1"] == 0

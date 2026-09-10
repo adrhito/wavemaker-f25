@@ -226,7 +226,7 @@ class PresetOptions:
 
         applied = 0
         skipped: List[str] = []
-        rejected: List[str] = []
+        clamped: List[str] = []
 
         for motor_set in chosen:
             for motor in motor_set:
@@ -236,11 +236,28 @@ class PresetOptions:
                         "motor {0}: the preset has no values for it".format(motor.axis)
                     )
                     continue
-                try:
-                    motor.update_params(values)
-                except ValueError as exc:
-                    rejected.append("motor {0}: {1}".format(motor.axis, exc))
-                    continue
+
+                # Pull anything out of range back to the limit rather than
+                # refusing the whole row. A preset is dozens of numbers; one bad
+                # cell used to discard every other value in it silently, which
+                # is exactly the "presets do not take" fault the lab reported.
+                safe = {}
+                for name, value in values.items():
+                    spec = params.BY_NAME.get(name)
+                    if spec is None:
+                        continue
+                    limited = value
+                    if spec.minimum is not None and limited < spec.minimum:
+                        limited = spec.minimum
+                    if spec.maximum is not None and limited > spec.maximum:
+                        limited = spec.maximum
+                    if limited != value:
+                        clamped.append(
+                            "{0} {1} -> {2}".format(name, value, limited)
+                        )
+                    safe[name] = limited
+
+                motor.update_params(safe)
                 applied += 1
 
         if applied:
@@ -252,11 +269,13 @@ class PresetOptions:
                 )
             )
 
-        if rejected:
-            messagebox.showerror(
-                "Some values were rejected",
-                "These motors kept their previous parameters because the preset "
-                "is outside the machine's limits:\n\n" + "\n".join(rejected),
+        if clamped:
+            unique = sorted(set(clamped))
+            messagebox.showwarning(
+                "Some values were outside the limits",
+                "The preset was applied, but these values were held at the "
+                "machine's limit:\n\n{0}\n\nEverything else in the preset was "
+                "applied as saved.".format("\n".join(unique[:12])),
                 parent=self.tab,
             )
         elif skipped and not applied:

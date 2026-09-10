@@ -1,0 +1,80 @@
+Presets
+=======
+
+These are starting points, not calibrated recipes. There is no
+measured relationship yet between piston parameters and the wave
+that results, so each one is named for what the PISTONS do rather
+than for the wave it supposedly makes. Measure before you trust a
+name.
+
+Every value sits inside the limits in app/params.py, so the
+application will accept all of them.
+
+A row of zeroes for a piston means 'this piston was not part of
+the preset'; it falls back to the All row when applied.
+
+Gentle - short slow stroke
+--------------------------
+
+  A 120 mm stroke low in the travel, moving slowly.
+  The smallest disturbance the array can make while still moving cleanly -- a starting point for calibration runs, and gentle on the drives.
+
+Moderate - half stroke
+----------------------
+
+  A 250 mm stroke at middling speed.
+  Roughly the machine's comfortable middle, and a sensible place to start when trying something new.
+
+Full stroke - fast
+------------------
+
+  The whole travel, quickly.
+  Close to the largest single-frequency disturbance the array can produce.
+
+Maximum - everything at the limit
+---------------------------------
+
+  Every value at the limit the application allows.
+  The hardest the machine is asked to work, and the case where pistons are most likely to fall behind their demanded position -- watch the array for stragglers.
+
+Long period - slow with a pause
+-------------------------------
+
+  A long slow stroke with a dwell at each end and a sine profile, for the longest period the array can drive.
+  Time 1 and Time 2 are the pause; if the units turn out not to be milliseconds, that is the number to adjust.
+
+Sharp - hard acceleration, short stroke
+---------------------------------------
+
+  A short stroke driven as hard as possible, on a trapezoidal profile.
+  Puts the energy into a brief sharp push rather than a long smooth one.
+
+Travelling wave - front to back
+-------------------------------
+
+  Each column starts a little after the one in front of it, so the disturbance runs along the chamber instead of the whole array rising together.
+  Curve Offset goes 0 at the front to 180 at the back.
+  Run this with Start Curve; the stagger is what makes it a travelling wave rather than a standing one.
+
+Travelling wave - fast march
+----------------------------
+
+  The same idea with a much smaller delay between columns, so the wave crosses the chamber quickly -- a shorter apparent wavelength than 'front to back'.
+
+Focused - strongest in the middle
+---------------------------------
+
+  Full stroke through the middle of the chamber, tapering towards the front and back.
+  Concentrates the disturbance rather than spreading it evenly.
+
+Tapered - largest at the back
+-----------------------------
+
+  Stroke grows steadily from the front of the chamber to the back, so the array pushes progressively harder along its length.
+
+Shallow water - front four columns
+----------------------------------
+
+  Values for the front four columns only, low in the travel, for use when the tank is shallow.
+  Select the front four columns before applying it.
+

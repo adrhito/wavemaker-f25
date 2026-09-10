@@ -35,7 +35,7 @@ class TestValidation:
     @pytest.mark.parametrize(
         "name,value",
         [
-            ("Position 1", 369),
+            ("Position 1", 371),
             ("Position 1", -21),
             ("Speed 1", 901),
             ("Speed 2", -1),
@@ -51,7 +51,7 @@ class TestValidation:
 
     @pytest.mark.parametrize(
         "name,value",
-        [("Position 1", 368), ("Position 1", -20), ("Speed 1", 900), ("Profile", 3)],
+        [("Position 1", 370), ("Position 1", -20), ("Speed 1", 900), ("Profile", 3)],
     )
     def test_accepts_the_boundaries(self, name, value):
         assert params.BY_NAME[name].validate(value) is None

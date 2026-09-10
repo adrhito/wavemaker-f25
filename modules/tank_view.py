@@ -333,7 +333,8 @@ class TankView:
         # The paddle itself.
         fill = self.colour_for(axis)
         if axis in self.faulted:
-            fill = "#e05252"
+            # A piston that is not following its demand, or cannot be read.
+            fill = "#ff453a"
         outline = FREE_EDGE
         width = 1
         if axis in self.selected:
