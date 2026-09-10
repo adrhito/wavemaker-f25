@@ -71,6 +71,7 @@ def main():
         "operate.Operate",
         "operate.ParameterDialog",
         "operate.PatternDialog",
+        "wave.WaveDesigner",
         "modules.widgets",
         "modules.tank_view",
         "preset_options.Preset",
