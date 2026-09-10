@@ -8,8 +8,17 @@ by an Allen-Bradley ControlLogix PLC, in three rows of ten.
 
 ## Running it
 
-Double-click **`Open_Wavemaker_GUI.cmd`**. It opens the Studio 5000 project,
-waits while you go online and switch to Rem Run, then starts the interface.
+Double-click **`Open Wavemaker.cmd`**. That is the whole procedure.
+
+It does not open Studio 5000 and does not wait for a keypress. The application
+opens its own EtherNet/IP session to the controller; Studio 5000 "Go Online"
+connects *Studio 5000* to the controller, not this application.
+
+The one real prerequisite is that the controller is in **Run**, because the
+ladder logic has to be scanning. That is persistent state -- it stays in Run
+until somebody changes it -- so it is not a per-launch step. If the application
+cannot reach the controller it says so at the top of Control Home and offers
+**Reconnect** and **Open Studio 5000** buttons.
 
 From a terminal:
 

@@ -129,3 +129,57 @@ class TestLifecycle:
         assert model.state is MachineState.READY
         # And the home command bit was left low.
         assert plc.writes_to(tags.HOME_BUTTON)[-1] == 0
+
+
+class TestStartupWithoutStudio5000:
+    """The launcher no longer opens Studio 5000 or waits for a keypress, so the
+    application has to cope with being started before the controller is ready."""
+
+    def test_a_missing_plc_falls_back_to_simulation_not_a_crash(self, monkeypatch):
+        from app import plc as plc_module
+        from Model import Model
+
+        monkeypatch.setattr(plc_module.PlcClient, "connect", lambda self: False)
+        model = Model(ip_address="10.255.255.1")
+        model._spawn = lambda name, work: work()
+        model.startup()
+
+        assert model.is_live is False
+        assert model.state is MachineState.IDLE
+        assert isinstance(model.plc, plc_module.SimulatedPlc)
+
+    def test_reconnect_picks_the_machine_up_without_a_restart(self, monkeypatch):
+        from app import plc as plc_module
+        from Model import Model
+
+        attempts = {"n": 0}
+
+        def flaky_connect(self):
+            attempts["n"] += 1
+            return attempts["n"] > 1  # offline first, online on retry
+
+        monkeypatch.setattr(plc_module.PlcClient, "connect", flaky_connect)
+        monkeypatch.setattr(
+            plc_module.PlcClient, "identity", lambda self: "Test controller"
+        )
+        monkeypatch.setattr(plc_module.PlcClient, "write", lambda self, t, v: None)
+        monkeypatch.setattr(plc_module.PlcClient, "read", lambda self, t: 0)
+
+        model = Model(ip_address="10.255.255.1")
+        model._spawn = lambda name, work: work()
+        model.startup()
+        assert model.is_live is False
+
+        model.reconnect()
+        assert model.is_live is True
+
+    def test_reconnect_is_refused_in_simulate_mode(self):
+        from Model import Model
+
+        model = Model(simulate=True)
+        model._spawn = lambda name, work: work()
+        assert model.reconnect() is False
+        assert model.bridge.problems
+
+    def test_the_simulator_reports_an_identity(self, plc):
+        assert plc.identity() == "Simulated controller"

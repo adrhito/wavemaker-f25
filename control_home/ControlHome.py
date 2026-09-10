@@ -58,8 +58,24 @@ class ControlHome:
         ttk.Label(
             self.title_frame, text="Control Home", style="Heading.TLabel"
         ).grid(row=0, column=0, sticky="w")
-        self.connection_label = ttk.Label(self.title_frame, text="")
-        self.connection_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        banner = ttk.Frame(self.title_frame)
+        banner.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.connection_label = ttk.Label(banner, text="")
+        self.connection_label.grid(row=0, column=0, sticky="w")
+
+        # Shown only when the machine is not connected. The launcher no longer
+        # opens Studio 5000 and waits for a keypress, so recovery lives here
+        # instead: press Reconnect, or open Studio 5000 if the controller needs
+        # to be put back in Run.
+        self.reconnect_button = ttk.Button(
+            banner, text="Reconnect", width=12, command=self.reconnect
+        )
+        self.studio_button = ttk.Button(
+            banner, text="Open Studio 5000", width=18, command=self.open_studio
+        )
+        self.reconnect_button.grid(row=0, column=1, padx=(16, 6))
+        self.studio_button.grid(row=0, column=2)
 
         self._build_motor_map()
         self._build_status()
@@ -244,6 +260,17 @@ class ControlHome:
         """Set every button from the machine state. The single source of truth."""
         self.connection_label.configure(text=self._connection_text())
 
+        # The recovery buttons only clutter the screen when connected.
+        offline = not self.model.is_live and getattr(
+            self.model, "_connection_attempted", True
+        )
+        busy = state in (MachineState.PREPARING, MachineState.RUNNING)
+        for button in (self.reconnect_button, self.studio_button):
+            if offline and not busy:
+                button.grid()
+            else:
+                button.grid_remove()
+
         enabled = {
             MachineState.IDLE: (),
             MachineState.READY: ("prepare", "reset"),
@@ -339,6 +366,33 @@ class ControlHome:
 
     def stop(self) -> None:
         self.model.stop()
+
+    def reconnect(self) -> None:
+        self.set_status("Looking for the PLC...")
+        self.model.reconnect()
+
+    def open_studio(self) -> None:
+        """Open the PLC project, for when the controller needs putting in Run."""
+        from app import external
+
+        if not external.open_studio_5000():
+            messagebox.showerror(
+                "Studio 5000 project not found",
+                "Expected the project at:\n{0}\n\n"
+                "Open it yourself, go online, and put the controller in "
+                "Rem Run. Then press Reconnect.".format(external.STUDIO_PROJECT),
+                parent=self.tab,
+            )
+            return
+        messagebox.showinfo(
+            "Studio 5000",
+            "Studio 5000 is opening.\n\n"
+            "Go Online, then put the controller in Rem Run.\n"
+            "Come back here and press Reconnect.\n\n"
+            "You can leave Studio 5000 closed once the controller is in Run - "
+            "this application does not need it.",
+            parent=self.tab,
+        )
 
     def reset(self) -> None:
         if messagebox.askyesno(

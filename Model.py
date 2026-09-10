@@ -756,16 +756,36 @@ class Model:
             self.bridge.state_changed(self._state)
 
         if self.is_live:
+            identity = self.plc.identity()
+            if identity:
+                LOGGER.info("Controller: %s", identity)
             self.bridge.status("Connected. Clearing the machine...")
             self.motors_off()
             self.bridge.status("Ready. Choose motors on the Define Motors tab.")
         else:
             self.bridge.status(
-                "Simulation mode: no PLC at {0}. Nothing will move.".format(
-                    self.ip_address
-                )
+                "No PLC at {0} - running in simulation. Nothing will move. "
+                "Check that the controller is powered and in Run, then press "
+                "Reconnect.".format(self.ip_address)
             )
         self._set_state(MachineState.IDLE)
+
+    def reconnect(self) -> bool:
+        """Try the PLC again without restarting the application.
+
+        The launcher no longer walks the operator through Studio 5000, so this
+        is how they recover from starting the application before the controller
+        was ready.
+        """
+        if self._simulate:
+            self.bridge.problem(
+                "Simulation mode",
+                "This session was started with --simulate, so it will not "
+                "connect to the machine. Restart without that option.",
+            )
+            return False
+        self._connection_attempted = False
+        return self._command("Reconnect", self._startup_worker)
 
     def reset(self) -> bool:
         """Return the whole application to its just-launched state."""

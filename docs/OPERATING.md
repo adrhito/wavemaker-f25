@@ -5,16 +5,37 @@
 1. Wall disconnect on.
 2. Cabinet switch on. Wait for the supply voltage display to settle.
 3. Green button.
-4. Run `Open_Wavemaker_GUI.cmd`.
-5. Studio 5000 opens. **Go Online**, then put the controller in **Rem Run**.
-6. Return to the terminal window and press Enter. The interface opens.
+4. Double-click **`Open Wavemaker.cmd`**. The interface opens.
+
+That is it. There is no Studio 5000 step, no Go Online step, no keypress, and
+no database script to start first.
+
+### Why those steps are gone
+
+- **The MongoDB script** was never required. It only stores analytics runs, and
+  the application already writes them to `analytics/<date>.txt` regardless. The
+  launcher now starts MongoDB quietly in the background if it is installed, and
+  carries on without it if not.
+- **Studio 5000 and Go Online** are not required either. The application opens
+  its own EtherNet/IP session to the controller. "Go Online" connects Studio
+  5000 to the controller; it has no bearing on whether other clients can read
+  and write tags.
+- **Rem Run is the one thing that genuinely matters** -- the ladder logic must
+  be scanning or writing `Run_2` does nothing. But the controller stays in Run
+  until somebody changes it, so this is not a per-launch step. It only needs
+  attention after somebody has put the controller into Program mode.
+
+If the controller is not reachable, the banner says so and two buttons appear:
+**Reconnect**, and **Open Studio 5000** for when you do need to go online and
+put it back in Run. You can close Studio 5000 again afterwards.
 
 The banner at the top of Control Home says whether you are connected:
 
 - `Connected to PLC at 192.168.1.1` — the real machine. Pistons will move.
 - `SIMULATION - no PLC at 192.168.1.1. Nothing will move.` — the interface could
-  not reach the PLC. Everything works, but nothing physical happens. Check step 5
-  if you expected to be connected.
+  not reach the PLC. Everything works, but nothing physical happens. Press
+  **Reconnect**; if that fails, use **Open Studio 5000**, go online, confirm the
+  controller is in Rem Run, then press Reconnect again.
 
 ## Running
 
@@ -143,7 +164,7 @@ tab puts the whole session log on the clipboard for pasting into an email.
 
 | Symptom | Likely cause |
 |---|---|
-| Banner says SIMULATION | Studio 5000 is not online, or the PLC is unreachable. Redo startup step 5. |
+| Banner says SIMULATION | The controller is unreachable or not in Run. Press Reconnect; if that fails use Open Studio 5000 and check for Rem Run. |
 | "Motors did not home within 35 seconds" | A drive is faulted or not enabled. Check the drive, then press Off and Reset and prepare again. |
 | A parameter will not apply | It is outside the range in the table above; the reason is shown under the boxes. |
 | "Could not read preset" | The CSV is missing a column, or is not a preset file. The message names what is wrong. |

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, List, Mapping, Protocol, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from modules.eip import PLC
 
@@ -58,6 +58,7 @@ class Transport(Protocol):
     def write_many(self, values: Mapping[str, int]) -> None: ...
     def read_many(self, tags: Sequence[str]) -> Dict[str, Any]: ...
     def keepalive(self) -> None: ...
+    def identity(self) -> Optional[str]: ...
     def close(self) -> None: ...
 
 
@@ -180,6 +181,27 @@ class PlcClient:
             lambda plc: plc.GetProgramTagList(tag_names.PROGRAM_TAG_LIST),
         )
 
+    def identity(self) -> Optional[str]:
+        """A one-line description of the controller, for the log.
+
+        Worth recording because the application no longer makes the operator
+        open Studio 5000 first: this is the evidence of which controller it
+        actually reached.
+        """
+        try:
+            device = self._attempt(
+                "Identity",
+                lambda plc: plc.GetModuleProperties(self.processor_slot),
+            )
+        except PlcError as exc:
+            LOGGER.debug("Could not read the controller identity: %s", exc)
+            return None
+        if device is None or not getattr(device, "ProductName", ""):
+            return None
+        return "{0} rev {1} (serial {2})".format(
+            device.ProductName, device.Revision, device.SerialNumber
+        )
+
 
 class SimulatedPlc:
     """An in-memory stand-in for the PLC.
@@ -215,6 +237,9 @@ class SimulatedPlc:
 
     def keepalive(self) -> None:
         pass
+
+    def identity(self) -> Optional[str]:
+        return "Simulated controller"
 
     def close(self) -> None:
         self.connected = False
