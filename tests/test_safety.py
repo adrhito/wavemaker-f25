@@ -421,12 +421,13 @@ class TestSpottingATroubledPistonEarly:
         """Every drive publishes a warn word and a healthy one reads zero. It
         was being read and thrown away."""
         model.set_selection([0, 1, 2])
-        plc.write(tags.axis_field(1, tags.WARN_WORD), 0x40)
+        plc.write(tags.axis_field(1, tags.WARN_WORD), 0x40)   # bit 6
         plc.clear_history()
 
         problems = model.check_drives()
 
-        assert 1 in problems and "warning" in problems[1]
+        # Named from the manual, not reported as raw hex.
+        assert 1 in problems and "Controller Hot" in problems[1]
         assert 0 not in problems and 2 not in problems
         # Nothing was commanded to move.
         assert plc.history == []
@@ -505,3 +506,87 @@ class TestSpottingATroubledPistonEarly:
         assert model.prepare()
         assert plc.writes_to(tags.HOME_BUTTON) == []
         assert model.state is MachineState.HOMED
+
+
+class TestDriveWordsAreDecoded:
+    """The drives say exactly what is wrong; it just was not being read.
+
+    Bit meanings come from the LinMot manual, sections 3.24 and 3.25 of
+    0185-1093-E_6V7_MA_MotionCtrlSW-SG5-SG7.pdf.
+    """
+
+    def test_the_manual_confirms_the_homed_bit(self):
+        """It had been inferred from the original code's string slicing."""
+        from app import drive_status
+        from Motor import HOMED_BIT
+
+        assert drive_status.HOMED_BIT == 11
+        assert HOMED_BIT == 11
+        assert drive_status.is_homed(1 << 11) is True
+        assert drive_status.is_homed(0) is False
+
+    def test_faults_are_named_not_hex(self):
+        from app import drive_status
+
+        assert drive_status.problems(1 << 0) == [
+            "Motor Hot Sensor - the motor's temperature sensor has tripped"
+        ]
+        assert "Position Lag" in drive_status.problems(1 << 4)[0]
+        assert "Controller Hot" in drive_status.problems(1 << 6)[0]
+
+    def test_not_homed_is_not_treated_as_a_fault(self):
+        """Warn bit 7 is set by every drive before it has been homed. Treating
+        it as a fault would flag the whole array every morning."""
+        from app import drive_status
+
+        assert drive_status.problems(1 << 7) == []
+        assert "Not Homed" in drive_status.WARN_BITS[7].name
+
+    def test_drive_errors_are_picked_up_from_the_status_word(self):
+        from app import drive_status
+
+        assert drive_status.has_error(1 << 3) is True     # Error
+        assert drive_status.has_error(1 << 12) is True    # Fatal Error
+        assert drive_status.has_error(1 << 11) is False   # Homed is not an error
+        assert "Error" in drive_status.problems(0, 1 << 3)[0]
+
+    def test_the_drive_reports_its_own_lag(self):
+        """Position Lag and Speed Lag come from the limit configured on the
+        drive, which is better than watching positions over a network."""
+        from app import drive_status
+
+        assert drive_status.is_lagging(1 << 4) is True    # Position Lag
+        assert drive_status.is_lagging(1 << 11) is True   # Speed Lag
+        assert drive_status.is_lagging(1 << 6) is False   # Controller Hot
+
+    def test_a_lagging_drive_is_flagged_even_if_it_is_moving(self, homed_model, plc):
+        """The drive knows before the movement check would."""
+        import Model as model_module
+
+        homed_model._run_mode = RunMode.CONTINUOUS
+        homed_model._set_state(MachineState.RUNNING)
+        motor = homed_model.all_motors[0]
+        motor.set_param("Position 1", 0)
+        motor.set_param("Position 2", 300)
+        plc.write(tags.axis_field(motor.axis, tags.WARN_WORD), 1 << 4)
+
+        # A full window of history in which it moved the whole stroke.
+        import time
+
+        now = time.time()
+        homed_model._history[motor.axis] = [
+            (now - model_module.MOVEMENT_WINDOW, 0.0),
+            (now - model_module.MOVEMENT_WINDOW / 2, 150.0),
+            (now - 0.1, 300.0),
+            (now, 0.0),
+        ]
+        assert motor.axis in homed_model._find_stragglers(now)
+
+    def test_a_drive_report_names_everything(self, model, plc):
+        model.set_selection([0, 1])
+        plc.write(tags.axis_field(0, tags.STATUS_WORD), 1 << 11)
+        plc.write(tags.axis_field(1, tags.WARN_WORD), 1 << 0)
+
+        report = model.drive_report()
+        assert "homed" in report[0]
+        assert "Motor Hot Sensor" in report[1]

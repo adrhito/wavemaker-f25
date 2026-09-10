@@ -801,11 +801,26 @@ class Model:
             except (PlcError, TypeError, ValueError) as exc:
                 problems[axis] = "cannot be read ({0})".format(exc)
                 continue
-            if status.has_warning:
-                problems[axis] = "drive reports a warning (warn word {0:#x})".format(
-                    status.warn_word
-                )
+            faults = status.faults
+            if faults:
+                problems[axis] = "; ".join(faults)
         return problems
+
+    def drive_report(self, axes=None) -> Dict[int, str]:
+        """A line per piston describing what its drive is reporting.
+
+        Everything named rather than in hex, for the Feedback tab and for
+        anyone trying to work out why a piston will not behave.
+        """
+        if axes is None:
+            axes = self.live_axes or list(range(tags.MOTOR_COUNT))
+        report: Dict[int, str] = {}
+        for axis in axes:
+            try:
+                report[axis] = Motor(axis).read_status(self.plc).summary()
+            except (PlcError, TypeError, ValueError) as exc:
+                report[axis] = "could not be read ({0})".format(exc)
+        return report
 
     def calibrate_all(self) -> bool:
         """Home every piston in the machine, whatever is selected.
@@ -824,6 +839,19 @@ class Model:
 
         self.bridge.status("Checking the drives...")
         problems = self.check_drives(every)
+        if problems:
+            self.bridge.problem(
+                "Some drives report a fault",
+                "These pistons have something wrong before homing has even "
+                "started:{0}{0}{1}{0}{0}They will be homed anyway, and any that "
+                "will not home are named afterwards.".format(
+                    chr(10),
+                    chr(10).join(
+                        "  piston {0}: {1}".format(tags.display_number(a), why)
+                        for a, why in sorted(problems.items())
+                    ),
+                ),
+            )
         if problems:
             LOGGER.warning(
                 "Before homing: %s",
@@ -1576,7 +1604,17 @@ class Model:
 
             positions = [p for _t, p in history]
             travelled = max(positions) - min(positions)
-            if travelled < stroke * STUCK_FRACTION:
+
+            # The drive's own following-error warning is the better signal when
+            # it is available: it comes from the limit configured on the drive
+            # rather than from watching positions over a network.
+            drive_says_so = False
+            try:
+                drive_says_so = motor.read_status(self.plc).is_lagging
+            except (PlcError, TypeError, ValueError):
+                pass
+
+            if drive_says_so or travelled < stroke * STUCK_FRACTION:
                 stragglers.append(motor.axis)
                 if motor.axis not in self._lag_reported:
                     self._lag_reported.add(motor.axis)

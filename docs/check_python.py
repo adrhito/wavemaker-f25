@@ -58,6 +58,8 @@ def main():
         "app.params",
         "app.plc",
         "app.simulator",
+        "app.drive_status",
+        "app.waves",
         "app.patterns",
         "app.external",
         "modules.eip",

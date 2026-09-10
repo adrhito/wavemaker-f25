@@ -12,18 +12,19 @@ from __future__ import annotations
 from logging import Logger, getLogger
 from typing import Any, Dict, List, NamedTuple, Optional
 
-from app import params, tags
+from app import drive_status, params, tags
 from app.plc import PlcError, Transport
 from modules.logging.log_utils import LOGGER_NAME
 
 #: Bit of the drive Status Word that reports "homed", counting from zero.
 #:
-#: The old code found this bit by turning the status word into a string with
-#: ``bin()`` and indexing twelve characters from the right, which raised an
+#: Confirmed against the LinMot manual, section 3.24: bit 11 is "Homed --
+#: position sensor system valid". It had until now been inferred from the
+#: original code, which found the bit by turning the status word into a string
+#: with ``bin()`` and indexing twelve characters from the right -- and raised an
 #: exception whenever the word was small enough that ``bin()`` dropped leading
-#: zeroes -- i.e. exactly when the drive was least ready.  Shifting the integer
-#: gets the same bit without the string handling.
-HOMED_BIT = 11
+#: zeroes, i.e. exactly when the drive was least ready.
+HOMED_BIT = drive_status.HOMED_BIT
 
 
 class MotorStatus(NamedTuple):
@@ -42,12 +43,35 @@ class MotorStatus(NamedTuple):
     def has_warning(self) -> bool:
         return self.warn_word != 0
 
+    @property
+    def faults(self):
+        """What is wrong with this drive, named. Empty when it is healthy.
+
+        Routine bits are excluded -- notably "Motor Not Homed", which every
+        drive sets before it has been homed.
+        """
+        return drive_status.problems(self.warn_word, self.status_word)
+
+    @property
+    def is_lagging(self) -> bool:
+        """The drive's own judgement that the piston is falling behind."""
+        return drive_status.is_lagging(self.warn_word)
+
+    @property
+    def has_error(self) -> bool:
+        return drive_status.has_error(self.status_word)
+
+    def summary(self) -> str:
+        return drive_status.summary(self.warn_word, self.status_word)
+
     def describe(self) -> str:
-        return (
-            "state={0:#b} status={1:#b} control={2:#b} warn={3:#b}".format(
-                self.state, self.status_word, self.control_word, self.warn_word
-            )
-        )
+        """Everything the drive is reporting, named rather than in hex."""
+        status = ", ".join(drive_status.describe(self.status_word,
+                                                 drive_status.STATUS_BITS))
+        warn = ", ".join(drive_status.describe(self.warn_word,
+                                               drive_status.WARN_BITS))
+        return "status: {0}. warnings: {1}".format(status or "none",
+                                                   warn or "none")
 
 
 class Motor:
