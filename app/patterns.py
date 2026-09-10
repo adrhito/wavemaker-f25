@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Dict, List, NamedTuple, Optional, Sequence
 
-from app import params
+from app import params, tags
 
 #: Which way the pattern runs across the array.
 ACROSS_COLUMNS = "columns"
@@ -153,10 +153,12 @@ def build(
     for axis, value in raw.items():
         rounded = int(round(value))
         if spec.minimum is not None and rounded < spec.minimum:
-            clamped.append("motor {0} ({1} -> {2})".format(axis, rounded, spec.minimum))
+            clamped.append("piston {0} ({1} -> {2})".format(
+                tags.display_number(axis), rounded, spec.minimum))
             rounded = spec.minimum
         if spec.maximum is not None and rounded > spec.maximum:
-            clamped.append("motor {0} ({1} -> {2})".format(axis, rounded, spec.maximum))
+            clamped.append("piston {0} ({1} -> {2})".format(
+                tags.display_number(axis), rounded, spec.maximum))
             rounded = spec.maximum
         values[axis] = rounded
 

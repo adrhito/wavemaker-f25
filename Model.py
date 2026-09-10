@@ -233,7 +233,7 @@ class MotorSet:
         return sorted(self.motors)
 
     def describe(self) -> str:
-        return "{0}: motors {1}".format(self.name, ", ".join(str(a) for a in self.axes))
+        return "{0}: pistons {1}".format(self.name, tags.display_list(self.axes))
 
     # -- parameters -----------------------------------------------------------
 
@@ -533,7 +533,8 @@ class Model:
             raise ValueError(
                 "Already in another set: "
                 + ", ".join(
-                    "motor {0} ({1})".format(axis, owner) for axis, owner in clashes
+                    "piston {0} ({1})".format(tags.display_number(axis), owner)
+                    for axis, owner in clashes
                 )
             )
 
@@ -855,7 +856,7 @@ class Model:
             self.bridge.status("Homing timed out, but all pistons report homed.")
             return
 
-        names = ", ".join(str(axis) for axis in stuck)
+        names = tags.display_list(stuck)
         summary = "{0} of {1} pistons homed. Piston(s) {2} did not.".format(
             homed_count, total, names
         )
@@ -888,8 +889,7 @@ class Model:
         for axis in dropped:
             self.selection[axis] = False
         self.unhomed_axes = []
-        LOGGER.info("Dropped piston(s) %s from the run.",
-                    ", ".join(str(a) for a in dropped))
+        LOGGER.info("Dropped piston(s) %s from the run.", tags.display_list(dropped))
 
         # The pistons that are left homed perfectly well. Going back to READY
         # would re-home all of them on the next Start, which is what made a
@@ -898,7 +898,7 @@ class Model:
             self._set_state(MachineState.HOMED)
             self.bridge.status(
                 "Removed piston(s) {0}. The rest are still homed - press Start.".format(
-                    ", ".join(str(a) for a in dropped)
+                    tags.display_list(dropped)
                 )
             )
         else:
@@ -1072,9 +1072,7 @@ class Model:
             what, furthest
         )
         if still:
-            message += " Piston(s) {0} barely moved.".format(
-                ", ".join(str(a) for a in still)
-            )
+            message += " Piston(s) {0} barely moved.".format(tags.display_list(still))
             self.lagging_axes = still
         LOGGER.log(15, "%s", message)
         self.bridge.status(message + " Ready to run again.")
@@ -1309,14 +1307,15 @@ class Model:
         interval = max(self.analytics_interval, 0.01)
         target = paths.analytics_file()
         samples: Dict[str, Dict[str, Dict[str, float]]] = dict(
-            ("Motor {0}".format(m.axis), {}) for m in motors
+            ("Piston {0}".format(tags.display_number(m.axis)), {}) for m in motors
         )
 
         with open(target, "a+", encoding="utf-8") as handle:
             handle.write("\n----- Run {0} -----\n".format(time.asctime()))
             handle.write("{0:<12}".format("t"))
             for motor in motors:
-                handle.write("{0:<24}".format("motor {0}".format(motor.axis)))
+                handle.write("{0:<24}".format(
+                    "piston {0}".format(tags.display_number(motor.axis))))
             handle.write("\n{0:<12}".format(""))
             for _ in motors:
                 handle.write("{0:<12}{1:<12}".format("demand", "actual"))
@@ -1330,7 +1329,8 @@ class Model:
                 handle.write("{0:<12.4f}".format(elapsed))
                 for motor in motors:
                     reading = motor.read_positions(self.plc)
-                    samples["Motor {0}".format(motor.axis)]["{0}".format(elapsed)] = {
+                    samples["Piston {0}".format(tags.display_number(motor.axis))][
+                        "{0}".format(elapsed)] = {
                         "Actual Position": reading["actual"],
                         "Expected Position": reading["demand"],
                         "Displacement": reading["displacement"],
@@ -1449,7 +1449,7 @@ class Model:
                     LOGGER.warning(
                         "Piston %s covered only %.0f mm of its %.0f mm stroke over "
                         "the last %.0f seconds. It may be dragging or stuck.",
-                        motor.axis, travelled, stroke, MOVEMENT_WINDOW,
+                        tags.display_number(motor.axis), travelled, stroke, MOVEMENT_WINDOW,
                     )
         return stragglers
 

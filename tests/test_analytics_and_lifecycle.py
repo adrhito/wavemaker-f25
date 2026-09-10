@@ -30,9 +30,9 @@ class TestAnalytics:
         homed_model.start(RunMode.CONTINUOUS)
 
         text = paths.analytics_file().read_text(encoding="utf-8")
-        header = [line for line in text.splitlines() if "motor" in line][-1]
+        header = [line for line in text.splitlines() if "piston" in line][-1]
         for axis in (0, 1, 2):
-            assert "motor {0}".format(axis) in header
+            assert "piston {0}".format(tags.display_number(axis)) in header
         # Three pistons -> three demand/actual pairs on a data row.
         data_rows = [
             line for line in text.splitlines() if line and line[0].isdigit()

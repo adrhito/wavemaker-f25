@@ -37,6 +37,35 @@ RUN_CURVE = f"{PROGRAM}.Run_Curve"
 PROGRAM_TAG_LIST = PROGRAM
 
 
+
+# --- What the operator sees ---------------------------------------------------
+# Internally a piston is an axis, 0..29, because that is what the PLC tags are
+# built from. On screen it is numbered 1..30, because counting from zero is a
+# programming habit and this machine is operated by people who do not have it.
+#
+# Every message, label and tooltip uses the display number. Nothing that
+# reaches the PLC does.
+
+
+def display_number(axis: int) -> int:
+    """The number shown on screen for this axis."""
+    return axis + 1
+
+
+def axis_from_display(number: int) -> int:
+    """The axis behind a number the operator typed or read."""
+    return number - 1
+
+
+def display_list(axes) -> str:
+    """A readable list of piston numbers, e.g. "3, 7 and 12"."""
+    numbers = [str(display_number(a)) for a in sorted(axes)]
+    if not numbers:
+        return ""
+    if len(numbers) == 1:
+        return numbers[0]
+    return ", ".join(numbers[:-1]) + " and " + numbers[-1]
+
 def _check_axis(axis: int) -> int:
     if not isinstance(axis, int) or isinstance(axis, bool):
         raise TypeError(f"axis must be an int, got {type(axis).__name__}")

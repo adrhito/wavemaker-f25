@@ -11,7 +11,7 @@ from __future__ import annotations
 from tkinter import StringVar, Toplevel, messagebox, ttk
 from typing import Dict
 
-from app import params
+from app import params, tags
 from modules.tooltip import Tooltip
 from modules.widgets import RoundedButton
 from style import theme
@@ -52,7 +52,7 @@ class ParameterDialog:
         ttk.Label(
             frame,
             text="{0} pistons: {1}".format(
-                len(motor_set), ", ".join(str(a) for a in motor_set.axes)
+                len(motor_set), tags.display_list(motor_set.axes)
             ),
             style="Dim.TLabel",
         ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(2, theme.GAP + 4))

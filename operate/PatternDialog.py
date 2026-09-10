@@ -10,7 +10,7 @@ from __future__ import annotations
 from tkinter import StringVar, Toplevel, ttk
 from typing import Optional
 
-from app import params, patterns
+from app import params, tags, patterns
 
 PREVIEW_BAR_HEIGHT = 74
 
@@ -46,8 +46,8 @@ class PatternDialog:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             frame,
-            text="{0} motors: {1}".format(
-                len(motor_set), ", ".join(str(a) for a in motor_set.axes)
+            text="{0} pistons: {1}".format(
+                len(motor_set), tags.display_list(motor_set.axes)
             ),
             style="Dim.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 14))

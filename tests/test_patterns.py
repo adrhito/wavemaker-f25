@@ -82,7 +82,7 @@ class TestLimits:
 
     def test_clamping_is_reported_per_motor(self):
         result = patterns.build(ALL, "Speed 1", patterns.STAGGER, start=880, step=100)
-        assert any("motor" in entry for entry in result.clamped)
+        assert any("piston" in entry for entry in result.clamped)
 
     def test_a_clean_pattern_reports_no_clamping(self):
         result = patterns.build(ALL, "Speed 1", patterns.RAMP, start=100, end=800)

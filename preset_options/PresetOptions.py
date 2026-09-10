@@ -7,7 +7,7 @@ from logging import Logger, getLogger
 from tkinter import IntVar, StringVar, filedialog, messagebox, simpledialog, ttk
 from typing import Dict, List, Optional
 
-from app import params, paths
+from app import params, paths, tags
 from Model import MachineState, Model
 from modules.logging.log_utils import LOGGER_NAME
 from modules.tooltip import Tooltip
@@ -157,7 +157,7 @@ class PresetOptions:
             box = ttk.Checkbutton(
                 self.set_container,
                 text="{0}  (pistons {1})".format(
-                    motor_set.name, ", ".join(str(a) for a in motor_set.axes)
+                    motor_set.name, tags.display_list(motor_set.axes)
                 ),
                 variable=var,
             )

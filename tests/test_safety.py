@@ -303,7 +303,8 @@ class TestHomingFailureIsActionable:
         model.prepare()
 
         assert model.unhomed_axes == [2]
-        assert any("2" in message for _title, message in model.bridge.problems)
+        # Axis 2 is shown to the operator as piston 3.
+        assert any("3" in message for _title, message in model.bridge.problems)
         assert any("did not" in message for _title, message in model.bridge.problems)
 
     def test_the_others_are_reported_as_homed(self, model, plc):

@@ -31,6 +31,8 @@ pattern tool calls a stagger across columns a "front to back" stagger.
 from __future__ import annotations
 
 from tkinter import Canvas
+
+from app.tags import display_number
 from typing import Callable, Dict, List, Optional, Tuple
 
 ROWS = 3
@@ -75,7 +77,7 @@ def describe_place(axis: int) -> str:
     """
     row = axis % ROWS
     column = axis // ROWS
-    vertical = ("top", "middle", "bottom")[row]
+    vertical = ("bottom", "middle", "top")[row]
     if column == 0:
         depth = "front (nearest you)"
     elif column == COLUMNS - 1:
@@ -249,8 +251,15 @@ class TankView:
         }
 
     def _cell_centre(self, axis: int, m) -> Tuple[float, float]:
-        row = axis % ROWS
-        column = axis // ROWS
+        """Where this piston is drawn.
+
+        The array is drawn rotated by half a turn from the raw axis
+        numbering, so the picture matches how the machine is actually
+        looked at from the operating position: piston 28 (axis 27) sits
+        bottom left and piston 3 (axis 2) sits top right.
+        """
+        row = (ROWS - 1) - axis % ROWS
+        column = (COLUMNS - 1) - axis // ROWS
         cx = m["pad_x"] + (column + 0.5) * m["cell_w"]
         cy = m["pad_top"] + (row + 0.5) * m["cell_h"]
         return cx, cy
@@ -300,20 +309,22 @@ class TankView:
         you that the right-hand side is the back of the chamber.
         """
         c = self.canvas
-        for column in range(COLUMNS):
-            x = m["pad_x"] + (column + 0.5) * m["cell_w"]
+        for slot in range(COLUMNS):
+            x = m["pad_x"] + (slot + 0.5) * m["cell_w"]
+            # The drawing is rotated, so the chamber column that lands
+            # in this slot counts back from the far end.
             c.create_text(
-                x, 10, text=str(column + 1), fill=LABEL_DIM,
+                x, 10, text=str(COLUMNS - slot), fill=LABEL_DIM,
                 font=("Segoe UI", 8),
             )
 
         baseline = m["height"] - 7
         c.create_text(
-            m["pad_x"], baseline, text="FRONT - nearest you", anchor="w",
+            m["pad_x"], baseline, text="BACK of chamber", anchor="w",
             fill=LABEL_DIM, font=("Segoe UI", 8),
         )
         c.create_text(
-            m["width"] - m["pad_x"], baseline, text="BACK of chamber", anchor="e",
+            m["width"] - m["pad_x"], baseline, text="FRONT - nearest you", anchor="e",
             fill=LABEL_DIM, font=("Segoe UI", 8),
         )
 
@@ -321,7 +332,7 @@ class TankView:
         mid = m["width"] / 2.0
         c.create_line(
             mid - 62, baseline, mid + 62, baseline,
-            fill="#3f4a56", width=1, arrow="last", arrowshape=(7, 9, 3),
+            fill="#3f4a56", width=1, arrow="first", arrowshape=(7, 9, 3),
         )
 
     def _draw_piston(self, axis: int, m) -> None:
@@ -377,7 +388,7 @@ class TankView:
         # Axis number, dark on light fills and light on dark ones.
         c.create_text(
             cx, cy,
-            text=str(axis),
+            text=str(display_number(axis)),
             fill="#1c2530" if axis in self.set_of else LABEL,
             font=("Segoe UI", 8, "bold" if axis in self.set_of else "normal"),
         )

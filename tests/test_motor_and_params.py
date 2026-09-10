@@ -161,3 +161,60 @@ class TestMotor:
         with pytest.raises(ValueError):
             motor.update_params({"Speed 1": 800, "Position 1": 9999})
         assert motor.write_params["Speed 1"] == original
+
+
+class TestDisplayNumberingAndLayout:
+    """Pistons are numbered 1..30 on screen and the array is drawn rotated.
+
+    Internally an axis is still 0..29, because every PLC tag is built from it.
+    Only what the operator sees changes.
+    """
+
+    def test_pistons_are_numbered_from_one(self):
+        assert tags.display_number(0) == 1
+        assert tags.display_number(29) == 30
+        assert tags.axis_from_display(1) == 0
+        assert tags.axis_from_display(30) == 29
+
+    def test_display_numbering_never_reaches_the_plc(self):
+        """Axis 0 is Motor_1 and Axis[0] regardless of what is shown."""
+        assert tags.motor_field(0, "Pos_1") == "Program:Wave_Control.Motor_1.Pos_1"
+        assert tags.axis_field(0, "StatusWord") == "Program:Wave_Control.Axis[0].StatusWord"
+        assert tags.live_motor(0) == "Program:Wave_Control.Live_Motors.0"
+
+    def test_the_array_is_drawn_rotated_half_a_turn(self):
+        """The two swaps that were asked for: 28 goes where 3 was, 30 where 1 was."""
+        from modules import tank_view
+
+        class FakeMetrics(dict):
+            pass
+
+        m = {"pad_x": 0.0, "pad_top": 0.0, "cell_w": 10.0, "cell_h": 10.0}
+        view = tank_view.TankView.__new__(tank_view.TankView)
+
+        def slot(axis):
+            cx, cy = tank_view.TankView._cell_centre(view, axis, m)
+            return int(cy // 10), int(cx // 10)
+
+        # Axis 27 (piston 28) now sits where axis 2 (piston 3) used to.
+        assert slot(27) == (2, 0)
+        assert slot(2) == (0, 9)
+        # Axis 29 (piston 30) now sits where axis 0 (piston 1) used to.
+        assert slot(29) == (0, 0)
+        assert slot(0) == (2, 9)
+
+    def test_every_piston_still_has_its_own_place(self):
+        from modules import tank_view
+
+        m = {"pad_x": 0.0, "pad_top": 0.0, "cell_w": 10.0, "cell_h": 10.0}
+        view = tank_view.TankView.__new__(tank_view.TankView)
+        places = set()
+        for axis in range(30):
+            cx, cy = tank_view.TankView._cell_centre(view, axis, m)
+            places.add((int(cy // 10), int(cx // 10)))
+        assert len(places) == 30
+
+    def test_a_list_of_pistons_reads_naturally(self):
+        assert tags.display_list([0]) == "1"
+        assert tags.display_list([0, 1]) == "1 and 2"
+        assert tags.display_list([4, 0, 2]) == "1, 3 and 5"

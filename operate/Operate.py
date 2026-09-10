@@ -28,7 +28,7 @@ from logging import Logger, getLogger
 from tkinter import StringVar, messagebox, ttk
 from typing import Dict, List, Optional
 
-from app import params
+from app import params, tags
 from Model import (
     REST_DOWN, REST_HOLD, REST_UP,
     MachineState, Model, MotorSet, RunMode,
@@ -336,7 +336,8 @@ class Operate:
         self._load_values()
         self.tank.show_strokes(self._strokes())
         self._say(
-            "Piston {0} now strokes {1} to {2} mm.".format(axis, low, high)
+            "Piston {0} now strokes {1} to {2} mm.".format(
+                tags.display_number(axis), low, high)
         )
 
     def _on_tank_hover(self, axis: Optional[int]) -> None:
@@ -344,7 +345,8 @@ class Operate:
             self.hover_label.configure(text=" ")
             return
         owner = self.model.axis_owner(axis)
-        where = "Piston {0}  ·  {1}".format(axis, describe_place(axis))
+        where = "Piston {0}  ·  {1}".format(
+            tags.display_number(axis), describe_place(axis))
         if owner is not None:
             position = self.tank.positions.get(axis)
             where += "  ·  {0}".format(owner.name)
@@ -470,7 +472,7 @@ class Operate:
         if not stuck or getattr(self, "_asked_about", None) == stuck:
             return
         self._asked_about = stuck
-        names = ", ".join(str(a) for a in stuck)
+        names = tags.display_list(stuck)
         self._say(
             "Piston(s) {0} did not home. They are marked in red.".format(names)
         )
@@ -487,7 +489,7 @@ class Operate:
             self.refresh(self.model.state)
             self._say(
                 "Removed piston(s) {0}. Press Start to run the rest.".format(
-                    ", ".join(str(a) for a in dropped)
+                    tags.display_list(dropped)
                 )
             )
 
@@ -604,7 +606,7 @@ class Operate:
         if self.model.lagging_axes:
             self._say(
                 "Barely moving: piston(s) {0}. They may be dragging or stuck.".format(
-                    ", ".join(str(a) for a in self.model.lagging_axes)
+                    tags.display_list(self.model.lagging_axes)
                 )
             )
         elif "Barely moving" in self.problem_label.cget("text"):

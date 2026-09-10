@@ -200,7 +200,8 @@ class Motor:
         if problems:
             self.write_success = False
             raise ValueError(
-                "Motor {0}: {1}".format(self.axis, "; ".join(problems))
+                "Piston {0}: {1}".format(
+                    tags.display_number(self.axis), "; ".join(problems))
             )
 
         outstanding = self.write_params if force else self.pending_changes()
