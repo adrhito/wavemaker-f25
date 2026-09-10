@@ -360,6 +360,12 @@ class Model:
         #: Pistons that would not home. Shown on the tank and offered for
         #: removal so a stuck one does not block the whole array.
         self.unhomed_axes: List[int] = []
+        #: Pistons this session has actually homed. Homing is slow, so once a
+        #: piston is referenced there is no reason to do it again -- but only
+        #: pistons homed under our own control count, never ones that merely
+        #: have the status bit set, because homing at a wrong position is the
+        #: very thing the double pass exists to guard against.
+        self._homed_axes: set = set()
         #: axis -> [(when, position), ...] over the last MOVEMENT_WINDOW seconds.
         self._history: Dict[int, list] = {}
         self._lag_reported: set = set()
@@ -666,6 +672,7 @@ class Model:
         self.plc.write(tags.HOME_BUTTON, 0)
         self.clear_faults()
         self._clear_live_motors()
+        self._homed_axes = set()
         LOGGER.info("Motors off; run bits and motion faults cleared.")
 
     def boot_motors(self) -> None:
@@ -711,12 +718,34 @@ class Model:
         self.bridge.status("Selecting motors...")
         self._mark_live_motors()
 
+        # Pistons already homed in this session do not need homing again, and
+        # homing takes the better part of a minute. This matters most after a
+        # partial failure: one stuck piston used to mean every other piston was
+        # re-homed on the next attempt, for nothing.
+        if self._already_homed():
+            self.bridge.status("Already homed. Writing parameters...")
+            self._write_all_parameters()
+            self._set_state(MachineState.HOMED)
+            self.bridge.status("Ready to run.")
+            LOGGER.log(15, "Skipped homing: these pistons are already homed.")
+            return
+
         self.bridge.status("Clearing motion faults...")
         self.clear_faults()
 
         self.bridge.status("Booting motors...")
         self.boot_motors()
 
+        self._write_all_parameters()
+
+        if self._home_motors():
+            self._set_state(MachineState.HOMED)
+            self.bridge.status("Motors homed and ready to run.")
+            LOGGER.log(15, "Motors homed.")
+        else:
+            self._set_state(MachineState.READY)
+
+    def _write_all_parameters(self) -> None:
         total = len(self.all_motors)
         written = 0
         for motor_set in self.sets:
@@ -730,12 +759,23 @@ class Model:
                 motor.write_to(self.plc)
         LOGGER.log(15, "Parameters written to %s motors.", total)
 
-        if self._home_motors():
-            self._set_state(MachineState.HOMED)
-            self.bridge.status("Motors homed and ready to run.")
-            LOGGER.log(15, "Motors homed.")
-        else:
-            self._set_state(MachineState.READY)
+    def _already_homed(self) -> bool:
+        """Whether every selected piston was homed earlier in this session.
+
+        Both conditions must hold: this session homed it, and the drive still
+        says so. The first stops a piston that merely powered up with the bit
+        set from being trusted; the second catches one that has since lost its
+        reference.
+        """
+        live = self.live_axes
+        if not live:
+            return False
+        if not all(axis in self._homed_axes for axis in live):
+            return False
+        try:
+            return all(motor.is_homed(self.plc) for motor in self.all_motors)
+        except PlcError:
+            return False
 
     def _home_motors(self) -> bool:
         """Home every piston. Returns True once all drives report homed.
@@ -773,6 +813,8 @@ class Model:
 
                     if all(motor.is_homed(self.plc) for motor in self.all_motors):
                         homed = True
+                        if is_final:
+                            self._homed_axes.update(self.live_axes)
                         break
             finally:
                 self.plc.write(tags.HOME_BUTTON, 0)
@@ -795,8 +837,12 @@ class Model:
         """
         stuck: List[int] = []
         for motor in self.all_motors:
-            if not motor.is_homed(self.plc):
+            if motor.is_homed(self.plc):
+                # Homed, even though a neighbour held the whole run up.
+                self._homed_axes.add(motor.axis)
+            else:
                 stuck.append(motor.axis)
+                self._homed_axes.discard(motor.axis)
 
         self.unhomed_axes = stuck
         total = len(self.all_motors)
@@ -844,7 +890,19 @@ class Model:
         self.unhomed_axes = []
         LOGGER.info("Dropped piston(s) %s from the run.",
                     ", ".join(str(a) for a in dropped))
-        self._refresh_idle_state()
+
+        # The pistons that are left homed perfectly well. Going back to READY
+        # would re-home all of them on the next Start, which is what made a
+        # single stuck piston cost a minute every attempt.
+        if self.sets and self._already_homed():
+            self._set_state(MachineState.HOMED)
+            self.bridge.status(
+                "Removed piston(s) {0}. The rest are still homed - press Start.".format(
+                    ", ".join(str(a) for a in dropped)
+                )
+            )
+        else:
+            self._refresh_idle_state()
         return dropped
 
     # -- running --------------------------------------------------------------
@@ -1425,6 +1483,7 @@ class Model:
         self.pending_params = params.defaults()
         self._implicit_group = True
         self._live_index = 0
+        self._homed_axes = set()
         self.rest_position = REST_DOWN
         self.record_analytics = False
         self.analytics_interval = 0.25

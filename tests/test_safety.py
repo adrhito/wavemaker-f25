@@ -341,3 +341,72 @@ class TestHomingFailureIsActionable:
         model.drop_unhomed()
         assert model.sets == []
         assert model.state is MachineState.IDLE
+
+
+class TestHomingIsNotRepeatedNeedlessly:
+    """Reported from the machine: 14 of 15 pistons homed, one did not, and the
+    next attempt re-homed all 14 again. Homing takes the better part of a
+    minute, so a single stuck piston cost that on every retry."""
+
+    def _select(self, model, plc, axes, stuck=()):
+        model.set_selection(list(axes))
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        for axis in stuck:
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 0)
+
+    def test_a_second_prepare_does_not_home_again(self, model, plc):
+        self._select(model, plc, range(4))
+        assert model.prepare()
+        assert model.state is MachineState.HOMED
+
+        plc.clear_history()
+        model._set_state(MachineState.READY)
+        assert model.prepare()
+
+        assert plc.writes_to(tags.HOME_BUTTON) == []
+        assert plc.writes_to(tags.MOTOR_BOOT) == []
+        assert model.state is MachineState.HOMED
+
+    def test_dropping_the_stuck_piston_leaves_the_rest_homed(self, model, plc):
+        self._select(model, plc, range(15), stuck=[14])
+        model.prepare()
+        assert model.state is MachineState.READY
+        assert model.unhomed_axes == [14]
+
+        plc.clear_history()
+        model.drop_unhomed()
+
+        # The fourteen that homed are still homed: no second homing cycle.
+        assert model.state is MachineState.HOMED
+        assert plc.writes_to(tags.HOME_BUTTON) == []
+        assert model.live_axes == list(range(14))
+
+    def test_adding_a_new_piston_does_require_homing(self, model, plc):
+        """Only pistons already homed are skipped; a fresh one is not."""
+        self._select(model, plc, range(3))
+        assert model.prepare()
+
+        model.set_selection(list(range(5)))   # two pistons that were not homed
+        plc.clear_history()
+        assert model.prepare()
+        assert plc.writes_to(tags.HOME_BUTTON), "the new pistons must be homed"
+
+    def test_turning_the_motors_off_forgets_the_reference(self, model, plc):
+        self._select(model, plc, range(3))
+        assert model.prepare()
+        model.motors_off()
+        assert model._homed_axes == set()
+
+        plc.clear_history()
+        self._select(model, plc, range(3))
+        assert model.prepare()
+        assert plc.writes_to(tags.HOME_BUTTON), "after motors off, home again"
+
+    def test_a_piston_that_loses_its_reference_is_homed_again(self, model, plc):
+        self._select(model, plc, range(3))
+        assert model.prepare()
+
+        # The drive no longer reports homed, whatever the application believed.
+        plc.write(tags.axis_field(1, tags.STATUS_WORD), 0)
+        assert model._already_homed() is False
