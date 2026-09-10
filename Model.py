@@ -270,11 +270,12 @@ class Model:
         self.pending_params: Dict[str, int] = params.defaults()
         #: The groups of pistons, in the order they were created.
         self.sets: List[MotorSet] = []
-        #: While True there is at most one group and it simply follows the
-        #: selection, so an operator running one group never meets the idea of
-        #: a "set" at all. Pressing "Add another group" turns this off and the
-        #: groups become explicit.
+        #: While True the tank selection builds a group directly, so an
+        #: operator running one group never meets the idea of a "set" at all.
         self._implicit_group = True
+        #: Index of the group the selection is currently building. Groups
+        #: before it are frozen. "Add group" moves this on.
+        self._live_index = 0
 
         self._state = MachineState.IDLE
         self._busy = threading.Lock()
@@ -352,19 +353,24 @@ class Model:
         self._sync_implicit_group()
 
     def _sync_implicit_group(self) -> None:
-        """Keep the single implicit group in step with what is selected.
+        """Keep the group being built in step with what is selected.
 
-        Pistons already in an explicit group are left alone; only the implicit
-        one follows the tank selection.
+        The selection always drives the *newest* group. Earlier groups are
+        frozen: their pistons are off limits and their parameters are left
+        alone. "Add group" simply moves the live index on, so selecting pistons
+        after pressing it builds the next group rather than doing nothing --
+        which is what happened when this only ever tracked group one.
         """
         if not self._implicit_group:
             return
 
-        axes = [a for a in self.selected_axes()]
-        existing = self.sets[0] if self.sets else None
+        frozen = self.sets[: self._live_index]
+        taken = set(axis for group in frozen for axis in group.axes)
+        axes = [a for a in self.selected_axes() if a not in taken]
+        existing = self.sets[self._live_index] if len(self.sets) > self._live_index else None
 
         if not axes:
-            self.sets = []
+            self.sets = list(frozen)
             self._refresh_idle_state()
             return
 
@@ -385,19 +391,22 @@ class Model:
                 motor.update_params(template)
             motors.append(motor)
 
-        name = existing.name if existing is not None else "Group 1"
-        self.sets = [MotorSet(name, motors)]
+        name = (
+            existing.name if existing is not None
+            else "Group {0}".format(self._live_index + 1)
+        )
+        self.sets = list(frozen) + [MotorSet(name, motors)]
         self.mark_unprepared()
 
     def add_group(self) -> None:
-        """Stop the current group following the selection, and start a new one.
+        """Freeze the group being built and start the next one.
 
         This is the moment groups stop being invisible: from here on the
         operator is managing more than one and the interface says so.
         """
-        if not self.sets:
+        if len(self.sets) <= self._live_index:
             raise ValueError("Select some pistons before adding another group.")
-        self._implicit_group = False
+        self._live_index = len(self.sets)
         for axis in self.selection:
             self.selection[axis] = False
 
@@ -436,9 +445,10 @@ class Model:
         # asking to create it is asking for what already exists. Returning it
         # keeps this callable either way rather than complaining that the
         # pistons clash with the group they are already in.
-        if self._implicit_group and self.sets:
-            if set(axes) == set(self.sets[0].axes):
-                return self.sets[0]
+        if self._implicit_group and len(self.sets) > self._live_index:
+            live = self.sets[self._live_index]
+            if set(axes) == set(live.axes):
+                return live
 
         clashes = [
             (axis, owner.name)
@@ -1082,6 +1092,7 @@ class Model:
         self.selection = dict((axis, False) for axis in range(tags.MOTOR_COUNT))
         self.pending_params = params.defaults()
         self._implicit_group = True
+        self._live_index = 0
         self.record_analytics = False
         self.analytics_interval = 0.25
         self.analytics_duration = 10.0

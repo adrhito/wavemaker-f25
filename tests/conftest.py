@@ -85,7 +85,7 @@ def make_group():
         for name, value in parameters.items():
             model.set_pending_param(name.replace("_", " ").title(), value)
         if model._implicit_group:
-            group = model.sets[0]
+            group = model.sets[-1]
             for name, value in parameters.items():
                 group.set_param(name.replace("_", " ").title(), value)
             return group

@@ -199,3 +199,59 @@ class TestPresetSaving:
     def test_an_empty_name_is_refused(self, model):
         with pytest.raises(PresetError, match="name"):
             PresetProcessor(model)._resolve_path("   ")
+
+
+class TestAddingASecondGroup:
+    """Pressing Add group then selecting pistons must actually build the
+    second group.
+
+    It did not: the selection only ever tracked group one, so after Add group
+    nothing happened at all and there was no way to create another group from
+    the interface.
+    """
+
+    def test_selecting_after_add_group_builds_the_next_group(self, model):
+        model.set_selection([0, 1, 2])
+        assert len(model.sets) == 1
+
+        model.add_group()
+        assert model.selected_axes() == []
+
+        model.set_selection([10, 11])
+        assert [s.name for s in model.sets] == ["Group 1", "Group 2"]
+        assert model.sets[0].axes == [0, 1, 2]
+        assert model.sets[1].axes == [10, 11]
+
+    def test_earlier_groups_are_frozen(self, model):
+        model.set_selection([0, 1, 2])
+        model.sets[0].set_param("Speed 1", 700)
+        model.add_group()
+        model.set_selection([10, 11])
+        model.sets[1].set_param("Speed 1", 260)
+
+        assert model.sets[0].common_value("Speed 1") == 700
+        assert model.sets[1].common_value("Speed 1") == 260
+
+        # Changing the selection now only reshapes the newest group.
+        model.set_selection([10, 11, 12])
+        assert model.sets[0].axes == [0, 1, 2]
+        assert model.sets[1].axes == [10, 11, 12]
+
+    def test_pistons_in_a_frozen_group_cannot_be_taken(self, model):
+        model.set_selection([0, 1, 2])
+        model.add_group()
+        model.set_selection([2, 10])          # 2 already belongs to Group 1
+        assert model.sets[0].axes == [0, 1, 2]
+        assert model.sets[1].axes == [10]
+
+    def test_add_group_needs_something_to_freeze(self, model):
+        with pytest.raises(ValueError, match="(?i)select some pistons"):
+            model.add_group()
+
+    def test_three_groups(self, model):
+        for start in (0, 10, 20):
+            model.set_selection([start, start + 1])
+            if start != 20:
+                model.add_group()
+        assert [s.name for s in model.sets] == ["Group 1", "Group 2", "Group 3"]
+        assert [s.axes for s in model.sets] == [[0, 1], [10, 11], [20, 21]]
