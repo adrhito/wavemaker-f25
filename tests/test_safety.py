@@ -411,3 +411,97 @@ class TestHomingIsNotRepeatedNeedlessly:
         # The drive no longer reports homed, whatever the application believed.
         plc.write(tags.axis_field(1, tags.STATUS_WORD), 0)
         assert model._already_homed() is False
+
+
+class TestSpottingATroubledPistonEarly:
+    """A stuck piston should be named in seconds, not after the full timeout,
+    and the drives can be checked before anything is commanded to move."""
+
+    def test_the_warn_word_is_checked_without_moving_anything(self, model, plc):
+        """Every drive publishes a warn word and a healthy one reads zero. It
+        was being read and thrown away."""
+        model.set_selection([0, 1, 2])
+        plc.write(tags.axis_field(1, tags.WARN_WORD), 0x40)
+        plc.clear_history()
+
+        problems = model.check_drives()
+
+        assert 1 in problems and "warning" in problems[1]
+        assert 0 not in problems and 2 not in problems
+        # Nothing was commanded to move.
+        assert plc.history == []
+
+    def test_a_healthy_array_reports_no_problems(self, model, plc):
+        model.set_selection(list(range(6)))
+        assert model.check_drives() == {}
+
+    def test_a_motionless_piston_is_named_before_the_timeout(self, model, plc,
+                                                             monkeypatch):
+        """Homing drives every piston home, so one that has not shifted at all
+        after a few seconds is stuck rather than slow."""
+        model.set_selection([0, 1, 2])
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 0)
+
+        # Pistons 0 and 2 travel; piston 1 never moves.
+        moved = {"n": 0}
+        real_read = plc.read
+
+        def read(tag):
+            if tag.endswith("ComActualPosition"):
+                moved["n"] += 1
+                axis = int(tag.split("[")[1].split("]")[0])
+                if axis == 1:
+                    return 0
+                return moved["n"] * 100000
+            return real_read(tag)
+
+        monkeypatch.setattr(plc, "read", read)
+        model.prepare()
+
+        assert 1 in model.unhomed_axes
+
+    def test_calibrate_all_homes_every_piston(self, model, plc):
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        plc.clear_history()
+
+        assert model.calibrate_all()
+
+        # Every piston was marked live during the calibration.
+        assert len(model._homed_axes) == tags.MOTOR_COUNT
+        assert plc.writes_to(tags.HOME_BUTTON)
+
+    def test_calibrate_all_leaves_a_stuck_piston_out(self, model, plc):
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        plc.write(tags.axis_field(7, tags.STATUS_WORD), 0)
+
+        model.calibrate_all()
+
+        assert 7 not in model._homed_axes
+        assert len(model._homed_axes) == tags.MOTOR_COUNT - 1
+        assert model.unhomed_axes == [7]
+
+    def test_calibrate_all_restores_the_operators_selection(self, model, plc):
+        model.set_selection([3, 4])
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+
+        model.calibrate_all()
+
+        # Only the operator's own pistons are live on the machine afterwards.
+        for axis in range(tags.MOTOR_COUNT):
+            expected = 1 if axis in (3, 4) else 0
+            assert plc.read(tags.live_motor(axis)) == expected, axis
+
+    def test_calibrating_means_a_later_run_does_not_home(self, model, plc):
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        model.calibrate_all()
+
+        model.set_selection([10, 11, 12])
+        plc.clear_history()
+        assert model.prepare()
+        assert plc.writes_to(tags.HOME_BUTTON) == []
+        assert model.state is MachineState.HOMED

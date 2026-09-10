@@ -778,16 +778,106 @@ class Model:
         except PlcError:
             return False
 
-    def _home_motors(self) -> bool:
-        """Home every piston. Returns True once all drives report homed.
+    # -- checking the drives before anything moves ---------------------------
+
+    def check_drives(self, axes=None) -> Dict[int, str]:
+        """Look for trouble without commanding any motion.
+
+        Every drive publishes a warn word, and a healthy one reads zero. That
+        was being read and thrown away. Checking it costs one read per piston
+        and takes a moment, which is a great deal better than discovering a bad
+        drive thirty-five seconds into a homing cycle.
+
+        Returns axis -> what is wrong, for the pistons that have a problem.
+        """
+        if axes is None:
+            axes = self.live_axes or list(range(tags.MOTOR_COUNT))
+
+        problems: Dict[int, str] = {}
+        for axis in axes:
+            motor = Motor(axis)
+            try:
+                status = motor.read_status(self.plc)
+            except (PlcError, TypeError, ValueError) as exc:
+                problems[axis] = "cannot be read ({0})".format(exc)
+                continue
+            if status.has_warning:
+                problems[axis] = "drive reports a warning (warn word {0:#x})".format(
+                    status.warn_word
+                )
+        return problems
+
+    def calibrate_all(self) -> bool:
+        """Home every piston in the machine, whatever is selected.
+
+        Homing is per-drive, so doing the whole array once at the start of a
+        session means no later selection has to wait for it. A piston that will
+        not home is named and simply left out; the rest are referenced and
+        ready.
+        """
+        return self._command("Calibrate", self._calibrate_worker)
+
+    def _calibrate_worker(self) -> None:
+        self._stop_requested.clear()
+        self._set_state(MachineState.PREPARING)
+        every = list(range(tags.MOTOR_COUNT))
+
+        self.bridge.status("Checking the drives...")
+        problems = self.check_drives(every)
+        if problems:
+            LOGGER.warning(
+                "Before homing: %s",
+                "; ".join(
+                    "piston {0} {1}".format(tags.display_number(a), why)
+                    for a, why in sorted(problems.items())
+                ),
+            )
+
+        self.bridge.status("Selecting every piston...")
+        for axis in every:
+            self.plc.write(tags.live_motor(axis), 1)
+
+        self.bridge.status("Clearing motion faults...")
+        self.clear_faults()
+        self.bridge.status("Booting motors...")
+        self.boot_motors()
+
+        homed = self._home_motors(axes=every)
+
+        # Put the operator's own selection back on the machine.
+        self._mark_live_motors()
+
+        if homed:
+            self._homed_axes = set(every)
+            self.bridge.status("All 30 pistons are calibrated.")
+            LOGGER.log(15, "Calibrated all 30 pistons.")
+        else:
+            stuck = self.unhomed_axes
+            self._homed_axes = set(a for a in every if a not in stuck)
+            self.bridge.status(
+                "{0} of 30 pistons calibrated. Piston(s) {1} did not.".format(
+                    30 - len(stuck), tags.display_list(stuck)
+                )
+            )
+        self._refresh_idle_state()
+
+    def _home_motors(self, axes=None) -> bool:
+        """Home the pistons. Returns True once every drive reports homed.
 
         Homing runs twice on purpose.  The first pass is short and exists
         because the pistons have been observed to home against a high position
         if commanded from certain starting states; the second pass is the one
         that counts.  The reason has never been established, so the behaviour is
         kept as-is -- see docs/OPERATING.md.
+
+        A piston that is mechanically stuck is spotted while this runs rather
+        than at the end of it: every healthy piston travels during homing, so
+        one whose position never changes is reported within a few seconds
+        instead of after the full timeout.
         """
+        motors = [Motor(a) for a in axes] if axes is not None else self.all_motors
         passes = ((HOME_SETTLE_POLLS, False), (HOME_POLLS, True))
+        start_positions = self._positions_of(motors)
 
         for polls, is_final in passes:
             if self._stop_requested.is_set():
@@ -804,7 +894,7 @@ class Model:
                     if self._stop_requested.is_set():
                         break
                     self.bridge.status(
-                        "Homing motors, pass {0} of 2 ({1}s)...".format(
+                        "Homing pistons, pass {0} of 2 ({1}s)...".format(
                             2 if is_final else 1, int(poll * HOME_POLL_SECONDS)
                         )
                     )
@@ -812,22 +902,64 @@ class Model:
                     self.plc.keepalive()
                     self._sleep(HOME_POLL_SECONDS)
 
-                    if all(motor.is_homed(self.plc) for motor in self.all_motors):
+                    if all(motor.is_homed(self.plc) for motor in motors):
                         homed = True
                         if is_final:
-                            self._homed_axes.update(self.live_axes)
+                            self._homed_axes.update(m.axis for m in motors)
                         break
+
+                    if is_final and poll == 2:
+                        self._warn_about_motionless(motors, start_positions)
             finally:
                 self.plc.write(tags.HOME_BUTTON, 0)
 
             if is_final:
                 if not homed:
-                    self._report_homing_failure(int(polls * HOME_POLL_SECONDS))
+                    self._report_homing_failure(
+                        int(polls * HOME_POLL_SECONDS), motors
+                    )
                 return homed
 
         return False
 
-    def _report_homing_failure(self, timeout: int) -> None:
+    def _positions_of(self, motors) -> Dict[int, float]:
+        positions = {}
+        for motor in motors:
+            try:
+                positions[motor.axis] = motor.read_position(self.plc)
+            except (PlcError, TypeError, ValueError):
+                continue
+        return positions
+
+    def _warn_about_motionless(self, motors, start_positions) -> None:
+        """Name pistons that have not moved at all since homing began.
+
+        Homing drives every piston to its home position, so one that has not
+        shifted by even a millimetre after several seconds is not simply slow --
+        it is stuck. Saying so now, rather than at the end of the timeout, is
+        the difference between a few seconds and the better part of a minute.
+        """
+        now = self._positions_of(motors)
+        motionless = []
+        for motor in motors:
+            was = start_positions.get(motor.axis)
+            is_now = now.get(motor.axis)
+            if was is None or is_now is None:
+                continue
+            if abs(is_now - was) < 1.0 and not motor.is_homed(self.plc):
+                motionless.append(motor.axis)
+
+        if not motionless:
+            return
+        self.unhomed_axes = motionless
+        names = tags.display_list(motionless)
+        LOGGER.warning("Piston(s) %s have not moved since homing began.", names)
+        self.bridge.status(
+            "Piston(s) {0} are not moving. They may be stuck. Still waiting for "
+            "the rest...".format(names)
+        )
+
+    def _report_homing_failure(self, timeout: int, motors=None) -> None:
         """Say which pistons did not home, not merely that homing failed.
 
         "Motors did not home within 35 seconds" gave the operator nothing to act
@@ -837,7 +969,9 @@ class Model:
         run can go ahead without the bad one.
         """
         stuck: List[int] = []
-        for motor in self.all_motors:
+        if motors is None:
+            motors = self.all_motors
+        for motor in motors:
             if motor.is_homed(self.plc):
                 # Homed, even though a neighbour held the whole run up.
                 self._homed_axes.add(motor.axis)
@@ -846,7 +980,7 @@ class Model:
                 self._homed_axes.discard(motor.axis)
 
         self.unhomed_axes = stuck
-        total = len(self.all_motors)
+        total = len(motors)
         homed_count = total - len(stuck)
 
         if not stuck:

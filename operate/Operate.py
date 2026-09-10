@@ -272,10 +272,22 @@ class Operate:
             "stroke they are on first, so there is no need to time the press.",
         )
 
+        self.calibrate_button = RoundedButton(
+            run, "Calibrate all", self.calibrate, size="small", width=104
+        )
+        self.calibrate_button.grid(row=0, column=3, sticky="e",
+                                   padx=(0, theme.TIGHT))
+        Tooltip(
+            self.calibrate_button.canvas,
+            "Homes all 30 pistons in one go, whatever is selected.\n"
+            "Do it once at the start of a session and no later\n"
+            "selection has to wait for homing.",
+        )
+
         self.reset_button = RoundedButton(
             run, "Off and reset", self.reset, variant="ghost", size="small", width=110
         )
-        self.reset_button.grid(row=0, column=3, sticky="e")
+        self.reset_button.grid(row=0, column=4, sticky="e")
 
         for var in (self.pos1_var, self.pos2_var, self.speed_var):
             var.trace_add("write", lambda *_a: self._on_quick_param())
@@ -439,6 +451,20 @@ class Operate:
             ):
                 return
         self.model.run(mode)
+
+    def calibrate(self) -> None:
+        """Home every piston in the machine, whatever is selected."""
+        if not messagebox.askyesno(
+            "Calibrate all pistons",
+            "Every one of the 30 pistons will travel to its home position. "
+            "This takes about a minute.\n\n"
+            "Any piston that will not home is named and left out; the rest end "
+            "up calibrated and ready.\n\nContinue?",
+            parent=self.tab,
+        ):
+            return
+        self._asked_about = None
+        self.model.calibrate_all()
 
     def reset(self) -> None:
         if messagebox.askyesno(
@@ -712,6 +738,7 @@ class Operate:
             (self.delete_group_button, has_pistons and not busy),
             (self.reset_button, has_pistons and not busy),
             (self.depth_button, not busy),
+            (self.calibrate_button, not busy),
         ):
             button.set_state("normal" if enabled else "disabled")
 
