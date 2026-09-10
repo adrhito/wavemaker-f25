@@ -107,13 +107,9 @@ class TestLimits:
 
 
 class TestAppliedToASet:
-    def test_a_pattern_only_touches_its_own_set(self, model):
-        for axis in range(0, 6):
-            model.toggle(axis, True)
-        first = model.create_set()
-        for axis in range(6, 12):
-            model.toggle(axis, True)
-        second = model.create_set()
+    def test_a_pattern_only_touches_its_own_set(self, model, make_group):
+        first = make_group(model, range(0, 6))
+        second = make_group(model, range(6, 12))
 
         result = patterns.build(
             first.axes, "Curve Offset", patterns.STAGGER, start=0, step=10

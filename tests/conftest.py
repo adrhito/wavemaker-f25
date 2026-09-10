@@ -66,3 +66,29 @@ def homed_model(model, plc) -> Model:
     assert model.prepare()
     plc.clear_history()
     return model
+
+
+@pytest.fixture
+def make_group():
+    """Create a group of pistons with given parameters.
+
+    Groups are implicit until the operator asks for a second one, so the first
+    group is just a selection and any group after that needs add_group() first.
+    This hides that from tests that only care about having two groups.
+    """
+
+    def build(model, axes, **parameters):
+        if model.sets and model._implicit_group:
+            model.add_group()
+        for axis in axes:
+            model.toggle(axis, True)
+        for name, value in parameters.items():
+            model.set_pending_param(name.replace("_", " ").title(), value)
+        if model._implicit_group:
+            group = model.sets[0]
+            for name, value in parameters.items():
+                group.set_param(name.replace("_", " ").title(), value)
+            return group
+        return model.create_set()
+
+    return build

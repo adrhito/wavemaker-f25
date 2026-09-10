@@ -41,6 +41,24 @@ HOME_POLL_SECONDS = 5.0
 HOME_SETTLE_POLLS = 2
 HOME_POLLS = 7
 
+# --- Parking ------------------------------------------------------------------
+# After a stop the pistons are left wherever the halt caught them, which is
+# usually part-way up. Returning them to the bottom of the stroke leaves the
+# array in a known, tidy resting state.
+#
+# NOTE FOR THE LAB: 368 is the down limit the application enforces (see
+# app/params.py; -20 is the top of the stroke, 368 the bottom). If the piston
+# should rest somewhere else, this is the one number to change.
+
+#: Where pistons are sent after a stop.
+PARK_POSITION = 368
+#: Speed used to get there -- deliberately gentle, not whatever the run used.
+PARK_SPEED = 200
+#: How long Run_1 is held to complete the parking move.
+PARK_SECONDS = 6.0
+#: Set False to leave the pistons where they stop.
+PARK_ON_STOP = True
+
 #: How often live piston positions are read while the machine runs.
 #: Four times a second is enough for the array to read as moving without
 #: putting meaningful extra traffic on the controller.
@@ -250,13 +268,21 @@ class Model:
         )
         #: Parameters the operator is editing for the pending selection.
         self.pending_params: Dict[str, int] = params.defaults()
-        #: The confirmed sets, in the order they were created.
+        #: The groups of pistons, in the order they were created.
         self.sets: List[MotorSet] = []
+        #: While True there is at most one group and it simply follows the
+        #: selection, so an operator running one group never meets the idea of
+        #: a "set" at all. Pressing "Add another group" turns this off and the
+        #: groups become explicit.
+        self._implicit_group = True
 
         self._state = MachineState.IDLE
         self._busy = threading.Lock()
         self._stop_requested = threading.Event()
         self._current_command: Optional[str] = None
+        #: Set while the parking move is running, so a second Stop cancels it.
+        self._parking = threading.Event()
+        self._cancel_park = threading.Event()
 
         #: Replaced in tests so commands run inline instead of on a thread.
         self._spawn: Callable[[str, Callable[[], None]], None] = self._spawn_thread
@@ -316,6 +342,64 @@ class Model:
         if axis not in self.selection:
             raise ValueError("No such motor: {0}".format(axis))
         self.selection[axis] = bool(selected)
+        self._sync_implicit_group()
+
+    def set_selection(self, axes) -> None:
+        """Replace the whole selection at once."""
+        wanted = set(axes)
+        for axis in self.selection:
+            self.selection[axis] = axis in wanted
+        self._sync_implicit_group()
+
+    def _sync_implicit_group(self) -> None:
+        """Keep the single implicit group in step with what is selected.
+
+        Pistons already in an explicit group are left alone; only the implicit
+        one follows the tank selection.
+        """
+        if not self._implicit_group:
+            return
+
+        axes = [a for a in self.selected_axes()]
+        existing = self.sets[0] if self.sets else None
+
+        if not axes:
+            self.sets = []
+            self._refresh_idle_state()
+            return
+
+        # Carry the current parameters onto any newly added piston, so adding
+        # one to the group does not silently give it the factory defaults.
+        template = dict(self.pending_params)
+        if existing is not None:
+            for spec in params.PARAMS:
+                shared = existing.common_value(spec.name)
+                if shared is not None:
+                    template[spec.name] = shared
+
+        motors = []
+        for axis in axes:
+            motor = existing.motors.get(axis) if existing is not None else None
+            if motor is None:
+                motor = Motor(axis)
+                motor.update_params(template)
+            motors.append(motor)
+
+        name = existing.name if existing is not None else "Group 1"
+        self.sets = [MotorSet(name, motors)]
+        self.mark_unprepared()
+
+    def add_group(self) -> None:
+        """Stop the current group following the selection, and start a new one.
+
+        This is the moment groups stop being invisible: from here on the
+        operator is managing more than one and the interface says so.
+        """
+        if not self.sets:
+            raise ValueError("Select some pistons before adding another group.")
+        self._implicit_group = False
+        for axis in self.selection:
+            self.selection[axis] = False
 
     def selected_axes(self) -> List[int]:
         return sorted(axis for axis, on in self.selection.items() if on)
@@ -348,6 +432,14 @@ class Model:
         if not axes:
             raise ValueError("Tick at least one motor before creating a set.")
 
+        # While groups are implicit the selection already *is* the group, so
+        # asking to create it is asking for what already exists. Returning it
+        # keeps this callable either way rather than complaining that the
+        # pistons clash with the group they are already in.
+        if self._implicit_group and self.sets:
+            if set(axes) == set(self.sets[0].axes):
+                return self.sets[0]
+
         clashes = [
             (axis, owner.name)
             for axis, owner in ((axis, self.axis_owner(axis)) for axis in axes)
@@ -367,7 +459,7 @@ class Model:
             motor.update_params(self.pending_params)
             motors.append(motor)
 
-        motor_set = MotorSet(name or "Set {0}".format(len(self.sets) + 1), motors)
+        motor_set = MotorSet(name or "Group {0}".format(len(self.sets) + 1), motors)
         self.sets.append(motor_set)
 
         for axis in axes:
@@ -383,8 +475,8 @@ class Model:
             return
         self.sets.remove(motor_set)
         for index, remaining in enumerate(self.sets, start=1):
-            if remaining.name.startswith("Set "):
-                remaining.name = "Set {0}".format(index)
+            if remaining.name.startswith("Group "):
+                remaining.name = "Group {0}".format(index)
         LOGGER.info("Removed %s", motor_set.name)
         self._refresh_idle_state()
 
@@ -619,8 +711,46 @@ class Model:
 
     # -- running --------------------------------------------------------------
 
+    @property
+    def needs_homing(self) -> bool:
+        """Whether a run would have to write parameters and home first."""
+        return self._state is not MachineState.HOMED
+
+    def run(self, mode: RunMode) -> bool:
+        """Do whatever is needed and then run.
+
+        The operator asked for the pistons to move; writing parameters and
+        homing are how that happens, not separate things to remember. If the
+        machine is already homed this is just a start.
+        """
+        if not self.sets:
+            self.bridge.problem(
+                "No pistons selected",
+                "Choose some pistons on the tank first.",
+            )
+            return False
+
+        problems: List[str] = []
+        for motor_set in self.sets:
+            problems.extend(
+                "{0}: {1}".format(motor_set.name, problem)
+                for problem in motor_set.validate()
+            )
+        if problems:
+            self.bridge.problem("Check the parameters", chr(10).join(problems))
+            return False
+
+        return self._command("Run", lambda: self._run_worker(mode))
+
+    def _run_worker(self, mode: RunMode) -> None:
+        if self._state is not MachineState.HOMED:
+            self._prepare_worker()
+            if self._state is not MachineState.HOMED:
+                return  # homing failed or was cancelled; already reported
+        self._start_worker(mode)
+
     def start(self, mode: RunMode) -> bool:
-        """Start the machine in the given mode."""
+        """Start the machine, assuming it is already prepared."""
         if self._state is not MachineState.HOMED:
             self.bridge.problem(
                 "Not ready",
@@ -677,30 +807,97 @@ class Model:
             if self.record_analytics:
                 self._record_positions(self.analytics_duration)
 
-    def stop(self) -> bool:
-        """Stop the machine.
+    def stop(self, park: Optional[bool] = None) -> bool:
+        """Stop the machine, then return the pistons to the bottom.
 
         Deliberately does not go through :meth:`_command`: Stop must work while
         another command holds the worker, which is exactly when it is needed.
-        The run bits are written straight away on the calling thread.
+        The run bits are dropped first, on the calling thread, so the halt is
+        never delayed by the tidying that follows.
+
+        Parking is a *second* action after the halt, not part of it. It only
+        happens when the machine is homed, because sending a piston to an
+        absolute position is only meaningful once the drive knows where it is.
+        Pressing Stop again while parking cancels the move.
         """
+        was_parking = self._parking.is_set()
         self._stop_requested.set()
+        self._cancel_park.set()
+
         try:
             self.all_stop()
         except PlcError as exc:
             LOGGER.critical("STOP FAILED: %s", exc)
             self.bridge.problem(
                 "Stop failed",
-                "The machine did not acknowledge the stop command:\n{0}\n\n"
-                "Use the physical stop and check the connection.".format(exc),
+                "The machine did not acknowledge the stop command:{0}{1}{0}{0}"
+                "Use the physical stop and check the connection.".format(chr(10), exc),
             )
             return False
 
         LOGGER.log(15, "Motors stopped.")
-        self.bridge.status("Motors stopped.")
         if self._state in (MachineState.RUNNING, MachineState.PREPARING):
             self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
+
+        if was_parking:
+            self.bridge.status("Stopped. Pistons left where they are.")
+            return True
+
+        should_park = PARK_ON_STOP if park is None else park
+        if should_park and self._state is MachineState.HOMED and self.all_motors:
+            self._spawn("Park", self._park_worker)
+        else:
+            self.bridge.status("Motors stopped.")
         return True
+
+    def _park_worker(self) -> None:
+        """Send the pistons to the bottom of the stroke and leave them there."""
+        self._cancel_park.clear()
+        self._parking.set()
+        try:
+            self.bridge.status("Stopped. Returning pistons to the bottom...")
+            self._park_moves()
+            if self._cancel_park.is_set():
+                self.bridge.status("Stopped. Parking cancelled.")
+            else:
+                self.bridge.status("Stopped. Pistons are at the bottom.")
+                LOGGER.log(15, "Pistons parked at %s mm.", PARK_POSITION)
+        except PlcError as exc:
+            LOGGER.error("Could not park the pistons: %s", exc)
+            self.bridge.status("Stopped, but the pistons could not be parked.")
+        finally:
+            self._parking.clear()
+
+    def _park_moves(self) -> None:
+        for motor in self.all_motors:
+            if self._cancel_park.is_set():
+                return
+            axis = motor.axis
+            # Absolute, or 368 would be taken as a 368 mm relative lurch.
+            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), PARK_POSITION)
+            self.plc.write(params.BY_NAME["Position 2"].tag(axis), PARK_POSITION)
+            self.plc.write(params.BY_NAME["Speed 1"].tag(axis), PARK_SPEED)
+            self.plc.write(params.BY_NAME["Speed 2"].tag(axis), PARK_SPEED)
+
+        if self._cancel_park.is_set():
+            return
+
+        self.plc.write(tags.RUN_SINGLE, 1)
+        self._cancel_park.wait(PARK_SECONDS)
+        self.plc.write(tags.RUN_SINGLE, 0)
+
+        # The PLC now holds parking values, not the operator's. Forget what we
+        # believed was written, so the real parameters go out again before the
+        # next run instead of being assumed still present.
+        #
+        # The machine stays HOMED on purpose. Parking moves the pistons to a
+        # known place; it does not cost the drives their reference. Marking it
+        # unprepared here would force a full homing cycle -- the better part of
+        # a minute -- after every single stop.
+        for motor in self.all_motors:
+            motor.current_params = {}
+            motor.write_success = False
 
     # -- analytics ------------------------------------------------------------
 
@@ -847,9 +1044,11 @@ class Model:
             self.bridge.status("Ready. Choose motors on the Define Motors tab.")
         else:
             self.bridge.status(
-                "No PLC at {0} - running in simulation. Nothing will move. "
-                "Check that the controller is powered and in Run, then press "
-                "Reconnect.".format(self.ip_address)
+                "Mock wavemaker. The pistons here are simulated - nothing "
+                "physical will move."
+                if self._simulate else
+                "No PLC at {0}. Nothing will move. Check the controller is "
+                "powered and in Run, then press Reconnect.".format(self.ip_address)
             )
         self._set_state(MachineState.IDLE)
 
@@ -882,6 +1081,7 @@ class Model:
         self.sets = []
         self.selection = dict((axis, False) for axis in range(tags.MOTOR_COUNT))
         self.pending_params = params.defaults()
+        self._implicit_group = True
         self.record_analytics = False
         self.analytics_interval = 0.25
         self.analytics_duration = 10.0
@@ -893,6 +1093,7 @@ class Model:
     def shutdown(self) -> None:
         """Stop the machine and close the connection. Called when the window closes."""
         self.stop_monitoring()
+        self._cancel_park.set()
         self._stop_requested.set()
         try:
             self.motors_off()

@@ -86,13 +86,12 @@ class TestLifecycle:
         model.remove_set(motor_set)
         assert model.state is MachineState.IDLE
 
-    def test_sets_are_renumbered_after_a_deletion(self, model):
+    def test_sets_are_renumbered_after_a_deletion(self, model, make_group):
         for axis in (0, 1, 2):
-            model.toggle(axis, True)
-            model.create_set()
-        assert [s.name for s in model.sets] == ["Set 1", "Set 2", "Set 3"]
+            make_group(model, (axis,))
+        assert [s.name for s in model.sets] == ["Group 1", "Group 2", "Group 3"]
         model.remove_set(model.sets[0])
-        assert [s.name for s in model.sets] == ["Set 1", "Set 2"]
+        assert [s.name for s in model.sets] == ["Group 1", "Group 2"]
 
     def test_startup_leaves_the_machine_in_a_known_state(self, model, plc):
         plc.clear_history()

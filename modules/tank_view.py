@@ -39,31 +39,29 @@ MOTOR_COUNT = ROWS * COLUMNS
 
 # --- Colours -----------------------------------------------------------------
 
-WATER_TOP = "#123a52"
-WATER_BOTTOM = "#0b2536"
-SKY = "#11161c"
-FRAME = "#3a4450"
-TRACK = "#2a3542"
-TRACK_EDGE = "#46525f"
+WATER_TOP = "#1b3a4d"
+WATER_BOTTOM = "#0d2030"
+SKY = "#141416"
+TRACK = "#2c2c2e"
+TRACK_EDGE = "#3a3a3c"
 
-FREE_FILL = "#5b6875"
-FREE_EDGE = "#76838f"
-SELECTED_EDGE = "#ffffff"
-LABEL = "#c8d2dc"
-LABEL_DIM = "#7d8894"
+FREE_FILL = "#4a4a4e"
+FREE_EDGE = "#5a5a5e"
+SELECTED_EDGE = "#0a84ff"
+LABEL = "#c8c8cc"
+LABEL_DIM = "#6e6e73"
 
-#: Fill per set, cycled. Chosen to stay distinguishable side by side.
+#: Fill per group, cycled. Apple's system colours, which stay distinguishable
+#: side by side and against the water.
 SET_COLOURS: List[str] = [
-    "#7ed957",
-    "#4fc3f7",
-    "#ffb74d",
-    "#ba68c8",
-    "#f06292",
-    "#fff176",
+    "#30d158",  # green
+    "#0a84ff",  # blue
+    "#ff9f0a",  # orange
+    "#bf5af2",  # purple
+    "#ff375f",  # pink
+    "#ffd60a",  # yellow
 ]
 
-#: Stroke limits, matching app.params. Kept as plain numbers so this widget has
-#: no dependency on the rest of the application and can be previewed alone.
 POSITION_MIN = -20
 POSITION_MAX = 368
 
@@ -213,9 +211,11 @@ class TankView:
         cell_w = usable_w / float(COLUMNS)
         cell_h = usable_h / float(ROWS)
 
-        # The paddle is a tall box inside its cell.
-        paddle_w = min(cell_w * 0.62, 42.0)
-        paddle_h = max(cell_h * 0.62, 12.0)
+        # A paddle, not a column. Capped in both directions so that on a large
+        # display the pistons stay a sensible size and the water still reads as
+        # water, rather than the boxes stretching to fill the whole cell.
+        paddle_w = max(min(cell_w * 0.56, 62.0), 14.0)
+        paddle_h = max(min(cell_h * 0.54, 86.0), 14.0)
 
         return {
             "width": width,

@@ -14,22 +14,15 @@ from preset_options.PresetProcessor import PresetError, PresetProcessor
 class TestPerSetParameters:
     """The feature the application exists for."""
 
-    def test_sets_keep_independent_parameters(self, model):
+    def test_sets_keep_independent_parameters(self, model, make_group):
         """Editing one set must not touch another.
 
         The previous version applied every parameter edit to every motor in
         every set, so a second set could only ever be a copy of the first --
         which is exactly the capability the Spring 24 work was meant to add.
         """
-        for axis in (0, 1):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 700)
-        first = model.create_set()
-
-        for axis in (2, 3):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 250)
-        second = model.create_set()
+        first = make_group(model, (0, 1), speed_1=700)
+        second = make_group(model, (2, 3), speed_1=250)
 
         assert first.common_value("Speed 1") == 700
         assert second.common_value("Speed 1") == 250
@@ -38,16 +31,11 @@ class TestPerSetParameters:
         assert first.common_value("Speed 1") == 700
         assert second.common_value("Speed 1") == 400
 
-    def test_each_set_writes_its_own_values_to_its_own_motors(self, model, plc):
-        for axis in (0, 1):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 700)
-        model.create_set()
-
-        for axis in (2, 3):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 250)
-        model.create_set()
+    def test_each_set_writes_its_own_values_to_its_own_motors(
+        self, model, plc, make_group
+    ):
+        make_group(model, (0, 1), speed_1=700)
+        make_group(model, (2, 3), speed_1=250)
 
         for axis in range(tags.MOTOR_COUNT):
             plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
@@ -62,7 +50,7 @@ class TestPerSetParameters:
         """Two sets sharing a piston would write different parameters to the
         same drive, with whichever wrote last silently winning."""
         model.toggle(0, True)
-        model.create_set()
+        model.add_group()          # groups become explicit from here
         model.toggle(0, True)
         with pytest.raises(ValueError, match="(?i)already in another set"):
             model.create_set()
@@ -183,17 +171,11 @@ class TestPresetLoading:
 
 
 class TestPresetSaving:
-    def test_saving_uses_every_confirmed_set(self, model, tmp_path):
+    def test_saving_uses_every_confirmed_set(self, model, tmp_path, make_group):
         """The old writer read ``live_motors``, which was empty once sets had
         been confirmed, so saving produced a file of zeroes."""
-        for axis in (0, 1):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 700)
-        model.create_set()
-        for axis in (2,):
-            model.toggle(axis, True)
-        model.set_pending_param("Speed 1", 250)
-        model.create_set()
+        make_group(model, (0, 1), speed_1=700)
+        make_group(model, (2,), speed_1=250)
 
         target = PresetProcessor(model).save(str(tmp_path / "out.csv"), model.sets)
         preset = PresetProcessor().load(target)
@@ -202,12 +184,8 @@ class TestPresetSaving:
         assert preset.rows[1]["Speed 1"] == 700
         assert preset.rows[2]["Speed 1"] == 250
 
-    def test_round_trip_preserves_values(self, model, tmp_path):
-        for axis in (4, 5):
-            model.toggle(axis, True)
-        model.set_pending_param("Position 2", 300)
-        model.set_pending_param("Accel 1", 15000)
-        model.create_set()
+    def test_round_trip_preserves_values(self, model, tmp_path, make_group):
+        make_group(model, (4, 5), position_2=300, accel_1=15000)
 
         target = PresetProcessor(model).save(str(tmp_path / "rt.csv"), model.sets)
         preset = PresetProcessor().load(target)

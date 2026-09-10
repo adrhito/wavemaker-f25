@@ -60,27 +60,31 @@ install for it.
 
 | Tab | What it is for |
 |---|---|
-| **Control Home** | Prepare, start, stop. Shows which pistons are in which set, and whether you are connected to the real machine. |
-| **Define Motors** | Tick pistons, group them into **sets**, and give each set its own parameters. |
-| **Preset Options** | Load saved parameters from `Presets/*.csv` onto chosen sets, or save the sets you have built. |
+| **Operate** | Everything needed to run: choose pistons on the tank, set stroke and speed, press Start. Shows the pistons moving live while the machine runs. |
+| **Preset Options** | Load saved parameters onto groups, or save the groups you have built. |
 | **Feedback** | Everything the application has done. Also written to `logs/<date>.log`. |
 
-### Motor sets
+### Groups
 
-A **set** is a group of pistons that run together with the same parameters.
-Different sets can have different parameters and run at the same time — that is
-the point of them. A piston belongs to at most one set; delete the set to free it.
+Selected pistons are simply "the pistons that will run" -- there is no step to
+confirm them. If you need two lots of pistons running with different parameters
+at the same time, press **Add group**; only then does the idea of a group appear
+at all.
 
-## The three steps
+## Running it
 
-1. **Define Motors** — tick pistons, press *Create Set from Selection*, then fill
-   in that set's parameters. Repeat for as many sets as you need.
-2. **Control Home** — press *Prepare Motor(s)*. This writes your parameters to the
-   PLC and homes every piston. Wait for "Motors homed and ready to run."
-3. **Control Home** — choose *One stroke* or *Continuous* and press
-   *Start Motor(s)*, or press *Start Curve*.
+1. **Click or drag on the tank** to choose pistons.
+2. Set **stroke** and **speed**. Everything else is behind *All parameters*.
+3. Press **Start**.
 
-*Stop Motor(s)* works at any time, including while the machine is preparing.
+Start does whatever is needed: it writes any changed parameters, homes the
+pistons if they are not homed, then runs. Homing physically moves every piston
+and takes about a minute, so the first run asks before doing it. After that
+Start is immediate.
+
+**Stop** is always available, on every tab, and `Escape` does the same. After a
+stop the pistons return to the bottom of their stroke; pressing Stop again while
+they are moving there leaves them where they are.
 
 ## Folders
 
