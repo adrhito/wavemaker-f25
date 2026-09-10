@@ -264,3 +264,89 @@ class TestMockAndMachineAreTheSameApplication:
 
         for axis in range(3):
             assert abs(machine.snapshot()[axis] - model_module.PARK_POSITION) < 5
+
+
+class TestFollowingError:
+    """A healthy piston must never be reported as a straggler.
+
+    The mock originally published the *end of the stroke* as the demanded
+    position, so every piston mid-travel looked hundreds of millimetres behind
+    and the whole array was flagged. Demanded position on the real drive is the
+    instantaneous command, so the mock now models it that way.
+    """
+
+    def _run_array(self, machine, worn=None):
+        for axis in range(30):
+            machine.write(tags.live_motor(axis), 1)
+            machine.write(tags.motor_field(axis, "Pos_1"), 0)
+            machine.write(tags.motor_field(axis, "Pos_2"), 300)
+            machine.write(tags.motor_field(axis, "Spd_1"), 400)
+            machine.write(tags.motor_field(axis, "Spd_2"), 400)
+        if worn is not None:
+            machine.wear(worn, 0.5)
+        machine.write(tags.RUN_CONTINUOUS, 1)
+        settle(machine, 0.8)
+
+    def _error(self, machine, axis):
+        demand = machine.read(tags.axis_field(axis, tags.DEMAND_POSITION))
+        actual = machine.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
+        return abs(demand - actual)
+
+    def test_healthy_pistons_track_their_command(self, machine):
+        import Model as model_module
+
+        self._run_array(machine)
+        for axis in range(30):
+            assert self._error(machine, axis) < model_module.LAG_TOLERANCE
+
+    def test_a_worn_piston_falls_behind(self, machine):
+        import Model as model_module
+
+        self._run_array(machine, worn=18)
+        assert self._error(machine, 18) >= model_module.LAG_TOLERANCE
+        assert self._error(machine, 0) < model_module.LAG_TOLERANCE
+
+    def test_the_application_flags_only_the_worn_piston(self, machine, monkeypatch):
+        import app.simulator as sim_module
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        model = make_model(machine, monkeypatch)
+        for axis in range(30):
+            model.toggle(axis, True)
+        model.sets[0].set_param("Position 2", 300)
+        model.sets[0].set_param("Speed 1", 400)
+        model.sets[0].set_param("Speed 2", 400)
+        model.run(RunMode.CONTINUOUS)
+
+        machine.wear(18, 0.1)
+        # The error has to exceed the tolerance before the consecutive-poll
+        # count even starts, so allow for both.
+        for _ in range(model_lag_polls() + 8):
+            model._poll_positions()
+            settle(machine, 0.06)
+
+        assert 18 in model.lagging_axes
+        assert 0 not in model.lagging_axes
+
+    def test_no_straggler_warning_on_a_healthy_array(self, machine, monkeypatch):
+        import app.simulator as sim_module
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        model = make_model(machine, monkeypatch)
+        for axis in range(30):
+            model.toggle(axis, True)
+        model.sets[0].set_param("Position 2", 300)
+        model.sets[0].set_param("Speed 1", 400)
+        model.run(RunMode.CONTINUOUS)
+
+        for _ in range(model_lag_polls() + 8):
+            model._poll_positions()
+            settle(machine, 0.06)
+
+        assert model.lagging_axes == []
+
+
+def model_lag_polls():
+    import Model as model_module
+
+    return model_module.LAG_POLLS + 1

@@ -20,12 +20,16 @@ What it models
 * Curve Offset as a start delay, so a staggered offset produces a visible
   travelling wave. This is the whole point of the mock.
 * Live Motors: pistons not in a set stay put.
+* Following error: the commanded position and the actual position are published
+  separately, and :meth:`SimulatedMachine.wear` makes a piston fall behind, so
+  the straggler warning can be practised without waiting for a real one to
+  seize.
 
 What it does not model
 ----------------------
-Fluid, wave height, drive current, following error, faults, or anything else
-about the physics of the tank. It moves rectangles so the interface can be
-exercised. **Nothing here predicts what the real machine will do.**
+Fluid, wave height, drive current, faults, or anything else about the physics
+of the tank. It moves rectangles so the interface can be exercised.
+**Nothing here predicts what the real machine will do.**
 """
 
 from __future__ import annotations
@@ -59,8 +63,15 @@ class _Piston:
 
     def __init__(self, axis: int) -> None:
         self.axis = axis
-        self.position = HOME_POSITION
+        #: Where a perfect piston would be right now. Published as
+        #: ComDemandPosition, which on the real drive is the instantaneous
+        #: interpolated command, not the end of the stroke.
         self.demand = HOME_POSITION
+        #: Where this piston actually is. Equal to the demand unless it is worn.
+        self.position = HOME_POSITION
+        #: 1.0 tracks the command exactly. Below that the piston drags; 0 is
+        #: seized. Used to demonstrate the straggler warning.
+        self.efficiency = 1.0
         self.homed = False
         self.live = False
         self.elapsed = 0.0
@@ -156,11 +167,11 @@ class SimulatedMachine(SimulatedPlc):
                 continue
             # Travel home at a fixed, deliberately unhurried rate.
             step = 200.0 * dt
-            if abs(piston.position - HOME_POSITION) <= step:
-                piston.position = HOME_POSITION
+            if abs(piston.demand - HOME_POSITION) <= step:
+                piston.demand = HOME_POSITION
             else:
-                piston.position += step if piston.position < HOME_POSITION else -step
-            piston.demand = HOME_POSITION
+                piston.demand += step if piston.demand < HOME_POSITION else -step
+            self._follow(piston, 200.0, dt)
             if self._homing_elapsed >= HOME_SECONDS and piston.position == HOME_POSITION:
                 piston.homed = True
             piston.reset_cycle()
@@ -188,16 +199,35 @@ class SimulatedMachine(SimulatedPlc):
 
             target = second if piston.outbound else first
             speed = out_speed if piston.outbound else back_speed
-            piston.demand = target
 
+            # The command moves at the requested speed and always arrives.
             step = speed * dt
-            if abs(target - piston.position) <= step:
-                piston.position = target
+            if abs(target - piston.demand) <= step:
+                piston.demand = target
                 if one_stroke and not piston.outbound:
+                    self._follow(piston, speed, dt)
                     continue  # a single stroke ends back at Position 1
                 piston.outbound = not piston.outbound
             else:
-                piston.position += step if target > piston.position else -step
+                piston.demand += step if target > piston.demand else -step
+
+            # The piston follows it, and a worn one cannot quite keep up.
+            self._follow(piston, speed, dt)
+
+    @staticmethod
+    def _follow(piston, speed: float, dt: float) -> None:
+        """Move the piston towards the commanded position.
+
+        With ``efficiency`` at 1.0 it keeps up exactly, so demanded and actual
+        agree and nothing is flagged. Below that it falls behind, which is what
+        a worn or dragging piston does and what the straggler warning is for.
+        """
+        reach = speed * piston.efficiency * dt
+        gap = piston.demand - piston.position
+        if abs(gap) <= reach:
+            piston.position = piston.demand
+        else:
+            piston.position += reach if gap > 0 else -reach
 
     def _publish(self) -> None:
         """Write the pistons' state into the tags the application reads."""
@@ -235,3 +265,16 @@ class SimulatedMachine(SimulatedPlc):
     def snapshot(self) -> Dict[int, float]:
         """Every piston's position right now."""
         return dict((a, p.position) for a, p in self.pistons.items())
+
+    def wear(self, axis: int, efficiency: float) -> None:
+        """Make a piston drag, for practising with the straggler warning.
+
+        ``1.0`` is healthy, ``0.7`` visibly falls behind, ``0`` is seized --
+        "one of the motors will go up real slow, and then that one has gotten
+        itself stuck".
+        """
+        self.pistons[axis].efficiency = max(0.0, min(1.0, efficiency))
+
+    def clear_wear(self) -> None:
+        for piston in self.pistons.values():
+            piston.efficiency = 1.0
