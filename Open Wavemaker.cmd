@@ -32,6 +32,9 @@ REM  pyw.exe is the windowless Windows Python launcher: no console window sits
 REM  behind the interface. py.exe is the fallback (it shows a console).
 REM  Plain "python" is deliberately last -- on lab machines it is often the
 REM  Microsoft Store stub, which fails with "Python was not found".
+REM  Tried in order: windowless launcher, windowless interpreter, then the
+REM  console versions. The lab PC is Windows 7 and may not have the py
+REM  launcher on PATH, so common install locations are checked directly.
 if exist "%SystemRoot%\pyw.exe" (
     start "" "%SystemRoot%\pyw.exe" -3 "%~dp0main.py" %*
     goto :eof
@@ -40,13 +43,39 @@ where pyw >nul 2>&1 && (
     start "" pyw -3 "%~dp0main.py" %*
     goto :eof
 )
+where pythonw >nul 2>&1 && (
+    start "" pythonw "%~dp0main.py" %*
+    goto :eof
+)
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python38\pythonw.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python37\pythonw.exe"
+    "C:\Python38\pythonw.exe"
+    "C:\Python37\pythonw.exe"
+    "C:\Program Files\Python38\pythonw.exe"
+    "C:\Program Files\Python37\pythonw.exe"
+) do (
+    if exist %%P (
+        start "" %%P "%~dp0main.py" %*
+        goto :eof
+    )
+)
+REM  Console fallbacks: these leave a window open behind the interface, but
+REM  starting is better than not starting.
 where py >nul 2>&1 && (
     start "" py -3 "%~dp0main.py" %*
     goto :eof
 )
+where python >nul 2>&1 && (
+    start "" python "%~dp0main.py" %*
+    goto :eof
+)
 
-echo Could not find Python. Install Python 3 from python.org, tick
-echo "Add python.exe to PATH" during setup, then run this again.
+echo Could not find Python on this machine.
+echo.
+echo Windows 7 supports Python up to 3.8. If Python is installed but not on
+echo PATH, run it directly, for example:
+echo     C:\Python37\pythonw.exe "%~dp0main.py"
 pause
 goto :eof
 

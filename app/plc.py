@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from modules.eip import PLC
 
@@ -48,18 +48,39 @@ class PlcError(RuntimeError):
     """A read or write to the PLC did not succeed."""
 
 
-class Transport(Protocol):
-    """The interface the application depends on."""
+class Transport:
+    """The interface the application depends on.
 
-    connected: bool
+    A plain base class rather than ``typing.Protocol``: the lab PC runs
+    Windows 7, whose last supported Python is 3.8, and the repository history
+    suggests 3.7 is what is actually installed. ``Protocol`` did not arrive
+    until 3.8. Nothing subclasses this -- :class:`PlcClient` and
+    :class:`SimulatedPlc` are matched by duck typing -- it documents the
+    interface and serves as a type annotation.
+    """
 
-    def read(self, tag: str) -> Any: ...
-    def write(self, tag: str, value: int) -> None: ...
-    def write_many(self, values: Mapping[str, int]) -> None: ...
-    def read_many(self, tags: Sequence[str]) -> Dict[str, Any]: ...
-    def keepalive(self) -> None: ...
-    def identity(self) -> Optional[str]: ...
-    def close(self) -> None: ...
+    connected = False
+
+    def read(self, tag: str) -> Any:
+        raise NotImplementedError
+
+    def write(self, tag: str, value: int) -> None:
+        raise NotImplementedError
+
+    def write_many(self, values: Mapping[str, int]) -> None:
+        raise NotImplementedError
+
+    def read_many(self, tags: Sequence[str]) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def keepalive(self) -> None:
+        raise NotImplementedError
+
+    def identity(self) -> Optional[str]:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
 
 
 class PlcClient:

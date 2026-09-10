@@ -12,7 +12,7 @@ import threading
 import time
 from enum import Enum
 from logging import Logger, getLogger
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol
+from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
 from app import params, paths, plc as plc_module, tags
 from app.plc import PlcError, Transport
@@ -68,18 +68,31 @@ class RunMode(Enum):
     CURVE = "curve"
 
 
-class UiBridge(Protocol):
+class UiBridge:
     """How the model reports back to whatever is displaying it.
 
     Every method is called from the worker thread, so an implementation that
     drives Tk must hop back to the main thread (see ``View.post``).
+
+    A plain base class, not ``typing.Protocol``, which needs Python 3.8 -- the
+    lab PC is Windows 7 and cannot go past 3.8. :class:`NullBridge` and
+    ``View`` both satisfy it by duck typing.
     """
 
-    def status(self, message: str) -> None: ...
-    def state_changed(self, state: "MachineState") -> None: ...
-    def progress(self, fraction: float, label: str) -> None: ...
-    def progress_done(self, artifact: Optional[str]) -> None: ...
-    def problem(self, title: str, message: str) -> None: ...
+    def status(self, message: str) -> None:
+        raise NotImplementedError
+
+    def state_changed(self, state: "MachineState") -> None:
+        raise NotImplementedError
+
+    def progress(self, fraction: float, label: str) -> None:
+        raise NotImplementedError
+
+    def progress_done(self, artifact: Optional[str]) -> None:
+        raise NotImplementedError
+
+    def problem(self, title: str, message: str) -> None:
+        raise NotImplementedError
 
 
 class NullBridge:
