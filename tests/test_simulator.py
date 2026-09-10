@@ -193,3 +193,74 @@ class TestThroughTheApplication:
             assert isinstance(transport, SimulatedMachine)
         finally:
             transport.close()
+
+
+class TestMockAndMachineAreTheSameApplication:
+    """The mock must never drift from the real thing.
+
+    There is one application; --mock only swaps the transport. These guard that,
+    so a change made for the machine cannot quietly miss the mock or vice versa.
+    """
+
+    def test_both_launchers_run_the_same_entry_point(self):
+        import io
+        import os
+        import re
+
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        commands = {}
+        for name in ("Open Wavemaker.cmd", "Mock Wavemaker (no machine).cmd"):
+            text = io.open(os.path.join(here, name), encoding="utf-8").read()
+            commands[name] = set(re.findall(r'main\.py"(.*?)(?:\r?\n)', text))
+
+        real = commands["Open Wavemaker.cmd"]
+        mock = commands["Mock Wavemaker (no machine).cmd"]
+        assert real, "the real launcher must invoke main.py"
+        assert mock, "the mock launcher must invoke main.py"
+        # The only difference between them is the --mock flag.
+        assert all("--mock" in line for line in mock)
+        assert not any("--mock" in line for line in real)
+
+    def test_mock_and_live_take_the_same_run_path(self, machine, monkeypatch):
+        """Start behaves identically; only the transport differs."""
+        import app.simulator as sim_module
+        from app.plc import SimulatedPlc
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+
+        results = {}
+        for label, transport in (("mock", machine), ("live", SimulatedPlc())):
+            model = make_model(transport, monkeypatch)
+            model.is_live = label == "live"
+            for axis in range(3):
+                model.toggle(axis, True)
+            if label == "live":
+                for axis in range(30):
+                    transport.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+            model.run(RunMode.SINGLE)
+            results[label] = model.state
+
+        assert results["mock"] == results["live"] == MachineState.HOMED
+
+    def test_parking_happens_in_the_mock_too(self, machine, monkeypatch):
+        """Stop returns the pistons to the bottom whichever transport is used."""
+        import Model as model_module
+        import app.simulator as sim_module
+
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        # 368 mm at the real 200 mm/s takes nearly two seconds; drive it faster
+        # so the test is quick without changing what is being checked.
+        monkeypatch.setattr(model_module, "PARK_SPEED", 3000)
+        monkeypatch.setattr(model_module, "PARK_SECONDS", 0.5)
+        model = make_model(machine, monkeypatch)
+        for axis in range(3):
+            model.toggle(axis, True)
+        model.sets[0].set_param("Position 2", 300)
+        model.sets[0].set_param("Speed 1", 400)
+        model.run(RunMode.CONTINUOUS)
+        settle(machine, 0.2)
+        model.stop()
+        settle(machine, 0.7)
+
+        for axis in range(3):
+            assert abs(machine.snapshot()[axis] - model_module.PARK_POSITION) < 5

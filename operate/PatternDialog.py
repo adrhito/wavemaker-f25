@@ -2,7 +2,7 @@
 
 A dialog rather than a panel on the main screen. It needs room for a preview,
 and it is used once when building a set rather than constantly, so putting it
-on the Define Motors tab would cost permanent space for occasional use.
+on the Operate screen would cost permanent space for occasional use.
 """
 
 from __future__ import annotations

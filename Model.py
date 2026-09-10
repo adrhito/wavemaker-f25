@@ -609,7 +609,7 @@ class Model:
         if not self.sets:
             self.bridge.problem(
                 "Nothing to prepare",
-                "Add at least one motor set on the Define Motors tab first.",
+                "Choose some pistons on the tank first.",
             )
             return False
 
@@ -754,8 +754,8 @@ class Model:
         if self._state is not MachineState.HOMED:
             self.bridge.problem(
                 "Not ready",
-                "Press Prepare Motor(s) first: parameters must be written and "
-                "the pistons homed before they can run.",
+                "The pistons must be homed before they can run. Press Start "
+                "and it will do that first.",
             )
             return False
         return self._command("Start", lambda: self._start_worker(mode))
@@ -1041,7 +1041,7 @@ class Model:
                 LOGGER.info("Controller: %s", identity)
             self.bridge.status("Connected. Clearing the machine...")
             self.motors_off()
-            self.bridge.status("Ready. Choose motors on the Define Motors tab.")
+            self.bridge.status("Ready. Choose pistons on the tank.")
         else:
             self.bridge.status(
                 "Mock wavemaker. The pistons here are simulated - nothing "
@@ -1087,7 +1087,7 @@ class Model:
         self.analytics_duration = 10.0
 
         self._set_state(MachineState.IDLE)
-        self.bridge.status("Reset. Choose motors on the Define Motors tab.")
+        self.bridge.status("Reset. Choose pistons on the tank.")
         LOGGER.info("Application reset to its initial state.")
 
     def shutdown(self) -> None:

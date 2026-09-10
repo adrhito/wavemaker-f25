@@ -29,42 +29,55 @@ If the controller is not reachable, the banner says so and two buttons appear:
 **Reconnect**, and **Open Studio 5000** for when you do need to go online and
 put it back in Run. You can close Studio 5000 again afterwards.
 
-The banner at the top of Control Home says whether you are connected:
+The banner at the top of the Operate tab says whether you are connected:
 
-- `Connected to PLC at 192.168.1.1` — the real machine. Pistons will move.
-- `SIMULATION - no PLC at 192.168.1.1. Nothing will move.` — the interface could
-  not reach the PLC. Everything works, but nothing physical happens. Press
-  **Reconnect**; if that fails, use **Open Studio 5000**, go online, confirm the
-  controller is in Rem Run, then press Reconnect again.
+- `Connected  ·  192.168.1.1` — the real machine. Pistons will move.
+- `Mock wavemaker  ·  nothing physical will move` — you started the mock
+  deliberately (see below).
+- `Not connected  ·  the PLC did not answer` — press **Reconnect**; if that
+  fails, use **Open Studio 5000**, go online, confirm the controller is in
+  Rem Run, then Reconnect again.
 
 ## Running
 
-**1. Define Motors.** Tick the pistons you want. Drag across the grid to tick
-several at once. Press **Create Set from Selection**. Fill in that set's
-parameters in the boxes on the right — the heading above them tells you which
-set you are editing.
+1. **Click or drag on the tank** to choose pistons. The selection is simply
+   "the pistons that will run" — there is no step to confirm it.
+2. Set the **stroke** (from / to, in mm) and the **speed**. These are the two
+   things that change between runs. Everything else is behind
+   **All parameters**.
+3. Choose **One stroke**, **Continuous** or **Curve**, and press **Start**.
 
-To run two groups with different parameters, create a second set: choose
-**New set (current selection)** in the *Editing* list, tick more pistons, set
-their parameters, and press Create Set again.
+**Start does whatever is needed.** It writes any parameters you have changed,
+homes the pistons if they are not homed, then runs. Homing physically moves
+every piston and takes about a minute, so the first run asks before doing it.
+After that Start is immediate.
 
-A piston can only be in one set. To move it, delete the set it is in.
+### Two groups at once
 
-**2. Control Home.** Press **Prepare Motor(s)**. This writes the parameters to
-the PLC and homes every piston. It takes up to a minute, and homing runs twice
-on purpose (see below). Wait for `Motors homed and ready to run.`
+To run two lots of pistons with different parameters at the same time, press
+**Add group**. The current selection is frozen as Group 1, and you then select
+the pistons for Group 2. An **Editing** box appears so you can switch between
+them. A piston belongs to one group only; delete the group to free it.
 
-**3. Control Home.** Pick **One stroke** or **Continuous** and press
-**Start Motor(s)**. Or press **Start Curve** to run the stored curve given by
-the Curve ID parameter.
+### Patterns
 
-Changing a parameter after homing does **not** require homing again. The changed
-values are written when you press Start.
+**Pattern** fills one parameter across a group in a shape — a ramp, a stagger
+per position, or mirrored about the centre. Staggering a timing or curve offset
+**front to back** is what makes a wave travel along the chamber rather than the
+whole array moving together. There is a preview before anything is applied.
 
 ## Stopping
 
-**Stop Motor(s)** drops all three run bits immediately and works even while the
-machine is preparing or homing. It is on both Control Home and Define Motors.
+**Stop** is in the status bar at the bottom of every tab, and `Escape` does the
+same. It drops all three run bits immediately; nothing delays the halt.
+
+**After a stop the pistons return to the bottom of their stroke** (368 mm) at a
+gentle 200 mm/s, so the array is left in a known resting state. Pressing Stop
+again while they are travelling there leaves them where they are.
+
+The machine stays homed through this, so the next run does not have to home
+again — but the parameters are re-sent, because the PLC is holding the parking
+values by then.
 
 If a stop cannot be delivered — a network fault, the PLC offline — the
 application says so in a dialog rather than reporting success. Use the physical
@@ -72,6 +85,18 @@ stop.
 
 Closing the window stops the machine and clears faults first. If pistons are
 moving it asks for confirmation.
+
+## Trying it without the machine
+
+Double-click **`Mock Wavemaker (no machine).cmd`**. It runs a simulated
+wavemaker on any computer: no PLC is contacted and nothing physical can move.
+
+It is the same application — the only difference is where the piston positions
+come from. Homing takes a moment, the pistons really stroke between your
+positions at your speeds, parking really returns them to the bottom, and a
+front-to-back stagger really does travel along the chamber in the live view.
+
+It does **not** predict how the real machine behaves. It moves rectangles.
 
 ## Parameters
 
@@ -134,14 +159,15 @@ pistons. `curve1.csv`, for example, has real values only for motors 12, 13 and
 14; every other piston takes the `All` row.
 
 To apply one: **Preset Options** → *Select Preset...* → tick the sets it should
-apply to → *Apply to Selected Sets*. Then press **Prepare Motor(s)**.
+apply to → *Apply to Selected Groups*. Then press **Start**.
 
-To save what you have built: *Save Current Sets...*. Every set is written, not
-just the pistons currently ticked.
+To save what you have built: *Save Current Groups...*. Every group is written,
+not just the pistons currently ticked.
 
 ## Analytics
 
-Tick **Record analytics** on Control Home, then set the interval and duration.
+Analytics are recorded from the Operate tab. The live view always shows
+actual positions while running; analytics keep a record of them.
 While the machine runs, the demanded and actual position of every piston in every
 set is sampled and written to `analytics/<date>.txt`. Runs on the same day are
 appended to the same file with a header between them.
@@ -164,8 +190,8 @@ tab puts the whole session log on the clipboard for pasting into an email.
 
 | Symptom | Likely cause |
 |---|---|
-| Banner says SIMULATION | The controller is unreachable or not in Run. Press Reconnect; if that fails use Open Studio 5000 and check for Rem Run. |
+| Banner says Not connected | The controller is unreachable or not in Run. Press Reconnect; if that fails use Open Studio 5000 and check for Rem Run. |
 | "Motors did not home within 35 seconds" | A drive is faulted or not enabled. Check the drive, then press Off and Reset and prepare again. |
 | A parameter will not apply | It is outside the range in the table above; the reason is shown under the boxes. |
 | "Could not read preset" | The CSV is missing a column, or is not a preset file. The message names what is wrong. |
-| Prepare does nothing | Nothing is in a set yet. Create a set on Define Motors first. |
+| Start does nothing | No pistons are selected. Click or drag on the tank first. |

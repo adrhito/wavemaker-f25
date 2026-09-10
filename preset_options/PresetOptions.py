@@ -1,4 +1,4 @@
-"""Preset Options: load saved parameters onto motor sets, and save new ones."""
+"""Preset Options: load saved parameters onto groups of pistons, and save new ones."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class PresetOptions:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             self.title_frame,
-            text="Load saved parameters onto one or more sets, or save the sets "
+            text="Load saved parameters onto one or more groups, or save the groups "
             "you have built.",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
@@ -61,10 +61,10 @@ class PresetOptions:
             frame, text="Select Preset...", width=22, command=self.browse
         )
         self.apply_button = ttk.Button(
-            frame, text="Apply to Selected Sets", width=22, command=self.apply_preset
+            frame, text="Apply to Selected Groups", width=22, command=self.apply_preset
         )
         self.create_button = ttk.Button(
-            frame, text="Save Current Sets...", width=22, command=self.save_preset
+            frame, text="Save Current Groups...", width=22, command=self.save_preset
         )
 
         self.select_button.grid(row=0, column=0, pady=(0, 10))
@@ -73,7 +73,7 @@ class PresetOptions:
 
         Tooltip(
             self.create_button,
-            "Writes every motor set's parameters to a new CSV in the Presets folder.",
+            "Writes every group's parameters to a new CSV in the Presets folder.",
         )
 
         self.loaded_var = StringVar(value="No preset loaded.")
@@ -107,7 +107,7 @@ class PresetOptions:
         self.set_frame = frame
 
         ttk.Label(
-            frame, text="Apply to which sets?", style="Step.TLabel"
+            frame, text="Apply to which groups?", style="Step.TLabel"
         ).grid(row=0, column=0, sticky="w")
         self.set_hint = ttk.Label(frame, text="")
         self.set_hint.grid(row=1, column=0, sticky="w", pady=(4, 6))
@@ -137,10 +137,10 @@ class PresetOptions:
             )
         elif not self.model.sets:
             self.set_hint.configure(
-                text="No motor sets yet. Create one on the Define Motors tab first."
+                text="No pistons selected yet. Choose some on the Operate tab first."
             )
         else:
-            self.set_hint.configure(text="Tick every set this preset should apply to.")
+            self.set_hint.configure(text="Tick every group this preset should apply to.")
 
     def _rebuild_set_boxes(self) -> None:
         """Rebuild the set checkboxes, keeping any ticks that still apply."""
@@ -156,7 +156,7 @@ class PresetOptions:
             var = IntVar(value=1 if index in previously_ticked else 0)
             box = ttk.Checkbutton(
                 self.set_container,
-                text="{0}  (motors {1})".format(
+                text="{0}  (pistons {1})".format(
                     motor_set.name, ", ".join(str(a) for a in motor_set.axes)
                 ),
                 variable=var,
@@ -218,8 +218,8 @@ class PresetOptions:
         ]
         if not chosen:
             messagebox.showinfo(
-                "Choose a set",
-                "Tick at least one set for the preset to apply to.",
+                "Choose a group",
+                "Tick at least one group for the preset to apply to.",
                 parent=self.tab,
             )
             return
@@ -246,8 +246,8 @@ class PresetOptions:
         if applied:
             self.model.mark_unprepared()
             self.view.status(
-                "Applied {0} to {1} motor(s) across {2} set(s). "
-                "Press Prepare Motor(s) to write them to the machine.".format(
+                "Applied {0} to {1} piston(s) across {2} group(s). "
+                "Press Start on the Operate tab to run them.".format(
                     self.preset.name, applied, len(chosen)
                 )
             )
@@ -270,7 +270,7 @@ class PresetOptions:
         if not self.model.sets:
             messagebox.showinfo(
                 "Nothing to save",
-                "Create a motor set on the Define Motors tab first.",
+                "Choose some pistons on the Operate tab first.",
                 parent=self.tab,
             )
             return
