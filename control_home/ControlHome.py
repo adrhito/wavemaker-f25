@@ -187,19 +187,39 @@ class ControlHome:
         self.view.set_status_text(message)
 
     def _connection_text(self) -> str:
+        """The banner: which of three situations this session is in.
+
+        Simulation on purpose and simulation because the machine could not be
+        found look the same from the inside but need different words, and only
+        one of them has anything the operator can do about it.
+        """
         if not getattr(self.model, "_connection_attempted", True):
             return "Looking for the PLC at {0}...".format(self.model.ip_address)
         if self.model.is_live:
             return "Connected to PLC at {0}".format(self.model.ip_address)
-        return "SIMULATION - no PLC at {0}. Nothing will move.".format(
-            self.model.ip_address
+        if getattr(self.model, "_simulate", False):
+            return (
+                "SIMULATION MODE - started with --simulate, so the machine is "
+                "not used. Nothing will move. Restart without that option to "
+                "run the wavemaker."
+            )
+        return (
+            "NO CONNECTION - the PLC at {0} did not answer, so nothing will "
+            "move. Check the controller is powered and in Run, then press "
+            "Reconnect.".format(self.model.ip_address)
         )
 
     def refresh(self, state: MachineState) -> None:
         self.connection_label.configure(text=self._connection_text())
 
-        offline = not self.model.is_live and getattr(
-            self.model, "_connection_attempted", True
+        # Reconnect is only shown when it can actually achieve something. A
+        # session started with --simulate deliberately has no machine, so
+        # offering the button there is a dead end.
+        deliberate = getattr(self.model, "_simulate", False)
+        offline = (
+            not self.model.is_live
+            and getattr(self.model, "_connection_attempted", True)
+            and not deliberate
         )
         busy = state in (MachineState.PREPARING, MachineState.RUNNING)
         for button in (self.reconnect_button, self.studio_button):

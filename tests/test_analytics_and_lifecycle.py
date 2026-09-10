@@ -183,3 +183,26 @@ class TestStartupWithoutStudio5000:
 
     def test_the_simulator_reports_an_identity(self, plc):
         assert plc.identity() == "Simulated controller"
+
+
+class TestConnectionBanner:
+    """Simulation on purpose and simulation by accident need different words,
+    and only one of them offers Reconnect."""
+
+    def test_simulate_mode_is_distinguishable_from_a_failed_connection(self):
+        from Model import Model
+
+        deliberate = Model(simulate=True)
+        assert deliberate._simulate is True
+
+        fallback = Model(transport=None, ip_address="10.255.255.1")
+        assert fallback._simulate is False
+
+    def test_reconnect_is_refused_and_says_why_in_simulate_mode(self):
+        from Model import Model
+
+        model = Model(simulate=True)
+        model._spawn = lambda name, work: work()
+        assert model.reconnect() is False
+        title, message = model.bridge.problems[-1]
+        assert "--simulate" in message
