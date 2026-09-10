@@ -39,6 +39,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="PLC address (default 192.168.1.1)",
     )
     parser.add_argument(
+        "--fresh-connection",
+        action="store_true",
+        help="open a new PLC session per read/write, as the original code did; "
+        "use if the persistent connection ever misbehaves",
+    )
+    parser.add_argument(
         "--slot",
         type=int,
         default=None,
@@ -62,6 +68,7 @@ def main(argv=None) -> int:
         ip_address=args.ip,
         processor_slot=args.slot,
         simulate=args.simulate,
+        persistent_connection=not args.fresh_connection,
     )
 
     # The window is built and shown first; connecting to the machine and

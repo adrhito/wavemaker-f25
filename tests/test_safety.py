@@ -132,3 +132,62 @@ class TestGuards:
         for axis in range(tags.MOTOR_COUNT):
             expected = 1 if axis in (2, 5) else 0
             assert plc.read(tags.live_motor(axis)) == expected, axis
+
+
+class TestConnectionModes:
+    """The persistent connection is the biggest transport change; the old
+    one-session-per-operation behaviour stays available as a fallback."""
+
+    def test_fresh_connection_mode_closes_after_each_operation(self, monkeypatch):
+        from app import plc as plc_module
+
+        closed = {"n": 0}
+
+        class FakePLC:
+            IPAddress = ""
+            ProcessorSlot = 0
+
+            def Read(self, tag):
+                return 7
+
+            def Write(self, tag, value):
+                return None
+
+            def Close(self):
+                closed["n"] += 1
+
+        monkeypatch.setattr(plc_module, "PLC", FakePLC)
+
+        client = plc_module.PlcClient("1.2.3.4", 1, persistent=False)
+        client.read("SomeTag")
+        client.write("SomeTag", 1)
+        assert closed["n"] == 2  # a session per operation, as before
+
+    def test_persistent_mode_reuses_one_session(self, monkeypatch):
+        from app import plc as plc_module
+
+        opened = {"n": 0}
+
+        class FakePLC:
+            IPAddress = ""
+            ProcessorSlot = 0
+
+            def __init__(self):
+                opened["n"] += 1
+
+            def Read(self, tag):
+                return 7
+
+            def Write(self, tag, value):
+                return None
+
+            def Close(self):
+                return None
+
+        monkeypatch.setattr(plc_module, "PLC", FakePLC)
+
+        client = plc_module.PlcClient("1.2.3.4", 1, persistent=True)
+        client.read("SomeTag")
+        client.write("SomeTag", 1)
+        client.read("SomeTag")
+        assert opened["n"] == 1

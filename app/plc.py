@@ -70,9 +70,27 @@ class PlcClient:
     so callers have one exception type to handle.
     """
 
-    def __init__(self, ip_address: str, processor_slot: int) -> None:
+    def __init__(
+        self, ip_address: str, processor_slot: int, persistent: bool = True
+    ) -> None:
+        """``persistent=False`` closes the session after every operation.
+
+        That is what the original code did -- it built and tore down a whole CIP
+        session for each read and write. Holding one open is far faster and is
+        how pylogix is meant to be used, but it is the biggest change to the
+        transport in this rework, and the vendored pylogix 0.2.0 does no
+        response/request correlation: :func:`modules.eip._getBytes` is a single
+        ``send`` and ``recv``. Serialising every request behind ``_lock`` and
+        rebuilding the session on any error covers that, but if the machine ever
+        behaves oddly in a way that smells like crossed responses -- a read
+        returning another tag's value, writes landing on the wrong parameter --
+        this switch restores the old one-session-per-operation behaviour exactly.
+
+        Start the application with ``--fresh-connection`` to set it.
+        """
         self.ip_address = ip_address
         self.processor_slot = processor_slot
+        self.persistent = persistent
         self._lock = threading.RLock()
         self._plc = None
         self.connected = False
@@ -144,6 +162,9 @@ class PlcClient:
                     LOGGER.debug("%s failed (%s); reconnecting", description, exc)
                 else:
                     self.connected = True
+                    if not self.persistent:
+                        self._discard()
+                        self.connected = True
                     return result
 
     def read(self, tag: str) -> Any:
@@ -254,7 +275,12 @@ class SimulatedPlc:
         self.history.clear()
 
 
-def connect(ip_address: str, processor_slot: int, simulate: bool = False):
+def connect(
+    ip_address: str,
+    processor_slot: int,
+    simulate: bool = False,
+    persistent: bool = True,
+):
     """Return (transport, is_live) for the machine.
 
     Falls back to :class:`SimulatedPlc` when simulate is set or the PLC does not
@@ -265,9 +291,14 @@ def connect(ip_address: str, processor_slot: int, simulate: bool = False):
         LOGGER.info("Simulation requested: running without the PLC.")
         return SimulatedPlc(), False
 
-    client = PlcClient(ip_address, processor_slot)
+    client = PlcClient(ip_address, processor_slot, persistent=persistent)
     if client.connect():
-        LOGGER.info("Connected to PLC at %s slot %s.", ip_address, processor_slot)
+        LOGGER.info(
+            "Connected to PLC at %s slot %s (%s connection).",
+            ip_address,
+            processor_slot,
+            "persistent" if persistent else "fresh-per-operation",
+        )
         return client, True
 
     LOGGER.warning("No PLC at %s: running in simulation. Nothing will move.", ip_address)

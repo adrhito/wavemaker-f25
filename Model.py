@@ -188,6 +188,7 @@ class Model:
         ip_address: Optional[str] = None,
         processor_slot: Optional[int] = None,
         simulate: bool = False,
+        persistent_connection: bool = True,
     ) -> None:
         """Build the model.
 
@@ -204,6 +205,7 @@ class Model:
             processor_slot if processor_slot is not None else self.PROCESSOR_SLOT
         )
         self._simulate = simulate
+        self._persistent_connection = persistent_connection
         #: False until :meth:`startup` has tried to reach the PLC.
         self._connection_attempted = transport is not None
 
@@ -750,7 +752,10 @@ class Model:
             self._connection_attempted = True
             self.bridge.status("Looking for the PLC at {0}...".format(self.ip_address))
             self.plc, self.is_live = plc_module.connect(
-                self.ip_address, self.processor_slot, simulate=self._simulate
+                self.ip_address,
+                self.processor_slot,
+                simulate=self._simulate,
+                persistent=self._persistent_connection,
             )
             # Tell the screens, so the connection banner stops saying "looking".
             self.bridge.state_changed(self._state)
