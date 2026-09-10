@@ -16,9 +16,29 @@
     double-click "Open Wavemaker.cmd".
 
     -NoLaunch   build and open the folder, but do not start the application.
+    -To <path>  also sync the build onto an already-prepared copy, e.g. a USB
+                stick at D:\WaveMaker_F25_new. Copies and overwrites, but by
+                default deletes nothing.
+    -Purge      with -To, also delete stale CODE left over from an older
+                version. Logs, presets, notes and any other non-code file on
+                the destination are always kept, with or without this flag.
+
 #>
 
-param([switch]$NoLaunch)
+param(
+    [switch]$NoLaunch,
+    [string]$To,
+    [switch]$Purge
+)
+
+# Directories the application writes into as it runs. A log from a real trial
+# at the machine cannot be reproduced, so a sync must never delete these.
+$KeepDirs = @("logs", "analytics", "__pycache__")
+
+# Extensions -Purge is allowed to delete. Code only: a stale module can break
+# the application, whereas a stray .txt or .csv is far more likely to be data
+# somebody wants to keep.
+$PurgeExtensions = @(".py", ".pyc", ".cmd")
 
 $ErrorActionPreference = "Stop"
 
@@ -38,7 +58,7 @@ $files = @(
     "main.py", "Model.py", "Motor.py", "View.py", "style.py",
     "Open Wavemaker.cmd", "Mock Wavemaker (no machine).cmd"
 )
-$folders = @("app", "modules", "operate", "preset_options", "feedback", "Presets")
+$folders = @("app", "modules", "operate", "preset_options", "feedback", "wave", "Presets")
 $docs    = @("check_python.py", "LAB_TEST.md", "OPERATING.md")
 
 foreach ($f in $files) {
@@ -65,6 +85,68 @@ Write-Host "Built: $dest" -ForegroundColor Green
 Write-Host "       $count files, $size KB - drag the folder straight onto the USB stick."
 Write-Host ""
 
+# --- optionally sync onto an existing copy (USB stick, lab PC) --------------
+if ($To) {
+    if (-not (Test-Path $To)) {
+        Write-Host "Destination not found: $To" -ForegroundColor Red
+        exit 1
+    }
+    $To = (Resolve-Path $To).Path.TrimEnd([char]92)
+    Write-Host "Syncing to $To ..." -ForegroundColor Cyan
+
+    # Copy and overwrite. This never deletes anything.
+    robocopy $dest $To /E /XD $KeepDirs /NFL /NDL /NJH /NP /R:2 /W:2 | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        Write-Host "Sync FAILED (robocopy $LASTEXITCODE)." -ForegroundColor Red
+        exit 1
+    }
+
+    # Whatever is on the destination that the build does not contain.
+    $extras = @()
+    foreach ($item in (Get-ChildItem $To -Recurse -File -Force)) {
+        $rel  = $item.FullName.Substring($To.Length).TrimStart([char]92)
+        $segs = $rel.Split([char]92)   # 92 = backslash
+        $skip = $false
+        foreach ($s in $segs) { if ($KeepDirs -contains $s) { $skip = $true } }
+        if ($skip) { continue }
+        if (-not (Test-Path (Join-Path $dest $rel))) { $extras += $item }
+    }
+
+    # Only code can go stale in a way that breaks the application. Anything
+    # else on the stick is the operator's -- a trial log, a preset they wrote --
+    # and is never deleted, whatever the flags say.
+    $stale = @($extras | Where-Object { $PurgeExtensions -contains $_.Extension.ToLower() })
+    $data  = @($extras | Where-Object { $PurgeExtensions -notcontains $_.Extension.ToLower() })
+
+    if ($data.Count) {
+        Write-Host ""
+        Write-Host "Keeping (not from the build, so assumed to be yours):" -ForegroundColor Cyan
+        $data | ForEach-Object { Write-Host ("  " + $_.FullName.Substring($To.Length).TrimStart([char]92)) }
+    }
+    if ($stale.Count) {
+        Write-Host ""
+        if ($Purge) {
+            Write-Host "Deleting stale code no longer in the build:" -ForegroundColor Yellow
+            foreach ($f in $stale) {
+                Write-Host ("  " + $f.FullName.Substring($To.Length).TrimStart([char]92))
+                Remove-Item $f.FullName -Force
+            }
+        } else {
+            Write-Host "Stale code present; -Purge would delete it:" -ForegroundColor Yellow
+            $stale | ForEach-Object { Write-Host ("  " + $_.FullName.Substring($To.Length).TrimStart([char]92)) }
+        }
+    }
+
+    # Bytecode from this machine is the wrong Python for the lab PC.
+    Get-ChildItem $To -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq "__pycache__" } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    Write-Host ""
+    Write-Host "Synced to $To" -ForegroundColor Green
+    Write-Host ""
+}
+
 Start-Process explorer.exe -ArgumentList "`"$dest`""
 
 if (-not $NoLaunch) {
@@ -72,3 +154,7 @@ if (-not $NoLaunch) {
     Start-Process -FilePath (Join-Path $dest "Mock Wavemaker (no machine).cmd") `
                   -WorkingDirectory $dest
 }
+
+# robocopy leaves a non-zero code behind even when it succeeded (1 = copied,
+# 2 = extras, 3 = both). Do not let that look like a failure to the caller.
+exit 0
