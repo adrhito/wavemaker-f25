@@ -444,6 +444,33 @@ class Operate:
             )
         )
 
+    def _offer_to_drop_unhomed(self) -> None:
+        """After a failed homing, offer to run without the pistons that stuck."""
+        stuck = list(self.model.unhomed_axes)
+        if not stuck or getattr(self, "_asked_about", None) == stuck:
+            return
+        self._asked_about = stuck
+        names = ", ".join(str(a) for a in stuck)
+        self._say(
+            "Piston(s) {0} did not home. They are marked in red.".format(names)
+        )
+        if messagebox.askyesno(
+            "Carry on without them?",
+            "Piston(s) {0} did not home, so they cannot run.\n\n"
+            "Remove them and continue with the {1} that did home?\n\n"
+            "Choosing No keeps them selected, so you can free them and press "
+            "Start again.".format(names, len(self.model.all_motors) - len(stuck)),
+            parent=self.tab,
+        ):
+            dropped = self.model.drop_unhomed()
+            self._asked_about = None
+            self.refresh(self.model.state)
+            self._say(
+                "Removed piston(s) {0}. Press Start to run the rest.".format(
+                    ", ".join(str(a) for a in dropped)
+                )
+            )
+
     def _on_rest_changed(self, value) -> None:
         self.model.rest_position = value
 
@@ -556,10 +583,12 @@ class Operate:
             self.tank.show_faults(trouble)
         if self.model.lagging_axes:
             self._say(
-                "Not keeping up: piston(s) {0}. They may be dragging or stuck.".format(
+                "Barely moving: piston(s) {0}. They may be dragging or stuck.".format(
                     ", ".join(str(a) for a in self.model.lagging_axes)
                 )
             )
+        elif "Barely moving" in self.problem_label.cget("text"):
+            self._say("")
 
     # -- display --------------------------------------------------------------
 
@@ -619,6 +648,12 @@ class Operate:
         self.tank.interactive = not busy
         if state is not MachineState.RUNNING:
             self.tank.clear_positions()
+
+        # Pistons that would not home stay marked until they are dealt with,
+        # so the operator can see which one to free or leave out.
+        if self.model.unhomed_axes:
+            self.tank.show_faults(self.model.unhomed_axes)
+            self._offer_to_drop_unhomed()
 
         count = len(self.model.all_motors)
         if count == 0:

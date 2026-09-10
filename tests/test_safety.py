@@ -281,3 +281,63 @@ class TestParkOnStop:
         plc.clear_history()
         homed_model.stop()
         assert not any(tag.endswith(".Pos_1") for tag, _ in plc.history)
+
+
+class TestHomingFailureIsActionable:
+    """A piston that will not home must be named, not merely counted.
+
+    "Motors did not home within 35 seconds" gave the operator nothing to act
+    on: with thirty pistons and one stuck, the useful facts are which one and
+    what can be done about it.
+    """
+
+    def _stuck_setup(self, model, plc, stuck_axis):
+        model.set_selection([0, 1, 2, 3])
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        # One piston never reports homed.
+        plc.write(tags.axis_field(stuck_axis, tags.STATUS_WORD), 0)
+
+    def test_the_stuck_piston_is_named(self, model, plc):
+        self._stuck_setup(model, plc, stuck_axis=2)
+        model.prepare()
+
+        assert model.unhomed_axes == [2]
+        assert any("2" in message for _title, message in model.bridge.problems)
+        assert any("did not" in message for _title, message in model.bridge.problems)
+
+    def test_the_others_are_reported_as_homed(self, model, plc):
+        self._stuck_setup(model, plc, stuck_axis=2)
+        model.prepare()
+        _title, message = model.bridge.problems[-1]
+        assert "3 of 4" in message
+
+    def test_the_run_can_continue_without_it(self, model, plc):
+        self._stuck_setup(model, plc, stuck_axis=2)
+        model.prepare()
+
+        dropped = model.drop_unhomed()
+        assert dropped == [2]
+        assert model.live_axes == [0, 1, 3]
+        assert model.unhomed_axes == []
+
+        # With the stuck piston gone, the rest home and the machine is ready.
+        assert model.prepare()
+        assert model.state is MachineState.HOMED
+
+    def test_a_clean_home_leaves_nothing_flagged(self, model, plc):
+        model.set_selection([0, 1, 2])
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 1 << 11)
+        assert model.prepare()
+        assert model.unhomed_axes == []
+
+    def test_dropping_removes_an_empty_group(self, model, plc):
+        model.set_selection([5])
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 0)
+        model.prepare()
+        assert model.unhomed_axes == [5]
+        model.drop_unhomed()
+        assert model.sets == []
+        assert model.state is MachineState.IDLE

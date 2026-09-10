@@ -89,11 +89,28 @@ STOP_POLL_INTERVAL = 0.05
 # and actual position are both published, so a piston that stops following its
 # demand can be flagged rather than noticed by eye.
 
-#: How far a piston may sit from its demanded position before it is flagged, mm.
-LAG_TOLERANCE = 40
-#: Consecutive polls it must be out by that much, so a momentary overshoot at
-#: the turn of a stroke does not raise a false alarm.
-LAG_POLLS = 6
+# Detection works on how far each piston actually travels, not on the gap
+# between ComDemandPosition and ComActualPosition.
+#
+# That gap was the obvious measure and the first thing tried, but it depends on
+# what the PLC publishes as the demanded position. If it is the instantaneous
+# interpolated command, the gap is the following error and is small. If it is
+# the *endpoint* of the stroke, then every healthy piston mid-travel looks
+# hundreds of millimetres behind and the whole array lights up. Which of the two
+# this controller publishes is not established, so the measure is not used.
+#
+# How far a piston moves does not depend on that at all. A piston that is
+# dragging or seized stops covering its stroke, whatever the tags mean, and a
+# staggered wave does not upset it because each piston is compared against its
+# own commanded stroke rather than against its neighbours.
+
+#: Seconds of movement history used to judge whether a piston is travelling.
+MOVEMENT_WINDOW = 3.0
+#: A piston is flagged when it covers less than this fraction of the stroke it
+#: was told to make. Generous, so only a real problem trips it.
+STUCK_FRACTION = 0.35
+#: Strokes shorter than this are not judged; there is too little to measure.
+MIN_JUDGED_STROKE = 25
 
 #: How often live piston positions are read while the machine runs.
 #: Four times a second is enough for the array to read as moving without
@@ -340,8 +357,14 @@ class Model:
         #: Axes that are not keeping up with their demanded position -- a piston
         #: dragging or stalled. Shown on the tank and logged once.
         self.lagging_axes: List[int] = []
-        self._lag_counts: Dict[int, int] = {}
+        #: Pistons that would not home. Shown on the tank and offered for
+        #: removal so a stuck one does not block the whole array.
+        self.unhomed_axes: List[int] = []
+        #: axis -> [(when, position), ...] over the last MOVEMENT_WINDOW seconds.
+        self._history: Dict[int, list] = {}
         self._lag_reported: set = set()
+        #: Which mode the current run was started in.
+        self._run_mode: Optional[RunMode] = None
 
         paths.ensure_directories()
 
@@ -681,6 +704,7 @@ class Model:
         return self._command("Prepare", self._prepare_worker)
 
     def _prepare_worker(self) -> None:
+        self.unhomed_axes = []
         self._stop_requested.clear()
         self._set_state(MachineState.PREPARING)
 
@@ -755,14 +779,73 @@ class Model:
 
             if is_final:
                 if not homed:
-                    timeout = int(polls * HOME_POLL_SECONDS)
-                    message = "Motors did not home within {0} seconds.".format(timeout)
-                    LOGGER.error(message)
-                    self.bridge.status(message)
-                    self.bridge.problem("Homing failed", message)
+                    self._report_homing_failure(int(polls * HOME_POLL_SECONDS))
                 return homed
 
         return False
+
+    def _report_homing_failure(self, timeout: int) -> None:
+        """Say which pistons did not home, not merely that homing failed.
+
+        "Motors did not home within 35 seconds" gave the operator nothing to act
+        on. With thirty pistons, one of them stuck, the useful facts are which
+        one and what can be done about it -- so this names them, records them on
+        :attr:`unhomed_axes` for the display, and leaves the rest homed so the
+        run can go ahead without the bad one.
+        """
+        stuck: List[int] = []
+        for motor in self.all_motors:
+            if not motor.is_homed(self.plc):
+                stuck.append(motor.axis)
+
+        self.unhomed_axes = stuck
+        total = len(self.all_motors)
+        homed_count = total - len(stuck)
+
+        if not stuck:
+            # Every piston reports homed even though the loop gave up: the
+            # last poll must have arrived after the timeout.
+            LOGGER.warning("Homing timed out, but every piston reports homed.")
+            self.bridge.status("Homing timed out, but all pistons report homed.")
+            return
+
+        names = ", ".join(str(axis) for axis in stuck)
+        summary = "{0} of {1} pistons homed. Piston(s) {2} did not.".format(
+            homed_count, total, names
+        )
+        LOGGER.error("%s Timed out after %s seconds.", summary, timeout)
+        self.bridge.status(summary)
+        self.bridge.problem(
+            "Some pistons did not home",
+            "{0}{1}{1}A piston that will not home is usually stuck or faulted "
+            "mechanically -- it is not something the software can clear.{1}{1}"
+            "You can carry on without it: deselect piston(s) {2} on the tank "
+            "and press Start again. The rest are homed and ready.".format(
+                summary, chr(10), names
+            ),
+        )
+
+    def drop_unhomed(self) -> List[int]:
+        """Remove the pistons that would not home from their groups.
+
+        Lets a session continue around a piston that is stuck, rather than
+        making the whole array unusable until somebody frees it.
+        """
+        dropped = list(self.unhomed_axes)
+        if not dropped:
+            return []
+        for motor_set in list(self.sets):
+            for axis in dropped:
+                motor_set.motors.pop(axis, None)
+            if not motor_set.motors:
+                self.sets.remove(motor_set)
+        for axis in dropped:
+            self.selection[axis] = False
+        self.unhomed_axes = []
+        LOGGER.info("Dropped piston(s) %s from the run.",
+                    ", ".join(str(a) for a in dropped))
+        self._refresh_idle_state()
+        return dropped
 
     # -- running --------------------------------------------------------------
 
@@ -817,6 +900,7 @@ class Model:
         return self._command("Start", lambda: self._start_worker(mode))
 
     def _start_worker(self, mode: RunMode) -> None:
+        self._run_mode = mode
         self._stop_requested.clear()
 
         # Parameters may have been edited since homing. Push the differences
@@ -956,6 +1040,10 @@ class Model:
             return False
 
         LOGGER.log(15, "Motors stopped%s.", " at the end of a stroke" if waited else "")
+        # Nothing is being watched once the run ends, so stale warnings must not
+        # be left on screen looking like a live fault.
+        self.clear_lag_warnings()
+        self._run_mode = None
         if self._state in (MachineState.RUNNING, MachineState.PREPARING):
             self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
 
@@ -1173,7 +1261,7 @@ class Model:
     def _poll_positions(self) -> None:
         readings: Dict[int, float] = {}
         unreadable: List[int] = []
-        lagging: List[int] = []
+        now = time.time()
 
         for motor in self.all_motors:
             axis = motor.axis
@@ -1181,43 +1269,65 @@ class Model:
                 actual = float(
                     self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
                 )
-                demand = float(
-                    self.plc.read(tags.axis_field(axis, tags.DEMAND_POSITION))
-                )
             except (PlcError, TypeError, ValueError):
                 unreadable.append(axis)
                 continue
 
             readings[axis] = actual
-
-            # A piston that stops following its demand is dragging or stuck.
-            # One poll out is normal at the turn of a stroke, so it has to be
-            # out for several in a row before it is called out.
-            if abs(demand - actual) > LAG_TOLERANCE:
-                self._lag_counts[axis] = self._lag_counts.get(axis, 0) + 1
-            else:
-                self._lag_counts[axis] = 0
-            if self._lag_counts[axis] >= LAG_POLLS:
-                lagging.append(axis)
-                if axis not in self._lag_reported:
-                    self._lag_reported.add(axis)
-                    LOGGER.warning(
-                        "Piston %s is not keeping up: demanded %.0f mm, actually "
-                        "at %.0f mm.", axis, demand, actual
-                    )
+            history = self._history.setdefault(axis, [])
+            history.append((now, actual))
+            cutoff = now - MOVEMENT_WINDOW
+            while history and history[0][0] < cutoff:
+                history.pop(0)
 
         self.unreadable_axes = unreadable
-        self.lagging_axes = lagging
-        if lagging and len(lagging) != len(self._lag_reported):
-            pass
+        self.lagging_axes = self._find_stragglers(now)
         if readings:
             self.bridge.positions(readings)
 
+    def _find_stragglers(self, now: float) -> List[int]:
+        """Pistons that are not covering the stroke they were given.
+
+        Only judged during a continuous run, and only once there is a full
+        window of history: a single stroke, a curve or the first second of a
+        run would all look like a piston that is not moving.
+        """
+        if self._state is not MachineState.RUNNING:
+            return []
+        if self._run_mode is not RunMode.CONTINUOUS:
+            return []
+
+        stragglers: List[int] = []
+        for motor in self.all_motors:
+            history = self._history.get(motor.axis, [])
+            if len(history) < 4 or (now - history[0][0]) < MOVEMENT_WINDOW * 0.9:
+                continue
+
+            stroke = abs(
+                motor.write_params["Position 2"] - motor.write_params["Position 1"]
+            )
+            if stroke < MIN_JUDGED_STROKE:
+                continue
+
+            positions = [p for _t, p in history]
+            travelled = max(positions) - min(positions)
+            if travelled < stroke * STUCK_FRACTION:
+                stragglers.append(motor.axis)
+                if motor.axis not in self._lag_reported:
+                    self._lag_reported.add(motor.axis)
+                    LOGGER.warning(
+                        "Piston %s covered only %.0f mm of its %.0f mm stroke over "
+                        "the last %.0f seconds. It may be dragging or stuck.",
+                        motor.axis, travelled, stroke, MOVEMENT_WINDOW,
+                    )
+        return stragglers
+
     def clear_lag_warnings(self) -> None:
         """Forget which pistons were flagged, so a new run starts clean."""
-        self._lag_counts = {}
+        self._history = {}
         self._lag_reported = set()
         self.lagging_axes = []
+        self.unreadable_axes = []
 
     # -- lifecycle ------------------------------------------------------------
 

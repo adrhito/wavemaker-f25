@@ -180,7 +180,14 @@ class TankView:
         self._draw_markers()
 
     def clear_positions(self) -> None:
+        """Stop showing live positions, and forget any warnings with them.
+
+        Faults used to persist here: nothing watches the pistons once a run
+        ends, so a piston flagged during the run stayed red indefinitely and
+        looked like a live fault long after it had been dealt with.
+        """
         self.positions = {}
+        self.faulted = set()
         self.live = False
         self.redraw()
 
