@@ -41,6 +41,11 @@ HOME_POLL_SECONDS = 5.0
 HOME_SETTLE_POLLS = 2
 HOME_POLLS = 7
 
+#: How often live piston positions are read while the machine runs.
+#: Four times a second is enough for the array to read as moving without
+#: putting meaningful extra traffic on the controller.
+MONITOR_INTERVAL = 0.25
+
 
 class MachineState(Enum):
     """Where the machine is in the prepare-run-stop cycle.
@@ -94,6 +99,10 @@ class UiBridge:
     def problem(self, title: str, message: str) -> None:
         raise NotImplementedError
 
+    def positions(self, readings: Dict[int, float]) -> None:
+        """Live piston positions, several times a second while running."""
+        raise NotImplementedError
+
 
 class NullBridge:
     """A bridge that records instead of displaying. Used before the UI exists,
@@ -103,6 +112,7 @@ class NullBridge:
         self.messages: List[str] = []
         self.states: List[MachineState] = []
         self.problems: List[tuple] = []
+        self.last_positions: Dict[int, float] = {}
 
     def status(self, message: str) -> None:
         self.messages.append(message)
@@ -119,6 +129,9 @@ class NullBridge:
     def problem(self, title: str, message: str) -> None:
         self.problems.append((title, message))
         LOGGER.error("%s: %s", title, message)
+
+    def positions(self, readings: Dict[int, float]) -> None:
+        self.last_positions = dict(readings)
 
 
 class MotorSet:
@@ -251,6 +264,12 @@ class Model:
         self.record_analytics: bool = False
         self.analytics_interval: float = 0.25
         self.analytics_duration: float = 10.0
+
+        #: Live position monitoring, started with the first run.
+        self._monitor_stop = threading.Event()
+        self._monitor_thread: Optional[threading.Thread] = None
+        #: Axes whose position could not be read, so the display can flag them.
+        self.unreadable_axes: List[int] = []
 
         paths.ensure_directories()
 
@@ -749,6 +768,52 @@ class Model:
         except Exception as exc:  # pragma: no cover - optional dependency
             LOGGER.info("Analytics not saved to the database: %s", exc)
 
+    # -- live monitoring ------------------------------------------------------
+
+    def start_monitoring(self) -> None:
+        """Begin reading piston positions in the background.
+
+        Runs for the life of the application and only reads while the machine
+        is actually running, so it costs nothing when idle. Reads go through the
+        same lock as commands, so a poll can never interleave with a write.
+        """
+        if self._monitor_thread is not None:
+            return
+        self._monitor_stop.clear()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, name="Monitor", daemon=True
+        )
+        self._monitor_thread.start()
+
+    def stop_monitoring(self) -> None:
+        self._monitor_stop.set()
+        self._monitor_thread = None
+
+    def _monitor_loop(self) -> None:
+        while not self._monitor_stop.is_set():
+            if self._state is MachineState.RUNNING:
+                try:
+                    self._poll_positions()
+                except PlcError as exc:
+                    # A failed poll is not worth interrupting a run for; the
+                    # display simply stops updating and says so.
+                    LOGGER.debug("Position poll failed: %s", exc)
+            self._monitor_stop.wait(MONITOR_INTERVAL)
+
+    def _poll_positions(self) -> None:
+        readings: Dict[int, float] = {}
+        unreadable: List[int] = []
+        for motor in self.all_motors:
+            try:
+                readings[motor.axis] = float(
+                    self.plc.read(tags.axis_field(motor.axis, tags.ACTUAL_POSITION))
+                )
+            except (PlcError, TypeError, ValueError):
+                unreadable.append(motor.axis)
+        self.unreadable_axes = unreadable
+        if readings:
+            self.bridge.positions(readings)
+
     # -- lifecycle ------------------------------------------------------------
 
     def startup(self) -> bool:
@@ -827,6 +892,7 @@ class Model:
 
     def shutdown(self) -> None:
         """Stop the machine and close the connection. Called when the window closes."""
+        self.stop_monitoring()
         self._stop_requested.set()
         try:
             self.motors_off()

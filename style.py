@@ -11,12 +11,48 @@ FOREGROUND = "white"
 THEME_NAME = "Main_Theme"
 
 
+#: Label and chip colour for each machine state, used by the status bar.
+#: Imported by View; keyed by MachineState to keep the mapping in one place.
+def _state_colours():
+    from Model import MachineState
+
+    return {
+        MachineState.IDLE: ("NO MOTORS", "#7d8894"),
+        MachineState.READY: ("READY", "#4fc3f7"),
+        MachineState.PREPARING: ("PREPARING", "#ffb74d"),
+        MachineState.HOMED: ("HOMED", "#7ed957"),
+        MachineState.RUNNING: ("RUNNING", "#ff7043"),
+    }
+
+
+class _LazyStateColours(dict):
+    """Filled on first use, because style.py must not import Model at import
+    time -- Model imports style indirectly through the tabs."""
+
+    def __missing__(self, key):
+        self.update(_state_colours())
+        return dict.__getitem__(self, key)
+
+
+STATE_COLOURS = _LazyStateColours()
+
+
 def style_GUI() -> None:
     """Install the application theme and the named styles built on top of it."""
     main_theme()
     style = ttk.Style()
-    style.configure("Heading.TLabel", font=("Helvetica", 20))
-    style.configure("Step.TLabel", font=("Helvetica", 11, "bold"), foreground="#9fd4ff")
+    style.configure("Heading.TLabel", font=("Segoe UI", 19))
+    style.configure("Heading2.TLabel", font=("Segoe UI", 11, "bold"),
+                    foreground="#dfe6ec")
+    style.configure("Group.TLabel", font=("Segoe UI", 9, "bold"),
+                    foreground="#8fb6d4")
+    style.configure("Dim.TLabel", foreground="#8d9aa6")
+    style.configure("Step.TLabel", font=("Segoe UI", 11, "bold"),
+                    foreground="#9fd4ff")
+    style.configure("TRadiobutton", background=BACKGROUND, foreground=FOREGROUND)
+    style.map("TRadiobutton", background=[("active", BACKGROUND)])
+    style.configure("TCombobox", fieldbackground="#2a3542", background="#2a3542")
+    style.configure("TSeparator", background="#3a4450")
     style.configure("TCheckbutton", background=BACKGROUND, foreground=FOREGROUND)
     style.map(
         "TCheckbutton",

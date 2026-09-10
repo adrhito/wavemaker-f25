@@ -1,0 +1,396 @@
+"""A drawing of the piston array, used for both selecting and watching.
+
+Thirty pistons in three rows of ten, over the water. Each piston shows the
+stroke it has been given and, while the machine runs, where it actually is.
+
+This replaces two separate widgets that did not agree with each other: a row of
+thirty checkboxes on Define Motors and a grid of plain circles on Control Home.
+Selecting a piston in one place and looking for it in the other meant counting
+along a row of identical labels.
+
+Everything is drawn on a plain ``tkinter.Canvas``. The lab PC is offline
+Windows 7, so no drawing library can be installed -- there is no PIL, no
+matplotlib, nothing but what ships with Python.
+
+Coordinates
+-----------
+``axis`` 0..29. Row is ``axis % 3 + 1`` and column is ``axis // 3 + 1``, which
+is how ``Motor`` has always mapped them: axes 0, 1, 2 are the three rows of
+column 1. Columns run left to right across the drawing.
+"""
+
+from __future__ import annotations
+
+from tkinter import Canvas
+from typing import Callable, Dict, List, Optional, Tuple
+
+ROWS = 3
+COLUMNS = 10
+MOTOR_COUNT = ROWS * COLUMNS
+
+# --- Colours -----------------------------------------------------------------
+
+WATER_TOP = "#123a52"
+WATER_BOTTOM = "#0b2536"
+SKY = "#11161c"
+FRAME = "#3a4450"
+TRACK = "#2a3542"
+TRACK_EDGE = "#46525f"
+
+FREE_FILL = "#5b6875"
+FREE_EDGE = "#76838f"
+SELECTED_EDGE = "#ffffff"
+LABEL = "#c8d2dc"
+LABEL_DIM = "#7d8894"
+
+#: Fill per set, cycled. Chosen to stay distinguishable side by side.
+SET_COLOURS: List[str] = [
+    "#7ed957",
+    "#4fc3f7",
+    "#ffb74d",
+    "#ba68c8",
+    "#f06292",
+    "#fff176",
+]
+
+#: Stroke limits, matching app.params. Kept as plain numbers so this widget has
+#: no dependency on the rest of the application and can be previewed alone.
+POSITION_MIN = -20
+POSITION_MAX = 368
+
+
+class TankView:
+    """The piston array, drawn to fit whatever space it is given.
+
+    Callbacks
+    ---------
+    ``on_select(axes, additive)``  a click or drag chose these axes.
+    ``on_hover(axis)``             the pointer moved onto a piston, or None.
+    """
+
+    def __init__(
+        self,
+        parent,
+        on_select: Optional[Callable[[List[int], bool], None]] = None,
+        on_hover: Optional[Callable[[Optional[int]], None]] = None,
+        height: int = 260,
+        interactive: bool = True,
+    ) -> None:
+        self.on_select = on_select
+        self.on_hover = on_hover
+        self.interactive = interactive
+
+        self.canvas = Canvas(
+            parent,
+            height=height,
+            background=SKY,
+            highlightthickness=0,
+            bd=0,
+        )
+
+        # -- state the caller sets --------------------------------------------
+        #: axis -> index of the set it belongs to, for colouring.
+        self.set_of: Dict[int, int] = {}
+        #: axis -> label of the set, for the tooltip line.
+        self.set_name: Dict[int, str] = {}
+        #: axes ticked but not yet grouped.
+        self.selected: set = set()
+        #: axis -> (position 1, position 2) in mm, the commanded stroke.
+        self.strokes: Dict[int, Tuple[int, int]] = {}
+        #: axis -> actual position in mm, while running.
+        self.positions: Dict[int, float] = {}
+        #: axes that could not be read or reported a fault.
+        self.faulted: set = set()
+        self.live = False
+
+        # -- internal ---------------------------------------------------------
+        self._boxes: Dict[int, Tuple[float, float, float, float]] = {}
+        self._drag_from: Optional[Tuple[float, float]] = None
+        self._drag_rect = None
+        self._hovered: Optional[int] = None
+
+        self.canvas.bind("<Configure>", lambda _e: self.redraw())
+        if interactive:
+            self.canvas.bind("<Button-1>", self._on_press)
+            self.canvas.bind("<B1-Motion>", self._on_drag)
+            self.canvas.bind("<ButtonRelease-1>", self._on_release)
+            self.canvas.bind("<Motion>", self._on_motion)
+            self.canvas.bind("<Leave>", lambda _e: self._set_hover(None))
+
+    # -- placement ------------------------------------------------------------
+
+    def grid(self, **kwargs):
+        self.canvas.grid(**kwargs)
+        return self
+
+    def pack(self, **kwargs):
+        self.canvas.pack(**kwargs)
+        return self
+
+    # -- state ----------------------------------------------------------------
+
+    def show_sets(self, sets) -> None:
+        """Colour pistons by the set they belong to. ``sets`` is a list of
+        objects with ``.name`` and ``.axes``."""
+        self.set_of = {}
+        self.set_name = {}
+        for index, motor_set in enumerate(sets):
+            for axis in motor_set.axes:
+                self.set_of[axis] = index
+                self.set_name[axis] = motor_set.name
+        self.redraw()
+
+    def show_selection(self, axes) -> None:
+        self.selected = set(axes)
+        self.redraw()
+
+    def show_strokes(self, strokes: Dict[int, Tuple[int, int]]) -> None:
+        self.strokes = dict(strokes)
+        self.redraw()
+
+    def show_positions(self, positions: Dict[int, float]) -> None:
+        """Update the live position markers. Called several times a second."""
+        self.positions = dict(positions)
+        self.live = True
+        self._draw_markers()
+
+    def clear_positions(self) -> None:
+        self.positions = {}
+        self.live = False
+        self.redraw()
+
+    def show_faults(self, axes) -> None:
+        self.faulted = set(axes)
+        self.redraw()
+
+    def colour_for(self, axis: int) -> str:
+        index = self.set_of.get(axis)
+        if index is None:
+            return FREE_FILL
+        return SET_COLOURS[index % len(SET_COLOURS)]
+
+    # -- geometry -------------------------------------------------------------
+
+    def _metrics(self):
+        """Work out the drawing geometry for the current canvas size."""
+        width = max(self.canvas.winfo_width(), 320)
+        height = max(self.canvas.winfo_height(), 140)
+
+        pad_x = 14
+        pad_top = 22          # room for the column ruler
+        pad_bottom = 8
+
+        usable_w = width - pad_x * 2
+        usable_h = height - pad_top - pad_bottom
+
+        cell_w = usable_w / float(COLUMNS)
+        cell_h = usable_h / float(ROWS)
+
+        # The paddle is a tall box inside its cell.
+        paddle_w = min(cell_w * 0.62, 42.0)
+        paddle_h = max(cell_h * 0.62, 12.0)
+
+        return {
+            "width": width,
+            "height": height,
+            "pad_x": pad_x,
+            "pad_top": pad_top,
+            "cell_w": cell_w,
+            "cell_h": cell_h,
+            "paddle_w": paddle_w,
+            "paddle_h": paddle_h,
+        }
+
+    def _cell_centre(self, axis: int, m) -> Tuple[float, float]:
+        row = axis % ROWS
+        column = axis // ROWS
+        cx = m["pad_x"] + (column + 0.5) * m["cell_w"]
+        cy = m["pad_top"] + (row + 0.5) * m["cell_h"]
+        return cx, cy
+
+    # -- drawing --------------------------------------------------------------
+
+    def redraw(self) -> None:
+        c = self.canvas
+        c.delete("all")
+        m = self._metrics()
+        self._boxes = {}
+
+        self._draw_water(m)
+        self._draw_ruler(m)
+
+        for axis in range(MOTOR_COUNT):
+            self._draw_piston(axis, m)
+
+        self._draw_markers()
+
+    def _draw_water(self, m) -> None:
+        """A few horizontal bands standing in for the tank. Purely so the
+        drawing reads as pistons over water rather than an abstract grid."""
+        c = self.canvas
+        top = m["pad_top"] - 6
+        bottom = m["height"]
+        bands = 14
+        for i in range(bands):
+            y0 = top + (bottom - top) * i / float(bands)
+            y1 = top + (bottom - top) * (i + 1) / float(bands)
+            shade = self._blend(WATER_TOP, WATER_BOTTOM, i / float(bands - 1))
+            c.create_rectangle(0, y0, m["width"], y1, fill=shade, outline=shade)
+
+    @staticmethod
+    def _blend(start: str, end: str, t: float) -> str:
+        t = min(max(t, 0.0), 1.0)
+        s = tuple(int(start[i : i + 2], 16) for i in (1, 3, 5))
+        e = tuple(int(end[i : i + 2], 16) for i in (1, 3, 5))
+        mixed = tuple(int(round(s[i] + (e[i] - s[i]) * t)) for i in range(3))
+        return "#%02x%02x%02x" % mixed
+
+    def _draw_ruler(self, m) -> None:
+        """Column numbers along the top, so 'column 4' means something."""
+        c = self.canvas
+        for column in range(COLUMNS):
+            x = m["pad_x"] + (column + 0.5) * m["cell_w"]
+            c.create_text(
+                x, 10, text=str(column + 1), fill=LABEL_DIM,
+                font=("Segoe UI", 8),
+            )
+
+    def _draw_piston(self, axis: int, m) -> None:
+        c = self.canvas
+        cx, cy = self._cell_centre(axis, m)
+        half_w = m["paddle_w"] / 2.0
+        half_h = m["paddle_h"] / 2.0
+
+        # The stroke track: the span this piston has been told to travel.
+        track_w = m["cell_w"] * 0.80
+        tx0 = cx - track_w / 2.0
+        tx1 = cx + track_w / 2.0
+        c.create_rectangle(
+            tx0, cy - half_h - 6, tx1, cy - half_h - 1,
+            fill=TRACK, outline=TRACK_EDGE,
+        )
+
+        stroke = self.strokes.get(axis)
+        if stroke is not None:
+            a, b = sorted(stroke)
+            x0 = tx0 + (tx1 - tx0) * self._fraction(a)
+            x1 = tx0 + (tx1 - tx0) * self._fraction(b)
+            if x1 - x0 < 2:
+                x1 = x0 + 2
+            c.create_rectangle(
+                x0, cy - half_h - 6, x1, cy - half_h - 1,
+                fill=self.colour_for(axis), outline="",
+            )
+
+        # The paddle itself.
+        fill = self.colour_for(axis)
+        if axis in self.faulted:
+            fill = "#e05252"
+        outline = FREE_EDGE
+        width = 1
+        if axis in self.selected:
+            outline = SELECTED_EDGE
+            width = 2
+
+        box = (cx - half_w, cy - half_h, cx + half_w, cy + half_h)
+        self._boxes[axis] = box
+        c.create_rectangle(*box, fill=fill, outline=outline, width=width)
+
+        # Axis number, dark on light fills and light on dark ones.
+        c.create_text(
+            cx, cy,
+            text=str(axis),
+            fill="#1c2530" if axis in self.set_of else LABEL,
+            font=("Segoe UI", 8, "bold" if axis in self.set_of else "normal"),
+        )
+
+    def _fraction(self, position: float) -> float:
+        span = float(POSITION_MAX - POSITION_MIN)
+        return min(max((position - POSITION_MIN) / span, 0.0), 1.0)
+
+    def _draw_markers(self) -> None:
+        """Draw just the live position markers.
+
+        Separated from :meth:`redraw` because it runs several times a second
+        while the machine moves; redrawing the whole tank that often flickers.
+        """
+        c = self.canvas
+        c.delete("marker")
+        if not self.live or not self._boxes:
+            return
+        m = self._metrics()
+        for axis, position in self.positions.items():
+            box = self._boxes.get(axis)
+            if box is None:
+                continue
+            cx, cy = self._cell_centre(axis, m)
+            half_h = m["paddle_h"] / 2.0
+            track_w = m["cell_w"] * 0.80
+            tx0 = cx - track_w / 2.0
+            x = tx0 + track_w * self._fraction(position)
+            c.create_line(
+                x, cy - half_h - 8, x, cy - half_h + 1,
+                fill="#ffffff", width=2, tags="marker",
+            )
+
+    # -- interaction ----------------------------------------------------------
+
+    def _axis_at(self, x: float, y: float) -> Optional[int]:
+        for axis, (x0, y0, x1, y1) in self._boxes.items():
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return axis
+        return None
+
+    def _on_press(self, event) -> None:
+        self._drag_from = (event.x, event.y)
+
+    def _on_drag(self, event) -> None:
+        if self._drag_from is None:
+            return
+        x0, y0 = self._drag_from
+        if self._drag_rect is not None:
+            self.canvas.delete(self._drag_rect)
+        self._drag_rect = self.canvas.create_rectangle(
+            x0, y0, event.x, event.y, outline=SELECTED_EDGE, dash=(3, 2)
+        )
+
+    def _on_release(self, event) -> None:
+        if self._drag_from is None:
+            return
+        x0, y0 = self._drag_from
+        self._drag_from = None
+        if self._drag_rect is not None:
+            self.canvas.delete(self._drag_rect)
+            self._drag_rect = None
+
+        if self.on_select is None:
+            return
+
+        moved = abs(event.x - x0) > 4 or abs(event.y - y0) > 4
+        additive = bool(event.state & 0x0001) or bool(event.state & 0x0004)
+
+        if not moved:
+            axis = self._axis_at(event.x, event.y)
+            if axis is not None:
+                self.on_select([axis], True)  # a click always toggles
+            return
+
+        left, right = sorted((x0, event.x))
+        top, bottom = sorted((y0, event.y))
+        caught = [
+            axis
+            for axis, (bx0, by0, bx1, by1) in self._boxes.items()
+            if left < (bx0 + bx1) / 2 < right and top < (by0 + by1) / 2 < bottom
+        ]
+        if caught:
+            self.on_select(sorted(caught), additive)
+
+    def _on_motion(self, event) -> None:
+        self._set_hover(self._axis_at(event.x, event.y))
+
+    def _set_hover(self, axis: Optional[int]) -> None:
+        if axis == self._hovered:
+            return
+        self._hovered = axis
+        if self.on_hover is not None:
+            self.on_hover(axis)
