@@ -31,8 +31,13 @@ LOGGER: Logger = getLogger(LOGGER_NAME)
 BOOT_PULSE_SECONDS = 5.0
 #: How long Clear_Motor_Error is held high to clear motion faults.
 CLEAR_FAULT_SECONDS = 5.0
-#: How long Run_1 is held high for one stroke.
+#: How long Run_1 is held high for one stroke, unless the configured motion
+#: needs longer -- see :meth:`Model._stroke_seconds`. One stroke is a full up
+#: and down, so a slow or long stroke takes more than this and used to be cut
+#: off half-way when the bit was dropped on a fixed five-second timer.
 SINGLE_STROKE_SECONDS = 5.0
+#: Never hold a run bit longer than this, however slow the parameters are.
+MAX_STROKE_SECONDS = 120.0
 #: How long Run_Curve is held high for one curve run.
 CURVE_SECONDS = 5.0
 #: Gap between polls of the drives while homing.
@@ -1134,7 +1139,7 @@ class Model:
         if mode is RunMode.SINGLE:
             self._set_state(MachineState.RUNNING)
             self.bridge.status("Running one stroke...")
-            travel = self._hold_and_watch(tags.RUN_SINGLE, SINGLE_STROKE_SECONDS)
+            travel = self._hold_and_watch(tags.RUN_SINGLE, self._stroke_seconds())
             self._set_state(MachineState.HOMED)
             self._report_travel("stroke", travel)
 
@@ -1152,7 +1157,7 @@ class Model:
                     self.plc.write(tags.RUN_CURVE, 0)
                 travel = {}
             else:
-                travel = self._hold_and_watch(tags.RUN_CURVE, CURVE_SECONDS)
+                travel = self._hold_and_watch(tags.RUN_CURVE, self._stroke_seconds(CURVE_SECONDS))
             self._set_state(MachineState.HOMED)
             self._report_travel("curve", travel)
 
@@ -1163,6 +1168,36 @@ class Model:
             self.bridge.status("Running continuously. Press Stop when finished.")
             if self.record_analytics:
                 self._record_positions(self.analytics_duration)
+
+    def _stroke_seconds(self, floor: float = SINGLE_STROKE_SECONDS) -> float:
+        """How long a full up and down actually takes at the current settings.
+
+        One stroke is Position 1 to Position 2 and back, so the time it needs
+        is the travel each way at the speed set for that direction, plus the
+        dwell at each end. Holding the bit for a fixed five seconds regardless
+        meant a slow or long stroke was cut off part-way: the pistons stopped
+        wherever they had got to, and the run was reported as barely moving.
+
+        The fixed value stays as a floor, so nothing that worked before gets a
+        shorter window.
+        """
+        longest = 0.0
+        for motor in self.all_motors:
+            wanted = motor.write_params
+            try:
+                stroke = abs(wanted["Position 2"] - wanted["Position 1"])
+                out_speed = max(float(wanted["Speed 1"]), 1.0)
+                back_speed = max(float(wanted["Speed 2"]), 1.0)
+                # Time 1 and Time 2 are dwells in milliseconds.
+                dwell = (float(wanted.get("Time 1", 0)) + float(wanted.get("Time 2", 0))) / 1000.0
+            except (KeyError, TypeError, ValueError):
+                continue
+            longest = max(longest, stroke / out_speed + stroke / back_speed + dwell)
+
+        if not longest:
+            return floor
+        # Half again, so a piston that is merely slow still finishes.
+        return max(floor, min(longest * 1.5, MAX_STROKE_SECONDS))
 
     def _hold_and_watch(self, tag: str, seconds: float) -> Dict[int, float]:
         """Hold a command bit and record how far each piston actually travels.

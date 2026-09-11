@@ -209,3 +209,60 @@ class TestConnectionBanner:
         assert model.reconnect() is False
         title, message = model.bridge.problems[-1]
         assert "--simulate" in message
+
+
+class TestLogFileLevel:
+    """The log file is the only evidence that comes back from the lab PC."""
+
+    def test_success_messages_reach_the_log_file(self, tmp_path, monkeypatch):
+        """A working One stroke must leave a trace.
+
+        SUCCESS is 15, below INFO. While the file handler filtered at INFO,
+        every confirmation the application logs was dropped: "Motors booted",
+        "Motors homed", "Ran a stroke". A log from a session where everything
+        worked looked exactly like one where the buttons did nothing.
+        """
+        import logging
+
+        from modules.logging import log_utils
+
+        monkeypatch.setattr(log_utils, "_file_handler", None)
+        monkeypatch.setattr(log_utils.paths, "log_file", lambda: tmp_path / "day.log")
+        monkeypatch.setattr(log_utils.paths, "ensure_directories", lambda: None)
+
+        handler = log_utils.setup_file_logging()
+        try:
+            logger = logging.getLogger(log_utils.LOGGER_NAME)
+            logger.log(log_utils.SUCCESS, "Ran a stroke.")
+            logger.info("Motion faults cleared.")
+            handler.flush()
+
+            written = (tmp_path / "day.log").read_text(encoding="utf-8")
+        finally:
+            logging.getLogger(log_utils.LOGGER_NAME).removeHandler(handler)
+            handler.close()
+
+        assert "Ran a stroke." in written
+        assert "Motion faults cleared." in written
+
+    def test_debug_noise_still_stays_out_of_the_log_file(self, tmp_path, monkeypatch):
+        """Lowering the level must not turn the file into a packet trace."""
+        import logging
+
+        from modules.logging import log_utils
+
+        monkeypatch.setattr(log_utils, "_file_handler", None)
+        monkeypatch.setattr(log_utils.paths, "log_file", lambda: tmp_path / "day.log")
+        monkeypatch.setattr(log_utils.paths, "ensure_directories", lambda: None)
+
+        handler = log_utils.setup_file_logging()
+        try:
+            logger = logging.getLogger(log_utils.LOGGER_NAME)
+            logger.debug("State -> ready")
+            handler.flush()
+            written = (tmp_path / "day.log").read_text(encoding="utf-8")
+        finally:
+            logging.getLogger(log_utils.LOGGER_NAME).removeHandler(handler)
+            handler.close()
+
+        assert "State -> ready" not in written

@@ -131,7 +131,12 @@ def setup_file_logging() -> Handler:
 
     paths.ensure_directories()
     handler = logging.FileHandler(str(paths.log_file()), encoding="utf-8")
-    handler.setLevel(logging.INFO)
+    # SUCCESS is 15, below INFO. Filtering at INFO dropped every confirmation
+    # the application logs -- "Motors booted", "Motors homed", "Ran a stroke",
+    # "Motors stopped" -- so a log from the lab showed the warnings and none of
+    # the things that had gone right, and a working One stroke was
+    # indistinguishable from a button that did nothing.
+    handler.setLevel(SUCCESS)
     handler.setFormatter(Formatter(FORMAT, datefmt=DATE_FORMAT))
     logger.addHandler(handler)
     _file_handler = handler

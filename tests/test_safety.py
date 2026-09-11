@@ -8,9 +8,11 @@ from __future__ import annotations
 
 
 
+import pytest
+
 from app import tags
 from app.plc import PlcError
-from Model import MachineState, RunMode
+from Model import MAX_STROKE_SECONDS, MachineState, RunMode
 
 
 class TestStopNeverStarts:
@@ -590,3 +592,50 @@ class TestDriveWordsAreDecoded:
         report = model.drive_report()
         assert "homed" in report[0]
         assert "Motor Hot Sensor" in report[1]
+
+
+class TestStrokeWindow:
+    """One stroke is a full up and down, so it gets the time that takes."""
+
+    def test_a_quick_stroke_keeps_the_old_five_seconds(self, homed_model):
+        """Nothing that already worked gets a shorter window."""
+        for motor in homed_model.all_motors:
+            motor.set_param("Position 1", 100)
+            motor.set_param("Position 2", 300)
+            motor.set_param("Speed 1", 400)
+            motor.set_param("Speed 2", 400)
+        assert homed_model._stroke_seconds() == pytest.approx(5.0)
+
+    def test_a_slow_stroke_is_given_time_to_finish(self, homed_model):
+        """A slow piston used to have the bit dropped on it half-way.
+
+        300 mm each way at 20 mm/s is 30 seconds of travel; the old fixed
+        five-second hold stopped it barely a tenth of the way out, which is
+        what "no piston moved more than 12 mm" looks like in the log.
+        """
+        for motor in homed_model.all_motors:
+            motor.set_param("Position 1", 60)
+            motor.set_param("Position 2", 360)
+            motor.set_param("Speed 1", 20)
+            motor.set_param("Speed 2", 20)
+        assert homed_model._stroke_seconds() > 30.0
+
+    def test_dwell_at_each_end_counts_towards_the_window(self, homed_model):
+        """Time 1 and Time 2 hold the piston still; the stroke is not over."""
+        for motor in homed_model.all_motors:
+            motor.set_param("Position 1", 100)
+            motor.set_param("Position 2", 300)
+            motor.set_param("Speed 1", 400)
+            motor.set_param("Speed 2", 400)
+            motor.set_param("Time 1", 4000)
+            motor.set_param("Time 2", 4000)
+        assert homed_model._stroke_seconds() > 8.0
+
+    def test_the_window_is_capped(self, homed_model):
+        """A speed of 1 mm/s must not hold a run bit for two and a half minutes."""
+        for motor in homed_model.all_motors:
+            motor.set_param("Position 1", 0)
+            motor.set_param("Position 2", 150)
+            motor.set_param("Speed 1", 1)
+            motor.set_param("Speed 2", 1)
+        assert homed_model._stroke_seconds() == pytest.approx(MAX_STROKE_SECONDS)
