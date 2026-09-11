@@ -170,11 +170,36 @@ class TestDisplayNumberingAndLayout:
     Only what the operator sees changes.
     """
 
-    def test_pistons_are_numbered_from_one(self):
-        assert tags.display_number(0) == 1
-        assert tags.display_number(29) == 30
-        assert tags.axis_from_display(1) == 0
-        assert tags.axis_from_display(30) == 29
+    def test_pistons_are_named_by_where_they_sit(self):
+        """The grid reads 1 at the top left and 30 at the bottom right.
+
+        Axis 29 is drawn top left, so it is piston 1; axis 0 is drawn bottom
+        right, so it is piston 30.
+        """
+        assert tags.display_number(29) == 1
+        assert tags.display_number(0) == 30
+        assert tags.axis_from_display(1) == 29
+        assert tags.axis_from_display(30) == 0
+
+    def test_every_piston_gets_exactly_one_name(self):
+        names = sorted(tags.display_number(a) for a in range(30))
+        assert names == list(range(1, 31))
+        assert all(
+            tags.axis_from_display(tags.display_number(a)) == a
+            for a in range(30)
+        )
+
+    def test_names_run_three_to_a_column(self):
+        """The machine's own grouping: the front four rows are pistons 1-12."""
+        from modules import tank_view
+
+        m = {"pad_x": 0.0, "pad_top": 0.0, "cell_w": 10.0, "cell_h": 10.0}
+        view = tank_view.TankView.__new__(tank_view.TankView)
+        for number in range(1, 31):
+            axis = tags.axis_from_display(number)
+            cx, cy = tank_view.TankView._cell_centre(view, axis, m)
+            row, column = int(cy // 10), int(cx // 10)
+            assert number == column * 3 + row + 1
 
     def test_display_numbering_never_reaches_the_plc(self):
         """Axis 0 is Motor_1 and Axis[0] regardless of what is shown."""
@@ -215,6 +240,8 @@ class TestDisplayNumberingAndLayout:
         assert len(places) == 30
 
     def test_a_list_of_pistons_reads_naturally(self):
-        assert tags.display_list([0]) == "1"
-        assert tags.display_list([0, 1]) == "1 and 2"
-        assert tags.display_list([4, 0, 2]) == "1, 3 and 5"
+        assert tags.display_list([29]) == "1"
+        assert tags.display_list([29, 28]) == "1 and 2"
+        # Sorted by the number shown, not by axis.
+        axes = [tags.axis_from_display(n) for n in (7, 1, 4)]
+        assert tags.display_list(axes) == "1, 4 and 7"

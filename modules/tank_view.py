@@ -12,20 +12,26 @@ Everything is drawn on a plain ``tkinter.Canvas``. The lab PC is offline
 Windows 7, so no drawing library can be installed -- there is no PIL, no
 matplotlib, nothing but what ships with Python.
 
-Orientation
------------
-``axis`` 0..29. Row is ``axis % 3 + 1`` and column is ``axis // 3 + 1``, which
-is how ``Motor`` has always mapped them: axes 0, 1, 2 are the three rows of
-column 1.
+Orientation and numbering
+-------------------------
+Internally a piston is an ``axis``, 0..29, because every PLC tag is built from
+it. On screen it is named 1..30 by **where it sits in this picture**, so the
+grid reads naturally from the top left:
 
-Physically, columns run **front to back** into the chamber -- column 1 is
-nearest the operator, column 10 is at the back -- and rows run top to bottom.
-So piston 27 (row 1, column 10) is the top back corner and piston 2 (row 3,
-column 1) is the front corner nearest you. The drawing is laid out to match,
-with column 1 on the left.
+    1   4   7  10  13  16  19  22  25  28
+    2   5   8  11  14  17  20  23  26  29
+    3   6   9  12  15  18  21  24  27  30
 
-That makes the column direction the one a wave travels along, which is why the
-pattern tool calls a stagger across columns a "front to back" stagger.
+Three per column, matching the machine's own grouping. Piston 1 drives axis 29.
+See :func:`app.tags.display_number`.
+
+The array is drawn rotated by half a turn from the raw axis order, so the
+picture matches the view from the operating position: the back of the chamber
+is on the left and the front, nearest the operator, on the right.
+
+Each piston has a vertical bar beside it showing where it travels and, while
+running, where it actually is -- upright, because that is the direction the
+piston moves.
 """
 
 from __future__ import annotations
@@ -341,33 +347,36 @@ class TankView:
         half_w = m["paddle_w"] / 2.0
         half_h = m["paddle_h"] / 2.0
 
-        # The stroke track: the span this piston has been told to travel.
-        track_w = m["cell_w"] * 0.80
-        tx0 = cx - track_w / 2.0
-        tx1 = cx + track_w / 2.0
-        self._tracks[axis] = (tx0, cy - half_h - 11, tx1, cy - half_h + 2)
-        c.create_rectangle(
-            tx0, cy - half_h - 6, tx1, cy - half_h - 1,
-            fill=TRACK, outline=TRACK_EDGE,
-        )
+        # The stroke track, stood on end beside the piston.
+        #
+        # A piston travels up and down, so a bar showing where it is should do
+        # the same: the top of the bar is the top of the stroke and the bottom
+        # is the bottom, and the marker falls as the piston falls. Laid out
+        # horizontally above the piston, as it was, it read as a progress bar
+        # and had no obvious connection to the thing it described.
+        track_h = m["paddle_h"] * 1.15
+        ty0 = cy - track_h / 2.0
+        ty1 = cy + track_h / 2.0
+        tx0 = cx + half_w + 5
+        tx1 = tx0 + 7
+        self._tracks[axis] = (tx0 - 4, ty0, tx1 + 4, ty1)
+        c.create_rectangle(tx0, ty0, tx1, ty1, fill=TRACK, outline=TRACK_EDGE)
 
         stroke = self.strokes.get(axis)
         if stroke is not None:
             a, b = sorted(stroke)
-            x0 = tx0 + (tx1 - tx0) * self._fraction(a)
-            x1 = tx0 + (tx1 - tx0) * self._fraction(b)
-            if x1 - x0 < 2:
-                x1 = x0 + 2
+            y0 = ty0 + (ty1 - ty0) * self._fraction(a)
+            y1 = ty0 + (ty1 - ty0) * self._fraction(b)
+            if y1 - y0 < 2:
+                y1 = y0 + 2
             c.create_rectangle(
-                x0, cy - half_h - 6, x1, cy - half_h - 1,
-                fill=self.colour_for(axis), outline="",
+                tx0, y0, tx1, y1, fill=self.colour_for(axis), outline=""
             )
             # Grips, so the bar visibly reads as something you can pull.
             if self.on_stroke is not None and axis in self.set_of:
-                for x in (x0, x1):
+                for y in (y0, y1):
                     c.create_rectangle(
-                        x - 2, cy - half_h - 10, x + 2, cy - half_h + 2,
-                        fill=GRIP, outline="",
+                        tx0 - 3, y - 2, tx1 + 3, y + 2, fill=GRIP, outline=""
                     )
 
         # The paddle itself.
@@ -413,12 +422,13 @@ class TankView:
             if box is None:
                 continue
             cx, cy = self._cell_centre(axis, m)
-            half_h = m["paddle_h"] / 2.0
-            track_w = m["cell_w"] * 0.80
-            tx0 = cx - track_w / 2.0
-            x = tx0 + track_w * self._fraction(position)
+            half_w = m["paddle_w"] / 2.0
+            track_h = m["paddle_h"] * 1.15
+            ty0 = cy - track_h / 2.0
+            tx0 = cx + half_w + 5
+            y = ty0 + track_h * self._fraction(position)
             c.create_line(
-                x, cy - half_h - 8, x, cy - half_h + 1,
+                tx0 - 4, y, tx0 + 11, y,
                 fill="#ffffff", width=2, tags="marker",
             )
 
@@ -437,39 +447,40 @@ class TankView:
         if self.on_stroke is None:
             return None
         for axis, (tx0, ty0, tx1, ty1) in self._tracks.items():
-            if not (ty0 <= y <= ty1 and tx0 - 8 <= x <= tx1 + 8):
+            if not (tx0 <= x <= tx1 and ty0 - 6 <= y <= ty1 + 6):
                 continue
             if axis not in self.set_of or axis not in self.strokes:
                 return None  # only a piston in a group has a stroke to set
             low, high = sorted(self.strokes[axis])
-            xlow = tx0 + (tx1 - tx0) * self._fraction(low)
-            xhigh = tx0 + (tx1 - tx0) * self._fraction(high)
-            if abs(x - xlow) <= 8:
+            ylow = ty0 + (ty1 - ty0) * self._fraction(low)
+            yhigh = ty0 + (ty1 - ty0) * self._fraction(high)
+            if abs(y - ylow) <= 7:
                 return axis, "low"
-            if abs(x - xhigh) <= 8:
+            if abs(y - yhigh) <= 7:
                 return axis, "high"
-            if xlow < x < xhigh:
+            if ylow < y < yhigh:
                 return axis, "whole"
-            return axis, "low" if x < xlow else "high"
+            return axis, "low" if y < ylow else "high"
         return None
 
-    def _position_at(self, axis: int, x: float) -> int:
-        tx0, _ty0, tx1, _ty1 = self._tracks[axis]
-        fraction = (x - tx0) / max(tx1 - tx0, 1.0)
+    def _position_at(self, axis: int, y: float) -> int:
+        """The stroke position at this height on the bar."""
+        _tx0, ty0, _tx1, ty1 = self._tracks[axis]
+        fraction = (y - ty0) / max(ty1 - ty0, 1.0)
         fraction = min(max(fraction, 0.0), 1.0)
         return int(round(POSITION_MIN + fraction * (POSITION_MAX - POSITION_MIN)))
 
     def _drag_stroke(self, event) -> None:
         axis = self._stroke_axis
-        low, high, start_x = self._stroke_origin
-        here = self._position_at(axis, event.x)
+        low, high, start_y = self._stroke_origin
+        here = self._position_at(axis, event.y)
 
         if self._stroke_grip == "low":
             low = min(here, high - 1)
         elif self._stroke_grip == "high":
             high = max(here, low + 1)
         else:
-            shift = here - self._position_at(axis, start_x)
+            shift = here - self._position_at(axis, start_y)
             span = high - low
             low = min(max(low + shift, POSITION_MIN), POSITION_MAX - span)
             high = low + span
@@ -485,7 +496,8 @@ class TankView:
         cx, cy = self._cell_centre(axis, m)
         self.canvas.delete("strokelabel")
         self.canvas.create_text(
-            cx, cy - m["paddle_h"] / 2.0 - 22,
+            cx + m["paddle_w"] / 2.0 + 18, cy - m["paddle_h"] / 2.0 - 10,
+            anchor="w",
             text="{0} - {1} mm".format(low, high),
             fill=GRIP, font=("Segoe UI", 8, "bold"), tags="strokelabel",
         )
@@ -499,8 +511,8 @@ class TankView:
             low, high = sorted(self.strokes[axis])
             self._stroke_axis = axis
             self._stroke_grip = grip
-            self._stroke_origin = (low, high, event.x)
-            self.canvas.configure(cursor="sb_h_double_arrow")
+            self._stroke_origin = (low, high, event.y)
+            self.canvas.configure(cursor="sb_v_double_arrow")
             return
         self._drag_from = (event.x, event.y)
 
@@ -563,7 +575,7 @@ class TankView:
         if self._stroke_axis is None:
             over = self._track_at(event.x, event.y)
             self.canvas.configure(
-                cursor="sb_h_double_arrow" if over is not None else ""
+                cursor="sb_v_double_arrow" if over is not None else ""
             )
         self._set_hover(self._axis_at(event.x, event.y))
 

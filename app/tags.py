@@ -23,6 +23,9 @@ PROGRAM = "Program:Wave_Control"
 
 #: Number of pistons in the machine.
 MOTOR_COUNT = 30
+#: The array is three pistons deep and ten columns across.
+ROWS_PER_COLUMN = 3
+COLUMN_COUNT = 10
 
 # --- Machine-wide command bits ------------------------------------------------
 
@@ -48,23 +51,45 @@ PROGRAM_TAG_LIST = PROGRAM
 
 
 def display_number(axis: int) -> int:
-    """The number shown on screen for this axis."""
-    return axis + 1
+    """The number shown on screen for this axis.
+
+    Pistons are named by where they sit in the picture, not by their axis, so
+    the grid reads 1 at the top left and 30 at the bottom right:
+
+        1   4   7  10  13  16  19  22  25  28
+        2   5   8  11  14  17  20  23  26  29
+        3   6   9  12  15  18  21  24  27  30
+
+    Three per column, which is the machine's own grouping -- "the first four
+    rows" of the chamber is pistons 1 to 12.
+
+    The drawing places axis ``a`` at row ``2 - a % 3`` and column
+    ``9 - a // 3``, so the name follows from that position. Piston 1 therefore
+    drives axis 29. Nothing that reaches the PLC uses these numbers.
+    """
+    return 30 - 3 * (axis // ROWS_PER_COLUMN) - (axis % ROWS_PER_COLUMN)
 
 
 def axis_from_display(number: int) -> int:
     """The axis behind a number the operator typed or read."""
-    return number - 1
+    column, row = divmod(number - 1, ROWS_PER_COLUMN)
+    return (COLUMN_COUNT - 1 - column) * ROWS_PER_COLUMN + (
+        ROWS_PER_COLUMN - 1 - row
+    )
 
 
 def display_list(axes) -> str:
-    """A readable list of piston numbers, e.g. "3, 7 and 12"."""
-    numbers = [str(display_number(a)) for a in sorted(axes)]
+    """A readable list of piston numbers, e.g. "3, 7 and 12".
+
+    Sorted by the number shown, not by axis. Since naming follows position in
+    the grid, sorting by axis would list them out of order.
+    """
+    numbers = sorted(display_number(a) for a in axes)
     if not numbers:
         return ""
     if len(numbers) == 1:
-        return numbers[0]
-    return ", ".join(numbers[:-1]) + " and " + numbers[-1]
+        return str(numbers[0])
+    return ", ".join(str(n) for n in numbers[:-1]) + " and " + str(numbers[-1])
 
 def _check_axis(axis: int) -> int:
     if not isinstance(axis, int) or isinstance(axis, bool):
