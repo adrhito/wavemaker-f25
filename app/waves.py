@@ -228,3 +228,51 @@ def column_offsets(period: float, columns: int = 10, wavelength: float = 10.0):
         fraction = (column % wavelength) / float(wavelength)
         offsets[column] = int(round(fraction * period * 100))
     return offsets
+
+
+def cascade_fractions(offsets: Dict[int, int]) -> Dict[int, float]:
+    """Turn a Curve Offset stagger into a fraction of the stroke per column.
+
+    Curve Offset expresses the operator's intent -- "make this travel front to
+    back" -- but the controller only consults it during a curve run, so in
+    continuous motion every piston starts together and the wave does not
+    travel. The intent is still there to be read, so it is converted into
+    something continuous motion *can* honour: a different starting position per
+    column.
+
+    Every piston runs the same stroke at the same speed, so once they are
+    started from different points along that stroke the phase difference
+    between them is fixed and stays fixed. That is a travelling wave.
+
+    Returned as a fraction 0..1 of the way from Position 1 to Position 2.
+    """
+    if not offsets:
+        return {}
+    spread = max(offsets.values()) - min(offsets.values())
+    if spread <= 0:
+        return {}
+    lowest = min(offsets.values())
+    return dict(
+        (column, (offset - lowest) / float(spread))
+        for column, offset in offsets.items()
+    )
+
+
+def cascade_starts(offsets: Dict[int, int], position_1: float,
+                   position_2: float) -> Dict[int, int]:
+    """Where each column should be sitting when continuous motion starts.
+
+    The span of achievable phase is one leg of the stroke, not a whole cycle:
+    every piston sets off towards Position 2 together, so the most one can lead
+    another by is the time that leg takes. Half a cycle of spread is plenty to
+    see a wave march down the chamber, and it is what the machine can actually
+    do without a per-piston start bit.
+    """
+    fractions = cascade_fractions(offsets)
+    if not fractions:
+        return {}
+    travel = position_2 - position_1
+    return dict(
+        (column, int(round(position_1 + fraction * travel)))
+        for column, fraction in fractions.items()
+    )

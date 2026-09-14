@@ -17,8 +17,10 @@ What it models
 * Homing: pistons run to the home position and report the homed bit.
 * Single stroke and continuous motion between Position 1 and Position 2, at
   Speed 1 going out and Speed 2 coming back.
-* Curve Offset as a start delay, so a staggered offset produces a visible
-  travelling wave. This is the whole point of the mock.
+* A travelling wave, produced the way the machine produces one: the pistons
+  are staggered along their stroke before the run starts and each carries on
+  from where it is. The mock does not fake this with a start delay, because
+  the controller has no such thing outside a curve run.
 * Live Motors: pistons not in a set stay put.
 * Following error: the commanded position and the actual position are published
   separately, and :meth:`SimulatedMachine.wear` makes a piston fall behind, so
@@ -51,11 +53,7 @@ HOME_SECONDS = 2.0
 #: second the display polls at, so motion looks smooth rather than stepped.
 TICK = 0.02
 
-#: Curve Offset is treated as this many milliseconds of start delay per unit.
-#: Entirely a convention of this mock -- it exists so that staggering the offset
-#: across columns visibly delays the back of the chamber. The real meaning of
-#: Curve Offset on the PLC is not known and is not claimed here.
-OFFSET_MS_PER_UNIT = 10.0
+
 
 
 class _Piston:
@@ -185,11 +183,14 @@ class SimulatedMachine(SimulatedPlc):
 
             piston.elapsed += dt
 
-            # Curve Offset delays the start, so a front-to-back stagger makes
-            # the wave arrive at the back of the chamber later.
-            delay = self._param(axis, "Curve Offset") * OFFSET_MS_PER_UNIT / 1000.0
-            if piston.elapsed < delay:
-                continue
+            # Curve Offset used to be applied here as a start delay, which
+            # made the mock show a travelling wave that the real machine could
+            # not produce: the controller only reads Curve Offset during a
+            # curve run, so in continuous motion every piston set off together.
+            # The stagger is real now -- Model._stage_cascade puts the pistons
+            # at different points along the stroke before the run -- and a
+            # piston simply carries on from wherever it is, so the wave travels
+            # here for the same reason it will travel at the machine.
             piston.started = True
 
             first = float(self._param(axis, "Position 1"))
@@ -273,6 +274,19 @@ class SimulatedMachine(SimulatedPlc):
     def snapshot(self) -> Dict[int, float]:
         """Every piston's position right now."""
         return dict((a, p.position) for a, p in self.pistons.items())
+
+    def place(self, axis: int, position: float) -> None:
+        """Put a piston at a position without moving it there.
+
+        The machine equivalent is ``Model._stage_cascade``, which walks the
+        pistons to their staggered starting points before a continuous run.
+        Here it is instantaneous, because staging is not the thing being
+        simulated -- what happens *after* it is.
+        """
+        piston = self.pistons[axis]
+        piston.demand = float(position)
+        piston.position = float(position)
+        self._publish()
 
     def wear(self, axis: int, efficiency: float) -> None:
         """Make a piston drag, for practising with the straggler warning.

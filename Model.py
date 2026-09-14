@@ -14,7 +14,7 @@ from enum import Enum
 from logging import Logger, getLogger
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
-from app import params, paths, plc as plc_module, tags
+from app import params, paths, plc as plc_module, tags, waves
 from app.plc import PlcError, Transport
 from Motor import Motor
 from modules.logging.log_utils import LOGGER_NAME
@@ -43,6 +43,13 @@ MAX_STROKE_SECONDS = 120.0
 PROBE_SPEED = 100
 #: How long the movement test waits for the piston to go somewhere.
 PROBE_SECONDS = 3.0
+#: Speed used to move pistons to their staggered starting points. Gentle: this
+#: is positioning, not part of the wave.
+STAGE_SPEED = 200
+#: How long to wait for them to get there before starting anyway.
+STAGE_SECONDS = 12.0
+#: Close enough to a staging point, in mm.
+STAGE_TOLERANCE = 5
 #: How long Run_Curve is held high for one curve run.
 CURVE_SECONDS = 5.0
 #: Gap between polls of the drives while homing.
@@ -1271,11 +1278,103 @@ class Model:
 
         else:  # continuous
             self._set_state(MachineState.RUNNING)
+            self._stage_cascade()
             self.plc.write(tags.RUN_CONTINUOUS, 1)
             LOGGER.log(15, "Continuous motion started.")
             self.bridge.status("Running continuously. Press Stop when finished.")
             if self.record_analytics:
                 self._record_positions(self.analytics_duration)
+
+    def cascade_targets(self) -> Dict[int, int]:
+        """Where each piston should start, so the wave travels front to back.
+
+        Curve Offset is how the operator says "make this travel", but the
+        controller only reads it during a curve run. In continuous motion every
+        piston sets off the instant Run_2 goes high, which is why a staggered
+        design still came out as thirty pistons slapping in unison.
+
+        The stagger is honoured here instead by starting each column from a
+        different point along its stroke. The periods are identical, so the
+        phase difference that creates is fixed and stays fixed -- a wave that
+        marches down the chamber for as long as the run lasts.
+
+        Empty when no stagger is set, which is the common case and costs
+        nothing.
+        """
+        offsets: Dict[int, int] = {}
+        for motor in self.all_motors:
+            column = motor.axis // tags.ROWS_PER_COLUMN
+            try:
+                offsets.setdefault(
+                    column, int(motor.write_params.get("Curve Offset", 0))
+                )
+            except (TypeError, ValueError):
+                continue
+
+        fractions = waves.cascade_fractions(offsets)
+        if not fractions:
+            return {}
+
+        targets: Dict[int, int] = {}
+        for motor in self.all_motors:
+            fraction = fractions.get(motor.axis // tags.ROWS_PER_COLUMN)
+            if fraction is None:
+                continue
+            try:
+                first = float(motor.write_params["Position 1"])
+                second = float(motor.write_params["Position 2"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            targets[motor.axis] = int(round(first + fraction * (second - first)))
+        return targets
+
+    def _stage_cascade(self) -> bool:
+        """Put the pistons at their starting points before continuous motion.
+
+        Returns False if there was nothing to stage or it could not be done;
+        the run goes ahead either way, because an unstaggered wave is worth
+        more than no wave.
+        """
+        targets = self.cascade_targets()
+        if not targets:
+            return False
+
+        self.bridge.status("Staggering the pistons for a travelling wave...")
+        try:
+            for axis, target in targets.items():
+                self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+                self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+                self.plc.write(params.BY_NAME["Position 2"].tag(axis), target)
+                self.plc.write(params.BY_NAME["Speed 1"].tag(axis), STAGE_SPEED)
+                self.plc.write(params.BY_NAME["Speed 2"].tag(axis), STAGE_SPEED)
+
+            self.plc.write(tags.RUN_SINGLE, 1)
+            deadline = time.time() + STAGE_SECONDS
+            try:
+                while time.time() < deadline:
+                    if self._stop_requested.is_set():
+                        return False
+                    if self._all_within(targets, STAGE_TOLERANCE):
+                        break
+                    time.sleep(STOP_POLL_INTERVAL)
+            finally:
+                self.plc.write(tags.RUN_SINGLE, 0)
+
+            # The operator's real parameters have to go back before the run,
+            # or every piston would sit on its staging point and never move.
+            for motor in self.all_motors:
+                motor.current_params = {}
+                motor.write_success = False
+                motor.write_to(self.plc)
+        except PlcError as exc:
+            LOGGER.warning("Could not stagger the pistons: %s", exc)
+            return False
+
+        spread = max(targets.values()) - min(targets.values())
+        LOGGER.log(
+            15, "Pistons staggered across %d mm for a travelling wave.", spread
+        )
+        return True
 
     def _stroke_seconds(self, floor: float = SINGLE_STROKE_SECONDS) -> float:
         """How long a full up and down actually takes at the current settings.

@@ -115,9 +115,16 @@ class TestHoming:
 
 
 class TestTravellingWave:
-    def test_a_staggered_offset_makes_the_wave_travel(self, machine, monkeypatch):
-        """The reason the mock exists: a front-to-back stagger must visibly
-        reach the back of the chamber later than the front."""
+    def test_a_staggered_start_makes_the_wave_travel(self, machine, monkeypatch):
+        """The reason the mock exists: the wave must reach the back later.
+
+        This used to be faked with a start delay keyed off Curve Offset, which
+        the controller never applies outside a curve run -- so the mock showed
+        a wave the machine could not make. The stagger is real now: the pistons
+        begin from different points along the stroke, exactly as
+        ``Model._stage_cascade`` arranges at the machine, and each simply
+        carries on from where it is.
+        """
         import app.simulator as sim_module
 
         monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
@@ -129,21 +136,23 @@ class TestTravellingWave:
             machine.write(tags.motor_field(axis, "Spd_1"), 300)
             machine.write(tags.motor_field(axis, "Spd_2"), 300)
 
-        result = patterns.build(
-            list(range(30)), "Curve Offset", patterns.STAGGER, start=0, step=20
-        )
-        for axis, value in result.values.items():
-            machine.write(tags.curve_field(axis, "CurveOffset"), value)
+        # Staged where Model._stage_cascade would put them: column 1 at the
+        # bottom of the stroke, column 10 at the top.
+        for axis in range(30):
+            column = axis // 3
+            machine.place(axis, column / 9.0 * 300.0)
 
         machine.write(tags.RUN_CONTINUOUS, 1)
-        settle(machine, 0.5)
+        settle(machine, 0.2)
 
         snap = machine.snapshot()
-        front = snap[0]    # column 1, no delay
-        back = snap[27]    # column 10, the longest delay
+        heights = [snap[column * 3] for column in range(10)]
 
-        assert front > back, "the front should be ahead of the back"
-        assert back == HOME_POSITION, "the back should not have started yet"
+        assert len(set(round(h) for h in heights)) > 5, (
+            "the columns should be spread through the stroke, not together: "
+            "{0}".format([round(h) for h in heights])
+        )
+        assert snap[27] > snap[0], "the back should be higher than the front"
 
     def test_without_a_stagger_the_array_moves_together(self, machine):
         for axis in range(30):
@@ -443,3 +452,79 @@ class TestPositionUnits:
 
         for axis in range(3):
             assert abs(machine.snapshot()[axis] - model_module.PARK_POSITION) < 10
+
+
+class TestTheTravellingWave:
+    """A stagger that the machine can actually honour."""
+
+    def test_no_stagger_means_nothing_to_stage(self, model, plc):
+        for axis in range(3):
+            model.toggle(axis, True)
+        model.create_set()
+        assert model.cascade_targets() == {}
+
+    def test_a_stagger_spreads_the_columns_along_the_stroke(self, model, plc):
+        """Each column starts from a different point, so the wave travels.
+
+        Curve Offset alone does nothing in continuous motion -- the controller
+        only reads it during a curve run -- so the intent is converted into
+        starting positions, which continuous motion can honour.
+        """
+        from app import waves
+
+        for axis in range(tags.MOTOR_COUNT):
+            model.toggle(axis, True)
+        model.create_set()
+        offsets = waves.column_offsets(1.6)
+        for motor in model.all_motors:
+            motor.set_param("Position 1", 0)
+            motor.set_param("Position 2", 350)
+            motor.set_param("Curve Offset", offsets[motor.axis // 3])
+
+        targets = model.cascade_targets()
+        assert len(targets) == tags.MOTOR_COUNT
+
+        by_column = {}
+        for axis, target in targets.items():
+            by_column[axis // 3] = target
+        ordered = [by_column[c] for c in range(10)]
+
+        # Front to back, each column further along its stroke than the last.
+        assert ordered == sorted(ordered)
+        assert ordered[0] == 0
+        assert ordered[-1] == 350
+        assert len(set(ordered)) == 10, "every column should differ"
+
+    def test_the_three_pistons_in_a_column_stay_together(self, model, plc):
+        """The wave travels along the chamber, not across it."""
+        from app import waves
+
+        for axis in range(tags.MOTOR_COUNT):
+            model.toggle(axis, True)
+        model.create_set()
+        offsets = waves.column_offsets(1.6)
+        for motor in model.all_motors:
+            motor.set_param("Position 1", 0)
+            motor.set_param("Position 2", 350)
+            motor.set_param("Curve Offset", offsets[motor.axis // 3])
+
+        targets = model.cascade_targets()
+        for column in range(10):
+            same = {targets[a] for a in range(column * 3, column * 3 + 3)}
+            assert len(same) == 1, "column {0} disagrees".format(column)
+
+    def test_the_stagger_survives_a_different_stroke(self, model, plc):
+        from app import waves
+
+        for axis in range(tags.MOTOR_COUNT):
+            model.toggle(axis, True)
+        model.create_set()
+        offsets = waves.column_offsets(1.0)
+        for motor in model.all_motors:
+            motor.set_param("Position 1", 100)
+            motor.set_param("Position 2", 300)
+            motor.set_param("Curve Offset", offsets[motor.axis // 3])
+
+        targets = model.cascade_targets()
+        assert min(targets.values()) == 100
+        assert max(targets.values()) == 300
