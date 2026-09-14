@@ -74,7 +74,7 @@ class Diagnostics:
         controls.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
         ttk.Label(controls, text="Piston", style="Dim.TLabel").grid(row=0, column=0)
-        self.axis_var = StringVar(value="15")
+        self.axis_var = StringVar(value="1")
         self.axis_box = ttk.Combobox(
             controls, textvariable=self.axis_var, state="readonly", width=4,
             values=[str(n) for n in range(1, tags.MOTOR_COUNT + 1)],
