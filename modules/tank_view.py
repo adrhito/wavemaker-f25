@@ -326,11 +326,11 @@ class TankView:
 
         baseline = m["height"] - 7
         c.create_text(
-            m["pad_x"], baseline, text="BACK of chamber", anchor="w",
+            m["pad_x"], baseline, text="FRONT - nearest you", anchor="w",
             fill=LABEL_DIM, font=("Segoe UI", 8),
         )
         c.create_text(
-            m["width"] - m["pad_x"], baseline, text="FRONT - nearest you", anchor="e",
+            m["width"] - m["pad_x"], baseline, text="BACK of chamber", anchor="e",
             fill=LABEL_DIM, font=("Segoe UI", 8),
         )
 

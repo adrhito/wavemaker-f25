@@ -36,6 +36,7 @@ from Model import (
 from modules.logging.log_utils import LOGGER_NAME
 from modules.tank_view import TankView, describe_place
 from modules.tooltip import Tooltip
+from modules.wave_preview import WavePreview
 from modules.widgets import RoundedButton, Segmented
 from operate.ParameterDialog import ParameterDialog
 from operate.PatternDialog import PatternDialog
@@ -118,6 +119,24 @@ class Operate:
         self.selection_label = ttk.Label(strip, text="", style="Value.TLabel")
         self.selection_label.grid(row=0, column=0, sticky="w")
 
+        # Selecting all thirty by hand is thirty clicks, and clearing them
+        # again is thirty more.
+        bulk = ttk.Frame(strip)
+        bulk.grid(row=0, column=3, padx=(theme.GUTTER, 0), sticky="w")
+        self.select_all_button = RoundedButton(
+            bulk, "Select All", self.select_all, size="small", width=84
+        )
+        self.select_all_button.grid(row=0, column=0)
+        self.select_none_button = RoundedButton(
+            bulk, "Clear", self.select_none, size="small", width=60
+        )
+        self.select_none_button.grid(row=0, column=1, padx=(theme.TIGHT, 0))
+        Tooltip(
+            self.select_all_button.canvas,
+            "Select every piston that is not already in another group.\n"
+            "You can also drag a box across the tank to select several at once.",
+        )
+
         # Choosing by depth: the lab picks "the first N columns from the front"
         # according to how deep the water is, which used to mean clicking each
         # piston in turn.
@@ -143,6 +162,13 @@ class Operate:
 
         self.hover_label = ttk.Label(strip, text=" ", style="Dim.TLabel")
         self.hover_label.grid(row=0, column=2, sticky="e")
+
+        # Numbers in boxes do not tell you what the water will do. This does,
+        # roughly: height from the stroke, speed from the cycle time, shape
+        # from the profile, and the lean of the crests from the stagger.
+        self.wave_preview = WavePreview(parent, height=74)
+        self.wave_preview.grid(row=2, column=0, sticky="ew",
+                               pady=(theme.TIGHT, 0))
         strip.columnconfigure(2, weight=1)
 
     def _build_controls(self, parent) -> None:
@@ -475,6 +501,29 @@ class Operate:
             self.model.reset()
             self.editing = None
 
+    def select_all(self) -> None:
+        """Every piston that is not already spoken for by another group."""
+        free = [a for a in range(tags.MOTOR_COUNT)
+                if self.model.axis_owner(a) is None
+                or self.model.axis_owner(a) is self._live_group()]
+        self.model.set_selection(free)
+        self.refresh(self.model.state)
+
+        held = tags.MOTOR_COUNT - len(free)
+        if held:
+            self._say(
+                "Selected {0} piston(s). {1} belong to another group and were "
+                "left alone.".format(len(free), held)
+            )
+        else:
+            self._say("Selected all {0} pistons.".format(len(free)))
+
+    def select_none(self) -> None:
+        """Clear the selection without having to click each piston again."""
+        self.model.set_selection([])
+        self.refresh(self.model.state)
+        self._say("Selection cleared.")
+
     def select_by_depth(self) -> None:
         """Select the first N columns, counting from the front of the chamber."""
         try:
@@ -643,6 +692,52 @@ class Operate:
     def onSelect(self) -> None:
         self.refresh(self.model.state)
 
+    def _refresh_wave_preview(self) -> None:
+        """Draw roughly what the pistons in force would do to the water."""
+        motors = self.model.all_motors
+        if not motors:
+            self.wave_preview.clear()
+            return
+
+        strokes, periods, offsets = [], [], {}
+        profile = 3
+        for motor in motors:
+            wanted = motor.write_params
+            try:
+                stroke = abs(wanted["Position 2"] - wanted["Position 1"])
+                out_speed = max(float(wanted["Speed 1"]), 1.0)
+                back_speed = max(float(wanted["Speed 2"]), 1.0)
+                dwell = (float(wanted.get("Time 1", 0))
+                         + float(wanted.get("Time 2", 0))) / 1000.0
+            except (KeyError, TypeError, ValueError):
+                continue
+            strokes.append(stroke)
+            periods.append(stroke / out_speed + stroke / back_speed + dwell)
+            profile = wanted.get("Profile", profile)
+            # Curve Offset staggers the columns; it is what makes a wave travel.
+            column = motor.axis // tags.ROWS_PER_COLUMN
+            try:
+                offsets[column] = float(wanted.get("Curve Offset", 0)) / 1000.0
+            except (TypeError, ValueError):
+                offsets[column] = 0.0
+
+        if not strokes or max(strokes) <= 0:
+            self.wave_preview.clear("These pistons have no stroke set.")
+            return
+
+        period = max(periods) if periods else 1.0
+        note = "About {0:.0f} mm and {1:.1f} s a cycle - a sketch, not a model.".format(
+            max(strokes), period
+        )
+        if len(set(round(p, 2) for p in periods)) > 1:
+            note = (
+                "Pistons have different cycle times ({0:.1f}-{1:.1f} s); they "
+                "will drift apart.".format(min(periods), max(periods))
+            )
+        self.wave_preview.show(
+            max(strokes), period, int(profile), offsets, note
+        )
+
     def _strokes(self):
         return dict(
             (m.axis, (m.write_params["Position 1"], m.write_params["Position 2"]))
@@ -702,6 +797,8 @@ class Operate:
         if self.model.unhomed_axes:
             self.tank.show_faults(self.model.unhomed_axes)
             self._offer_to_drop_unhomed()
+
+        self._refresh_wave_preview()
 
         count = len(self.model.all_motors)
         if count == 0:

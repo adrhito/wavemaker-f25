@@ -38,6 +38,11 @@ CLEAR_FAULT_SECONDS = 5.0
 SINGLE_STROKE_SECONDS = 5.0
 #: Never hold a run bit longer than this, however slow the parameters are.
 MAX_STROKE_SECONDS = 120.0
+#: Speed used by the movement test in diagnostics. Deliberately gentle: it is
+#: asking whether a piston can move at all, not how fast.
+PROBE_SPEED = 100
+#: How long the movement test waits for the piston to go somewhere.
+PROBE_SECONDS = 3.0
 #: How long Run_Curve is held high for one curve run.
 CURVE_SECONDS = 5.0
 #: Gap between polls of the drives while homing.
@@ -1038,6 +1043,95 @@ class Model:
                 summary, chr(10), names
             ),
         )
+
+    # -- diagnostics ----------------------------------------------------------
+
+    def diagnose_axis(self, axis: int, probe: bool = False):
+        """Read everything about one piston and say what is wrong with it.
+
+        Read-only unless *probe* is set. The PLC transport takes a lock per
+        operation, so this is safe to run while the machine is doing something
+        else -- which matters, because the most informative moment to ask why a
+        piston is not moving is while the others are.
+        """
+        from app import diagnostics
+
+        motor = next((m for m in self.all_motors if m.axis == axis), None)
+        if motor is None:
+            motor = Motor(axis)
+            expected_live = None
+        else:
+            expected_live = True
+
+        probe_fn = None
+        if probe:
+            probe_fn = lambda: self.probe_movement(axis)  # noqa: E731
+        return diagnostics.diagnose(
+            motor, self.plc, expected_live=expected_live, probe=probe_fn
+        )
+
+    def diagnose_all(self, axes=None):
+        """Diagnose several pistons in one pass. Never probes."""
+        wanted = list(axes) if axes is not None else list(range(tags.MOTOR_COUNT))
+        return [self.diagnose_axis(axis) for axis in wanted]
+
+    def probe_movement(self, axis: int, distance: float = 10.0) -> float:
+        """Ask one piston to move a little, and report how far it actually did.
+
+        This is the question no amount of reading can answer: a drive that is
+        enabled, unfaulted and sitting still looks identical whether it is
+        jammed or was simply never commanded. Asking it to move ten millimetres
+        separates the two.
+
+        The piston is put back where it started, and the parameters are marked
+        unwritten afterwards so the operator's own values go out again before
+        any real run.
+        """
+        motor = next((m for m in self.all_motors if m.axis == axis), Motor(axis))
+        start = motor.read_position(self.plc)
+
+        target = start + distance
+        if target > params.BY_NAME["Position 1"].maximum:
+            target = start - distance
+
+        try:
+            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), int(round(target)))
+            self.plc.write(params.BY_NAME["Position 2"].tag(axis), int(round(target)))
+            self.plc.write(params.BY_NAME["Speed 1"].tag(axis), PROBE_SPEED)
+            self.plc.write(params.BY_NAME["Speed 2"].tag(axis), PROBE_SPEED)
+
+            furthest = start
+            self.plc.write(tags.RUN_SINGLE, 1)
+            deadline = time.time() + PROBE_SECONDS
+            try:
+                while time.time() < deadline:
+                    try:
+                        where = motor.read_position(self.plc)
+                    except (PlcError, TypeError, ValueError):
+                        where = furthest
+                    if abs(where - start) > abs(furthest - start):
+                        furthest = where
+                    time.sleep(STOP_POLL_INTERVAL)
+            finally:
+                self.plc.write(tags.RUN_SINGLE, 0)
+
+            # Put it back, so a diagnosis does not leave the array uneven.
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), int(round(start)))
+            self.plc.write(params.BY_NAME["Position 2"].tag(axis), int(round(start)))
+            self.plc.write(tags.RUN_SINGLE, 1)
+            time.sleep(PROBE_SECONDS / 2.0)
+            self.plc.write(tags.RUN_SINGLE, 0)
+        finally:
+            motor.current_params = {}
+            motor.write_success = False
+
+        moved = abs(furthest - start)
+        LOGGER.info(
+            "Movement test on piston %s: asked for %.0f mm, moved %.1f mm.",
+            tags.display_number(axis), distance, moved,
+        )
+        return moved
 
     def drop_unhomed(self) -> List[int]:
         """Remove the pistons that would not home from their groups.

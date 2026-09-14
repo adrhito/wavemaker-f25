@@ -20,6 +20,7 @@ from typing import Dict, Optional
 from modules.widgets import RoundedButton
 
 from Model import MachineState, Model
+from diagnostics.Diagnostics import Diagnostics
 from feedback.Feedback import Feedback
 from operate.Operate import Operate
 from wave.WaveDesigner import WaveDesigner
@@ -60,6 +61,7 @@ class View:
         self.operate = Operate(self.tabControl, model, self)
         self.wave = WaveDesigner(self.tabControl, model, self)
         self.preset_options = PresetOptions(self.tabControl, model, self)
+        self.diagnostics = Diagnostics(self.tabControl, model)
         self.feedback = Feedback(self.tabControl, model)
         # Older names, so anything still reaching for them keeps working.
         self.control_home = self.operate

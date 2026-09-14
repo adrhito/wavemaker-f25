@@ -58,7 +58,7 @@ $files = @(
     "main.py", "Model.py", "Motor.py", "View.py", "style.py",
     "Open Wavemaker.cmd", "Mock Wavemaker (no machine).cmd"
 )
-$folders = @("app", "modules", "operate", "preset_options", "feedback", "wave", "Presets")
+$folders = @("app", "modules", "operate", "preset_options", "feedback", "wave", "diagnostics", "Presets")
 $docs    = @("check_python.py", "LAB_TEST.md", "OPERATING.md")
 
 foreach ($f in $files) {
