@@ -1170,8 +1170,22 @@ class Model:
 
     @property
     def needs_homing(self) -> bool:
-        """Whether a run would have to write parameters and home first."""
-        return self._state is not MachineState.HOMED
+        """Whether a run would actually have to home the pistons.
+
+        The state machine on its own is not enough to answer this. Editing a
+        parameter or changing the selection drops the state out of HOMED, but
+        the drives are still referenced, and :meth:`_prepare_worker` will skip
+        homing when :meth:`_already_homed` holds. Asking "home first? this
+        takes about a minute" in that case is asking about something that is
+        not going to happen, and the honest answer costs the operator a minute
+        of waiting they did not need to do.
+
+        A read failure falls back to asking, since a machine that will not
+        answer is not one to assume anything about.
+        """
+        if self._state is MachineState.HOMED:
+            return False
+        return not self._already_homed()
 
     def run(self, mode: RunMode) -> bool:
         """Do whatever is needed and then run.

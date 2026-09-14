@@ -639,3 +639,42 @@ class TestStrokeWindow:
             motor.set_param("Speed 1", 1)
             motor.set_param("Speed 2", 1)
         assert homed_model._stroke_seconds() == pytest.approx(MAX_STROKE_SECONDS)
+
+
+class TestAskingAboutHoming:
+    """Only ask to home when homing is actually going to happen."""
+
+    def test_a_homed_machine_is_not_asked(self, homed_model):
+        assert homed_model.needs_homing is False
+
+    def test_editing_a_parameter_does_not_bring_the_question_back(
+        self, homed_model, plc
+    ):
+        """The state leaves HOMED, but the drives are still referenced.
+
+        This is the case the operator kept hitting: change a speed, press
+        Start, and get asked to spend a minute homing pistons that are already
+        homed. _prepare_worker would have skipped the homing anyway, so the
+        question was about something that was never going to happen.
+        """
+        for motor in homed_model.all_motors:
+            motor.set_param("Speed 1", 300)
+        homed_model._set_state(MachineState.READY)
+
+        assert homed_model._state is not MachineState.HOMED
+        assert homed_model.needs_homing is False
+
+    def test_a_machine_that_was_never_homed_is_asked(self, model, plc):
+        for axis in (0, 1, 2):
+            model.toggle(axis, True)
+        model.create_set()
+        assert model.needs_homing is True
+
+    def test_a_drive_that_lost_its_reference_is_asked_again(
+        self, homed_model, plc
+    ):
+        """Homed earlier in the session is not enough if the drive disagrees."""
+        homed_model._set_state(MachineState.READY)
+        for axis in range(tags.MOTOR_COUNT):
+            plc.write(tags.axis_field(axis, tags.STATUS_WORD), 0)
+        assert homed_model.needs_homing is True
