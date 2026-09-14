@@ -206,10 +206,13 @@ class Segmented:
     grey circles that are easy to miss entirely.
     """
 
-    def __init__(self, parent, options, command=None, width=230, height=32):
+    def __init__(self, parent, options, command=None, width=230, height=32,
+                 value=None):
         self.options = list(options)          # [(value, label), ...]
         self.command = command
-        self.value = self.options[0][0]
+        #: Which option starts selected. Defaults to the first, but the order
+        #: the options read in is not always the one that should be selected.
+        self.value = value if value is not None else self.options[0][0]
         self._width = width
         self._height = height
         self._state = "normal"

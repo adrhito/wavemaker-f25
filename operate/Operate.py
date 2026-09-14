@@ -271,6 +271,9 @@ class Operate:
             [(RunMode.SINGLE, "One stroke"), (RunMode.CONTINUOUS, "Continuous"),
              (RunMode.CURVE, "Curve")],
             width=280,
+            # Continuous is what the array is actually used for; one stroke is
+            # the thing you do once to check a setting before committing to it.
+            value=RunMode.CONTINUOUS,
         )
         self.mode.grid(row=0, column=0, sticky="w")
 
