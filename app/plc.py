@@ -136,16 +136,35 @@ class PlcClient:
                 plc.Close()
             except Exception:  # pragma: no cover - teardown must never raise
                 pass
+            finally:
+                # Vendored Close can swallow a failed close handshake before
+                # reaching Socket.close(). Always release the local socket.
+                connection = getattr(plc, "Socket", None)
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:  # pragma: no cover
+                        pass
 
     def connect(self) -> bool:
         """Open the connection. Returns True if the PLC answered.
 
         This is the probe used at startup to decide between live and simulated
         operation, so it reports failure by returning False rather than raising.
+
+        It reads directly rather than going through :meth:`read`, because
+        :meth:`_attempt`'s retry would double the cost of the one case this
+        probe exists to detect.  A machine that is switched off or unplugged
+        answers nothing at all, so every attempt costs a full socket timeout;
+        one attempt is five seconds before the application falls back to the
+        simulation, two is ten, and there is nothing to be gained by asking a
+        second time when the first attempt never reached anything.
         """
         with self._lock:
             try:
-                self._open().Read(PROBE_TAG)
+                value = self._open().Read(PROBE_TAG)
+                if value is None:
+                    raise PlcError("Read " + PROBE_TAG + " returned no value")
             except Exception as exc:
                 LOGGER.info("No PLC at %s: %s", self.ip_address, exc)
                 self._discard()
@@ -190,6 +209,14 @@ class PlcClient:
 
     def read(self, tag: str) -> Any:
         value = self._attempt("Read " + tag, lambda plc: plc.Read(tag))
+        # Checked out here, not inside the action: a response that carries no
+        # value is what the vendored pylogix returns for a tag path the
+        # controller does not recognise. The session is fine; it is the tag
+        # that is wrong. Raising inside _attempt would make that look like a
+        # dropped session, so the transport would tear down and rebuild a
+        # perfectly good connection twice for every such read -- and
+        # _poll_positions does thirty reads at 4 Hz -- before reporting the
+        # failure double-wrapped, naming the reconnect rather than the tag.
         if value is None:
             raise PlcError("Read " + tag + " returned no value")
         return value
@@ -216,12 +243,10 @@ class PlcClient:
         Used by the homing loop, which otherwise sits silent for up to forty
         seconds while it polls the drives.
         """
-        from app import tags as tag_names
-
-        self._attempt(
-            "Keepalive",
-            lambda plc: plc.GetProgramTagList(tag_names.PROGRAM_TAG_LIST),
-        )
+        # Uploading the tag list holds the transport lock through many requests,
+        # delaying a Stop issued during homing. One ordinary read keeps the
+        # session alive without that upload, and rejects a missing response.
+        self.read(PROBE_TAG)
 
     def identity(self) -> Optional[str]:
         """A one-line description of the controller, for the log.
