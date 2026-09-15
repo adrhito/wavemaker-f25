@@ -170,7 +170,12 @@ PARAMS: List[ParamSpec] = [
     ParamSpec("Amplitude Scale", "AmplitudeScale", "curve", 0, 0, None,
               "Scales the height of the curve. " + _CURVE_HELP),
     ParamSpec("Curve Offset", "CurveOffset", "curve", 0, 0, None,
-              "Shifts the curve along the stroke. " + _CURVE_HELP),
+              "Staggers the pistons so a wave travels instead of the whole "
+              "array moving as one. A curve run reads it directly; a "
+              "continuous run cannot, so the application converts it into a "
+              "different starting position per piston, which comes to the "
+              "same thing. Set it with Pattern or the Wave tab rather than by "
+              "hand."),
 ]
 
 #: Parameter names in display and CSV order.

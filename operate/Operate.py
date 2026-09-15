@@ -105,11 +105,17 @@ class Operate:
         self.reconnect_button = RoundedButton(
             actions, "Reconnect", self.reconnect, size="small", width=92
         )
-        self.studio_button = RoundedButton(
-            actions, "Open Studio 5000", self.open_studio, size="small", width=130
+        # Not "Open Studio 5000" any more. That button only ever led to one
+        # setting -- the controller's run mode -- and could not reach it unless
+        # the processor's keyswitch happened to be in REM. The keyswitch always
+        # works, so the useful thing is to say where it is and what to set it
+        # to. See explain_connection.
+        self.help_button = RoundedButton(
+            actions, "Why won't it connect?", self.explain_connection,
+            size="small", width=150
         )
         self.reconnect_button.grid(row=0, column=0, padx=(0, theme.TIGHT))
-        self.studio_button.grid(row=0, column=1)
+        self.help_button.grid(row=0, column=1)
 
     def _build_tank(self, parent) -> None:
         card = ttk.Frame(parent, style="Card.TFrame", padding=2)
@@ -807,20 +813,28 @@ class Operate:
         self.view.set_status_text("Looking for the PLC...")
         self.model.reconnect()
 
-    def open_studio(self) -> None:
-        from app import external
+    def explain_connection(self) -> None:
+        """What to check when the application cannot reach the machine.
 
-        if not external.open_studio_5000():
-            messagebox.showerror(
-                "Studio 5000 project not found",
-                "Expected the project at:\n{0}".format(external.STUDIO_PROJECT),
-                parent=self.tab,
-            )
-            return
+        This replaced an "Open Studio 5000" button. Studio 5000 was only ever a
+        route to one setting -- the controller's run mode -- and it can only
+        change that when the processor's keyswitch is in REM. At RUN or PROG
+        the key is the only thing that decides, so the button could not have
+        fixed the very case an operator was most likely to hit. The advice
+        below covers every case and needs nothing installed.
+        """
         messagebox.showinfo(
-            "Studio 5000",
-            "Go Online, then put the controller in Rem Run.\n"
-            "Come back here and press Reconnect.",
+            "Why won't it connect?",
+            "1. The keyswitch on the front of the controller -- the 1756-L82E, "
+            "the leftmost module in the rack -- must be at RUN or REM. At PROG "
+            "the ladder is not scanning and nothing this application sends "
+            "will move a piston.\n\n"
+            "2. The Ethernet cable must be in, and this PC on the same network "
+            "as 192.168.1.1.\n\n"
+            "3. Press Reconnect once you have checked both.\n\n"
+            "A connection that succeeds but moves nothing is almost always the "
+            "keyswitch. Tags can be read and written in any mode, so the "
+            "machine answers normally; only a scanning ladder acts on them.",
             parent=self.tab,
         )
 
@@ -945,7 +959,7 @@ class Operate:
             and getattr(self.model, "_connection_attempted", True)
             and not deliberate
         )
-        for button in (self.reconnect_button, self.studio_button):
+        for button in (self.reconnect_button, self.help_button):
             if offline and not busy:
                 button.canvas.grid()
             else:

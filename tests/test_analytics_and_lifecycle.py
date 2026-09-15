@@ -46,20 +46,20 @@ class TestAnalytics:
         homed_model.start(RunMode.CONTINUOUS)
         assert not paths.analytics_file().exists()
 
-    def test_a_missing_database_does_not_stop_a_run(self, homed_model, monkeypatch):
-        """MongoDB is optional; a run must finish without it."""
+    def test_a_run_records_to_the_analytics_file(self, homed_model):
+        """The file is the whole of analytics now.
+
+        This used to assert that a MongoDB failure could not escape a run. The
+        database copy has been removed: the package it needed was never shipped
+        to the machine that runs this, and the lab PC has no database server,
+        so it could not have worked there. What matters is that the text file
+        anyone actually reads is written.
+        """
         homed_model.record_analytics = True
         homed_model.analytics_duration = 0.02
         homed_model.analytics_interval = 0.01
-        monkeypatch.setattr(
-            homed_model, "_save_to_database", lambda _s: (_ for _ in ()).throw(
-                RuntimeError("no mongo")
-            )
-        )
-        try:
-            homed_model.start(RunMode.CONTINUOUS)
-        except RuntimeError:
-            raise AssertionError("a database failure must not escape the run")
+        homed_model.start(RunMode.CONTINUOUS)
+        assert paths.analytics_file().exists()
 
 
 class TestLifecycle:

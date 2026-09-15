@@ -95,14 +95,6 @@ def main():
 
     print("")
 
-    # pymongo is optional; say so rather than reporting a failure.
-    try:
-        import pymongo  # noqa: F401
-    except ImportError:
-        print("NOTE  pymongo is not installed. That is fine -- analytics are")
-        print("      written to analytics\\<date>.txt either way.")
-    else:
-        print("OK    pymongo present; analytics will also go to MongoDB.")
 
     # The presets must be readable.
     try:

@@ -20,8 +20,12 @@ MIXED = "--"
 
 #: Grouped so the panel reads as three short lists, in the order they matter.
 GROUPS = (
-    ("Motion", ["Position 1", "Position 2", "Speed 1", "Speed 2",
-                "Move Type", "Profile"]),
+    # Move Type is deliberately absent. The application forces it to 0
+    # (Absolute) in staging, in the single stroke and in the resting move, so
+    # an operator who set Incremental here would have it silently overridden on
+    # every path but one -- and on that one it would be wrong anyway, because
+    # Position 1 and Position 2 are absolute targets, not distances.
+    ("Motion", ["Position 1", "Position 2", "Speed 1", "Speed 2", "Profile"]),
     ("Ramp", ["Accel 1", "Accel 2", "Decel 1", "Decel 2", "Jerk 1", "Jerk 2"]),
     ("Timing and curve", ["Time 1", "Time 2", "Curve ID", "Time Scale",
                           "Amplitude Scale", "Curve Offset"]),

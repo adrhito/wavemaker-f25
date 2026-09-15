@@ -63,9 +63,6 @@ class View:
         self.preset_options = PresetOptions(self.tabControl, model, self)
         self.diagnostics = Diagnostics(self.tabControl, model)
         self.feedback = Feedback(self.tabControl, model)
-        # Older names, so anything still reaching for them keeps working.
-        self.control_home = self.operate
-        self.define_motors = self.operate
 
         self._build_status_bar()
 

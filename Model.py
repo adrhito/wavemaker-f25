@@ -32,10 +32,11 @@ LOGGER: Logger = getLogger(LOGGER_NAME)
 BOOT_PULSE_SECONDS = 5.0
 #: How long Clear_Motor_Error is held high to clear motion faults.
 CLEAR_FAULT_SECONDS = 5.0
-#: How long Run_1 is held high for one stroke, unless the configured motion
-#: needs longer -- see :meth:`Model._stroke_seconds`. One stroke is a full up
-#: and down, so a slow or long stroke takes more than this and used to be cut
-#: off half-way when the bit was dropped on a fixed five-second timer.
+#: Floor for how long a run bit is held, unless the configured motion needs
+#: longer -- see :meth:`Model._stroke_seconds`. One stroke no longer uses it:
+#: Run_1 is a move to Position 1, so a stroke is built from two of them and
+#: timed by :meth:`Model._leg_seconds` instead. This is left serving the curve
+#: path, which holds a bit and waits.
 SINGLE_STROKE_SECONDS = 5.0
 #: Never hold a run bit longer than this, however slow the parameters are.
 MAX_STROKE_SECONDS = 120.0
@@ -2054,9 +2055,12 @@ class Model:
                 "Nothing moved",
                 "{0}{1}{1}The command reached the controller, so this is not a "
                 "connection problem. Likely causes:{1}{1}"
-                "  - for a curve: no curve is loaded on the controller for the "
-                "Curve ID you set, so there is nothing to run{1}"
-                "  - the controller is not in Run{1}"
+                "  - the keyswitch on the front of the controller is at "
+                "PROG, so the ladder is not scanning. Tags can still be "
+                "read and written in that mode, which is why this looked "
+                "like it connected. Turn it to RUN.{1}"
+                "  - for a curve: no curve is loaded on the controller "
+                "for the Curve ID you set, so there is nothing to run{1}"
                 "  - the stroke is set so small there is nothing to see"
                 .format(message, chr(10)),
             )
@@ -2405,19 +2409,7 @@ class Model:
                 elapsed += interval
 
         self.bridge.progress(1.0, "Recording analytics")
-        self._save_to_database(samples)
         self.bridge.progress_done(str(target))
-
-    def _save_to_database(self, samples: Dict) -> None:
-        """Best-effort copy of the run into MongoDB. Never blocks a run."""
-        try:
-            from database.database import update_database
-
-            update_database(
-                time.asctime(), self.analytics_interval, self.analytics_duration, samples
-            )
-        except Exception as exc:  # pragma: no cover - optional dependency
-            LOGGER.info("Analytics not saved to the database: %s", exc)
 
     # -- live monitoring ------------------------------------------------------
 
