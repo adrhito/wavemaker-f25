@@ -24,6 +24,15 @@ thread; `app/` holds paths, tags, transport, parameters, patterns and the mock.
    `python main.py` without `--mock`.
 2. Never run two live tools at once, and never let a subagent near the PLC.
    Fan agents out over the simulator; drive the real array yourself, serially.
+   **The application does not detect that another session already owns the
+   controller.** Two instances will happily drive it at the same time, writing
+   over each other's parameters, and neither says a word. A 15-minute soak was
+   silently ruined this way: another instance homed 12 pistons and started its
+   own continuous run half-way through, and the only sign was a recorded stroke
+   of 369.7 mm against a commanded 350. Before any live run, check
+   `logs/<date>.log` for a second "Connected to PLC" and confirm with the
+   operator that nothing else is open. Re-read the held Position 1/Position 2
+   afterwards and throw the run away if they changed.
 3. Every live tool must drop `Run_1`, `Run_2`, `Run_Curve` and `Home_Button` in
    a `finally`, including on Ctrl-C.
 4. Gate before starting: refuse if a run bit is already high (something else is

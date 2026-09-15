@@ -99,9 +99,15 @@ class Motor:
         self.axis: int = axis
         self.motor_id: int = axis + 1
 
-        # Physical layout: three rows of ten.
-        self.row: int = axis % 3 + 1
-        self.column: int = axis // 3 + 1
+        # Physical layout: three rows of ten, counted the way the tank is
+        # drawn and the way the operator numbers the pistons -- piston 1 is
+        # row 1, column 1, at the front-left. Derived from the raw axis these
+        # came out mirrored on both counts, so Motor(29), which IS piston 1,
+        # described itself as row 3, column 10.
+        column, row = divmod(tags.display_number(axis) - 1,
+                             tags.ROWS_PER_COLUMN)
+        self.row: int = row + 1
+        self.column: int = column + 1
 
         #: What the operator has asked for.
         self.write_params: Dict[str, int] = params.defaults()

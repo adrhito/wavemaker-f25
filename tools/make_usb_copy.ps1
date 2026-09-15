@@ -50,8 +50,18 @@ if (-not (Test-Path (Join-Path $root "main.py"))) {
 }
 
 $dest = Join-Path ([Environment]::GetFolderPath('Desktop')) "WaveMaker_F25_new"
-if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-New-Item -ItemType Directory -Path $dest | Out-Null
+
+# Clear out stale code, but never the directories the application writes into.
+# This used to delete the whole folder and start again, which threw away the
+# logs and analytics from every trial that had been run out of it -- the exact
+# thing $KeepDirs exists to protect on a -To sync, and no less irreplaceable
+# for sitting on the Desktop instead of a USB stick.
+if (Test-Path $dest) {
+    Get-ChildItem $dest -Force | Where-Object { $_.Name -notin $KeepDirs } |
+        Remove-Item -Recurse -Force
+} else {
+    New-Item -ItemType Directory -Path $dest | Out-Null
+}
 
 # --- only what the application needs in order to run ------------------------
 $files = @(

@@ -159,20 +159,23 @@ class Diagnostics:
             return
         self._start([axis], probe)
 
+    #: Axis order is the reverse of display order, so a report iterated by
+    #: axis came out piston 30 first and piston 1 last -- the opposite of the
+    #: tank the operator is looking at while reading it.
+    @staticmethod
+    def _in_display_order(axes):
+        return sorted(axes, key=tags.display_number)
+
     def diagnose_all(self) -> None:
-        self._start(list(range(tags.MOTOR_COUNT)), False)
+        self._start(self._in_display_order(range(tags.MOTOR_COUNT)), False)
 
     def diagnose_faulty(self) -> None:
         """Only the pistons the machine is already unhappy about."""
-        suspect = sorted(
-            set(self.model.unhomed_axes)
-            | set(self.model.lagging_axes)
-            | set(self.model.unreadable_axes)
-        )
+        suspect = set(self.model.unhomed_axes)             | set(self.model.lagging_axes)             | set(self.model.unreadable_axes)
         if not suspect:
-            self._start(list(range(tags.MOTOR_COUNT)), False)
+            self._start(self._in_display_order(range(tags.MOTOR_COUNT)), False)
             return
-        self._start(suspect, False)
+        self._start(self._in_display_order(suspect), False)
 
     def _confirm_probe(self, axis: int) -> bool:
         return messagebox.askyesno(

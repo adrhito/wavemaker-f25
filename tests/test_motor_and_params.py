@@ -74,11 +74,19 @@ class TestValidation:
 
 class TestMotor:
     def test_layout_matches_the_physical_array(self):
-        """Three rows of ten; row = axis % 3 + 1, column = axis // 3 + 1."""
+        """Three rows of ten, counted as the tank is drawn.
+
+        Not from the raw axis: piston 1 is axis 29 and sits at the front-left,
+        so it is row 1, column 1. Deriving these from the axis mirrored both.
+        """
+        from app import tags
+
         for axis in range(30):
             motor = Motor(axis)
-            assert motor.row == axis % 3 + 1
-            assert motor.column == axis // 3 + 1
+            column, row = divmod(tags.display_number(axis) - 1, 3)
+            assert (motor.row, motor.column) == (row + 1, column + 1)
+        assert (Motor(29).row, Motor(29).column) == (1, 1)   # piston 1
+        assert (Motor(0).row, Motor(0).column) == (3, 10)    # piston 30
 
     def test_only_changed_parameters_are_rewritten(self, plc):
         """A full write is 18 round trips per piston; resending unchanged

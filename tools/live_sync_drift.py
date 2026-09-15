@@ -312,6 +312,31 @@ def main(argv=None) -> int:
 
         record["samples"] = samples
         record["after"] = read_health(client, axes)
+
+        # Nothing in the application stops a second session driving the same
+        # controller, and a 15-minute soak here was silently ruined by one:
+        # another instance homed 12 pistons and started its own continuous run
+        # half-way through, so the recorded stroke was not the stroke this run
+        # asked for. Re-read what the drives are holding and refuse to report
+        # drift from data somebody else was writing to.
+        held_now = {}
+        for axis in axes:
+            held_now[axis] = (
+                client.read(params.BY_NAME["Position 1"].tag(axis)),
+                client.read(params.BY_NAME["Position 2"].tag(axis)),
+            )
+        record["held_after"] = {tags.display_number(a): v
+                                for a, v in held_now.items()}
+        meddled = {
+            tags.display_number(a): held_now[a] for a in axes
+            if (int(held_now[a][0]) != int(preset.values_for(a)["Position 1"])
+                or int(held_now[a][1]) != int(preset.values_for(a)["Position 2"]))
+        }
+        if meddled:
+            record["contaminated"] = meddled
+            print("\n!! This run is NOT trustworthy. The drives are no longer "
+                  "holding the stroke this run wrote, so something else was "
+                  "driving the machine: {0}".format(meddled), flush=True)
         result = analyse(samples, axes)
         record["analysis"] = result
         record["findings"] = judge(result, float(stroke))

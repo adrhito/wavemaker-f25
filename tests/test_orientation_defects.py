@@ -5,9 +5,10 @@ top left of the picture as piston 1, and the drawing in ``modules/tank_view.py``
 labels the left-hand side "FRONT - nearest you". Front-to-back therefore runs
 *display* column 1 -> 10, i.e. axes 27..29 first and axes 0..2 last.
 
-Each test below asserts the behaviour that convention requires, and is marked
-xfail because the code still does the opposite. They are evidence, not fixes --
-remove the marker when the corresponding defect is repaired.
+Each test below asserts the behaviour that convention requires. They began as
+strict xfails documenting places that disagreed with it; every one of those
+defects has since been repaired, so they now stand as the regression tests that
+stop the old, mirrored arithmetic coming back.
 """
 
 from __future__ import annotations
@@ -148,11 +149,6 @@ def test_tapered_preset_is_largest_at_the_back():
 # --- the last raw axis arithmetic left in the layout -------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Motor.py:103-104 derives row and column from the raw axis, so the "
-           "repr is mirrored against the picture",
-)
 def test_motor_row_and_column_match_where_the_piston_is_drawn():
     for axis in range(30):
         column, row = divmod(tags.display_number(axis) - 1,
@@ -208,11 +204,6 @@ def test_an_active_quick_stop_is_reported():
     assert drive_status.problems(0, held)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="diagnostics/Diagnostics.py:163 and 173 iterate axes, so the report "
-           "comes out piston 30 first and piston 1 last",
-)
 def test_diagnose_all_reports_in_display_order():
     from diagnostics.Diagnostics import Diagnostics
 

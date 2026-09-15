@@ -230,6 +230,27 @@ def column_offsets(period: float, columns: int = 10, wavelength: float = 10.0):
     return offsets
 
 
+def row_offsets(period: float, rows: int = 3):
+    """Curve Offset per row, so the rows move out of step with each other.
+
+    The column version above makes a wave travel along the chamber. This does
+    the same thing across the three rows of a column instead, so that at any
+    moment one row is near the top of its stroke, one near the middle and one
+    near the bottom -- every piston running the same stroke at the same speed,
+    only started at a different point in the cycle.
+
+    The rows are spread evenly around one full cycle, which is what a curve run
+    honours. Continuous motion cannot span a whole cycle -- every piston sets
+    off towards Position 2 together, so the most one can lead another by is a
+    single leg -- and :func:`cascade_fractions` rescales to that leg, which for
+    three rows puts them at the bottom, the middle and the top.
+    """
+    return dict(
+        (row, int(round((row / float(rows)) * period * 100)))
+        for row in range(rows)
+    )
+
+
 def cascade_fractions(offsets: Dict[int, int]) -> Dict[int, float]:
     """Turn a Curve Offset stagger into a fraction of the stroke per column.
 
