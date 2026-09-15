@@ -98,6 +98,40 @@ axis_from_display(n) = (9 - (n-1)//3) * 3 + (2 - (n-1)%3)
 - Always show the operator `tags.display_number` / `tags.display_list`, never a
   raw axis.
 
+## Making the array move as a pattern
+
+Three modes, on the Wave tab under MOVES, and all three are also reachable from
+Operate -> Pattern:
+
+| Mode | What differs | How to run it |
+|---|---|---|
+| All together | nothing | Start |
+| Travelling front to back | each **column** delayed | **Start Curve** |
+| Rows out of step | each **row** delayed | Start |
+
+The thing to understand is where the delay lives, because it decides which
+button runs it:
+
+- **Curve Offset is per-leg timing, and only the controller's curve feature
+  reads it.** During an ordinary continuous run the controller ignores it
+  completely, which is why a staggered design used to come out as thirty
+  pistons slapping in unison.
+- So for continuous motion the intent is converted into **a different starting
+  position per piston** -- `waves.cascade_starts`, applied by
+  `Model.cascade_targets` and staged by `Model._stage_cascade`. Every piston
+  runs the identical stroke at the identical speed; started from different
+  points, the phase difference between them is fixed and stays fixed.
+- The achievable spread is **one leg of the stroke, not a whole cycle**, because
+  every piston sets off towards Position 2 the instant Run_2 goes high. For
+  three rows that is plenty: bottom, middle and top.
+- A row cascade therefore must **not** set Curve ID -- doing so sends the
+  operator to Start Curve for something Start handles.
+
+Curve Offset is an integer in hundredths of a second, so a third of a cycle
+rarely divides exactly (a 0.5 s period gives 0, 17, 33 and 17/33 is 0.515). The
+staging normalises to the leg anyway, so the ends are exact and the middle row
+lands within a couple of millimetres.
+
 ## Positions and units
 
 Positions are **written in millimetres** (0..370) but **read back in drive
@@ -111,33 +145,42 @@ envelope is -57..453 mm with home at 390 mm. Speeds are 0..900 mm/s.
 ## Known machine behaviour: the pistons drift apart
 
 Measured with `tools/live_sync_drift.py` on `BIGGER WAVE.csv` (pistons 1-9,
-350 mm stroke, 500 mm/s, Curve Offset 0, so they are commanded to move as one):
+350 mm stroke, 500 mm/s, Curve Offset 0, so they are commanded to move as one),
+over a clean 900 s run of 234 cycles with the machine to itself:
 
-- Every piston travels the full stroke correctly (349.7-349.8 mm of 350).
-- They start with **fixed phase offsets** of up to ~83 ms, about 2% of the
-  3.834 s cycle. That alone is not drift.
-- On top of that they **separate**, measured over 62 cycles: the worst lag moved
-  56 ms in 238 s, and the fastest axis drifts at roughly **860 ms/hour**. The
-  array goes a tenth of a cycle out after about **half an hour** of continuous
-  running.
+- Every piston travels the full stroke correctly, 349.76-349.83 mm of 350.
+- They sit at **fixed phase offsets** of up to ~64 ms, about 1.7% of the
+  3.834 s cycle. That alone is not drift and does not grow.
+- On top of that they **separate slowly**. Worst honest case is piston 2 at
+  **435 ms/hour**; most are under 200 ms/hour and two drift backwards. The
+  array goes a tenth of a cycle out after roughly **an hour**.
+- **Piston 1 is the outlier and the real problem.** Its cycle is 3.8181 s
+  against 3.834 s for every other piston -- 16 ms faster, every cycle -- so it
+  laps the array about once every four minutes. In a 900 s run it had gone more
+  than a full cycle, which is why it cannot be given a drift figure at all.
 
-Two traps when measuring this, both of which caught a first attempt here:
+Three traps when measuring this, all of which caught an attempt here:
 
 - **Position spread is not drift.** It oscillates through every cycle by
   construction: pistons a hair out of phase are furthest apart at mid-stroke,
   where they move fastest, and together at both ends. Spread ranged 0.1 to
-  59.6 mm within a single steady run.
-- **Cycle time inferred from reversals is noisy.** A 45 s run put the spread
-  across the array at 15 ms; 240 s put it at 2.6 ms. A prediction built on the
-  short run was wrong by a factor of six.
+  74.2 mm within one steady run.
+- **Cycle time inferred from reversals is noisy.** 45 s put the spread across
+  the array at 15 ms; 240 s put it at 2.6 ms. A prediction built on the short
+  run was wrong by a factor of six.
+- **Phase lag paired by reversal index silently breaks** once two pistons are
+  more than half a cycle apart -- the k-th reversal of one stops being the
+  partner of the k-th of the other. `analyse_sync_drift.py` now prints LAPPED
+  instead of a number when that happens.
 
-Measure phase lag against a reference piston directly, early versus late, with
+Measure phase lag against a reference piston, early versus late, with
 `tools/analyse_sync_drift.py` -- it re-analyses a saved run, so it costs no
 machine time.
 
 This is inherent to free-running independent axes, not a software fault, but it
 is the answer to "why does the wave fall apart on a long run". Any fix has to
-re-phase the axes periodically rather than trust them to stay together.
+re-phase the axes periodically rather than trust them to stay together, and
+piston 1 wants looking at mechanically before anything else.
 
 ## Tools
 

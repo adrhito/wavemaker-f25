@@ -304,6 +304,17 @@ def main(argv=None) -> int:
                             "positions": read_positions(client, axes)})
             time.sleep(MIN_SAMPLE_GAP)
 
+        # Read what the drives hold BEFORE stopping. The resting move writes
+        # Position 1 = Position 2 = PARK_POSITION to every piston to bring it
+        # to rest, so a check made after the stop sees the parking values and
+        # reports this tool's own tidying up as somebody else meddling.
+        held_now = {}
+        for axis in axes:
+            held_now[axis] = (
+                client.read(params.BY_NAME["Position 1"].tag(axis)),
+                client.read(params.BY_NAME["Position 2"].tag(axis)),
+            )
+
         print("Stopping...", flush=True)
         model.stop()
         deadline = time.time() + 45.0
@@ -319,12 +330,6 @@ def main(argv=None) -> int:
         # half-way through, so the recorded stroke was not the stroke this run
         # asked for. Re-read what the drives are holding and refuse to report
         # drift from data somebody else was writing to.
-        held_now = {}
-        for axis in axes:
-            held_now[axis] = (
-                client.read(params.BY_NAME["Position 1"].tag(axis)),
-                client.read(params.BY_NAME["Position 2"].tag(axis)),
-            )
         record["held_after"] = {tags.display_number(a): v
                                 for a, v in held_now.items()}
         meddled = {

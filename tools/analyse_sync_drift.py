@@ -116,6 +116,9 @@ def main(argv=None) -> int:
         def name(axis):
             return axis
 
+    # A rough cycle up front, so a slipped pairing can be spotted as it prints.
+    cycle_hint = (ref_marks[-1] - ref_marks[0]) / ((usable - 1) / 2.0)
+
     print("Phase lag against piston {0}, in milliseconds:".format(name(reference)))
     print("  {0:>7} {1:>10} {2:>10} {3:>10} {4:>12}".format(
         "piston", "first", "last", "change", "drift/hour"))
@@ -128,10 +131,18 @@ def main(argv=None) -> int:
         late = statistics.fmean(lags[-max(len(lags) // 5, 1):]) * 1000.0
         slope = fit_slope(ref_marks, lags) * 1000.0      # ms per second
         per_hour = slope * 3600.0
-        rows.append((axis, early, late, late - early, per_hour))
-        worst = max(worst, abs(late - early))
-        print("  {0:>7} {1:>9.1f} {2:>9.1f} {3:>9.1f} {4:>11.0f}".format(
-            name(axis), early, late, late - early, per_hour))
+        # Pairing reversals by index only means anything while the two
+        # pistons are within half a cycle of each other. Past that the k-th
+        # reversal of one is no longer the partner of the k-th of the other,
+        # the pairing slips, and the number printed becomes arithmetic rather
+        # than measurement. Say so instead of quoting it.
+        slipped = max(abs(early), abs(late)) > (cycle_hint * 1000.0) / 2.0
+        rows.append((axis, early, late, late - early, per_hour, slipped))
+        if not slipped:
+            worst = max(worst, abs(late - early))
+        print("  {0:>7} {1:>9.1f} {2:>9.1f} {3:>9.1f} {4:>11.0f}{5}".format(
+            name(axis), early, late, late - early, per_hour,
+            "   LAPPED" if slipped else ""))
 
     cycle = statistics.fmean(
         [(marks[a][-1] - marks[a][0]) / ((usable - 1) / 2.0) for a in axes])
@@ -141,7 +152,14 @@ def main(argv=None) -> int:
 
     # A tenth of a cycle apart is where a wave visibly stops being one wave.
     budget = cycle * 1000.0 * 0.1
-    fastest = max(rows, key=lambda r: abs(r[4]))
+    honest = [r for r in rows if not r[5]] or rows
+    fastest = max(honest, key=lambda r: abs(r[4]))
+    lapped = [name(r[0]) for r in rows if r[5]]
+    if lapped:
+        print("\nPiston(s) {0} are more than half a cycle from the reference, "
+              "so their reversals no longer pair up and the figures above are "
+              "not a measurement for them. That they lapped the array at all "
+              "is the finding.".format(lapped))
     if worst < budget * 0.1:
         print("\nVERDICT: the pistons hold their phase. The largest lag moved "
               "{0:.1f} ms over the whole run, against a {1:.0f} ms cycle -- "
