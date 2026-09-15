@@ -53,6 +53,19 @@ HOME_SECONDS = 2.0
 #: second the display polls at, so motion looks smooth rather than stepped.
 TICK = 0.02
 
+#: How much of its acceleration each motion profile is allowed to use at the
+#: very start and end of a leg. Trapezoidal slams straight to full
+#: acceleration; the smoother profiles ease into it, which is the whole reason
+#: an operator picks one. Values are a shaping factor, not a vendor curve --
+#: the mock moves rectangles and does not pretend to reproduce the drive's
+#: internal interpolation.
+PROFILE_SMOOTHING = {
+    0: 0.0,    # Trapezoidal: no easing
+    1: 0.6,    # Bestehorn
+    2: 0.8,    # S-Curve
+    3: 1.0,    # Sine: fully eased
+}
+
 
 
 
@@ -76,11 +89,22 @@ class _Piston:
         #: True while travelling towards Position 2, False on the way back.
         self.outbound = True
         self.started = False
+        #: How fast the command is moving, mm/s. Modelled rather than assumed,
+        #: so Accel, Decel, Jerk and Profile do something visible.
+        self.velocity = 0.0
+        #: Current acceleration, mm/s^2. Kept between ticks because Jerk limits
+        #: how fast it is allowed to change.
+        self.accel = 0.0
+        #: Seconds left of the dwell at the end of a leg, from Time 1/Time 2.
+        self.dwell_left = 0.0
 
     def reset_cycle(self) -> None:
         self.elapsed = 0.0
         self.outbound = True
         self.started = False
+        self.velocity = 0.0
+        self.accel = 0.0
+        self.dwell_left = 0.0
 
 
 class SimulatedMachine(SimulatedPlc):
@@ -201,19 +225,107 @@ class SimulatedMachine(SimulatedPlc):
             target = second if piston.outbound else first
             speed = out_speed if piston.outbound else back_speed
 
-            # The command moves at the requested speed and always arrives.
-            step = speed * dt
-            if abs(target - piston.demand) <= step:
+            # A dwell at the end of a leg, from Time 1 and Time 2. These are
+            # milliseconds on the drive and were ignored here entirely, so a
+            # preset built around a pause looked identical to one without.
+            if piston.dwell_left > 0.0:
+                piston.dwell_left = max(0.0, piston.dwell_left - dt)
+                self._follow(piston, speed, dt)
+                continue
+
+            arrived = self._advance(piston, axis, target, speed, dt)
+            if arrived:
                 piston.demand = target
+                piston.velocity = 0.0
+                piston.accel = 0.0
+                dwell_ms = float(self._param(
+                    axis, "Time 2" if piston.outbound else "Time 1"))
+                piston.dwell_left = max(dwell_ms, 0.0) / 1000.0
                 if one_stroke and not piston.outbound:
                     self._follow(piston, speed, dt)
                     continue  # a single stroke ends back at Position 1
                 piston.outbound = not piston.outbound
-            else:
-                piston.demand += step if target > piston.demand else -step
 
             # The piston follows it, and a worn one cannot quite keep up.
-            self._follow(piston, speed, dt)
+            self._follow(piston, max(abs(piston.velocity), speed), dt)
+
+    def _limit(self, axis: int, name: str) -> float:
+        """A motion limit, falling back to the parameter's own default.
+
+        The tag store starts every tag at zero, so a caller that never wrote an
+        Accel would otherwise be simulated as a piston that can accelerate at
+        zero and therefore never moves. An unwritten tag here means "nobody
+        said", not "the drive was told nought".
+        """
+        value = float(self._param(axis, name))
+        if value > 0:
+            return value
+        spec = params.BY_NAME.get(name)
+        return float(spec.default) if spec and spec.default else 1.0
+
+    def _advance(self, piston, axis: int, target: float, speed: float,
+                 dt: float) -> bool:
+        """Move the command towards ``target``, honouring the motion limits.
+
+        Previously the command simply stepped at the requested speed and always
+        arrived, which made Accel, Decel, Jerk and Profile do nothing at all --
+        fourteen of the eighteen parameters were ignored here, so "Ripples" and
+        "Storm" looked the same in the mock however different they are at the
+        machine.
+
+        This is a trapezoid with a jerk limit: accelerate up to Speed, run at
+        it, then brake in time to stop on the target, with Jerk capping how
+        fast the acceleration itself may change and Profile deciding how much
+        the ends are eased. It moves rectangles, not water, and it is not the
+        drive's own interpolator -- but the shape of the motion now follows the
+        parameters instead of ignoring them.
+
+        Returns True once the command has reached the target.
+        """
+        gap = target - piston.demand
+        distance = abs(gap)
+        if distance < 1e-6 and abs(piston.velocity) < 1e-6:
+            return True
+
+        direction = 1.0 if gap > 0 else -1.0
+        accel_limit = self._limit(axis, "Accel 1" if piston.outbound else "Accel 2")
+        decel_limit = self._limit(axis, "Decel 1" if piston.outbound else "Decel 2")
+        jerk_limit = self._limit(axis, "Jerk 1" if piston.outbound else "Jerk 2")
+        profile = int(self._param(axis, "Profile"))
+        smoothing = PROFILE_SMOOTHING.get(profile, 0.6)
+
+        speed_now = abs(piston.velocity)
+        # How far it needs to brake from here. Stop accelerating before that.
+        braking = (speed_now * speed_now) / (2.0 * decel_limit)
+        wanted = -decel_limit if distance <= braking else (
+            accel_limit if speed_now < speed else 0.0)
+
+        # How long the acceleration takes to come up to its limit. Profile
+        # decides most of it -- easing the ends is the reason to choose one --
+        # and Jerk shortens or lengthens that easing.
+        #
+        # Jerk is NOT applied as mm/s^3 here. Taken literally, a Jerk of 7500
+        # would need 2.7 s to reach an Accel of 20000, and the real array does
+        # a 350 mm leg in under two seconds with those very numbers, so the
+        # drive's units plainly are not those. They are not established
+        # anywhere in this repository, so rather than invent them Jerk is used
+        # as a relative control: higher jerk, crisper ramp.
+        ease = smoothing * 0.15 * max(0.25, min(4.0, 5000.0 / jerk_limit))
+        if ease <= 0.0:
+            piston.accel = wanted
+        else:
+            max_change = (accel_limit / ease) * dt
+            change = max(-max_change, min(max_change, wanted - piston.accel))
+            piston.accel += change
+
+        speed_now = max(0.0, min(speed_now + piston.accel * dt, speed))
+        piston.velocity = speed_now * direction
+
+        step = speed_now * dt
+        if step >= distance:
+            return True
+        piston.demand += direction * step
+        return False
 
     @staticmethod
     def _follow(piston, speed: float, dt: float) -> None:

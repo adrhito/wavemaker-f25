@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from logging import Logger, getLogger
-from tkinter import DoubleVar, StringVar, messagebox, ttk
+from tkinter import BooleanVar, DoubleVar, StringVar, messagebox, ttk
 from typing import Dict, List, Optional
 
 from app import params, tags
@@ -291,6 +291,22 @@ class Operate:
                 "Run a second group of pistons with different parameters\n"
                 "at the same time.")
 
+        # Recording was built, tested and then left unreachable: nothing in
+        # the interface ever set Model.record_analytics, so the position
+        # sampling, the analytics file and the progress reporting could not
+        # be switched on at all. This is the switch.
+        self.record_var = BooleanVar(value=bool(self.model.record_analytics))
+        self.record_box = ttk.Checkbutton(
+            more, text="Record positions", variable=self.record_var,
+            command=self._on_record_changed, style="Card.TCheckbutton",
+        )
+        self.record_box.grid(row=1, column=0, columnspan=3, sticky="e",
+                             pady=(theme.TIGHT, 0))
+        Tooltip(self.record_box,
+                "Sample every selected piston while it runs and "
+                "write the positions to analytics/<date>.txt, for "
+                "working out afterwards what the array actually did.")
+
         self.problem_label = ttk.Label(card, text="", style="CardDim.TLabel",
                                        wraplength=900, justify="left")
         self.problem_label.grid(row=1, column=0, columnspan=4, sticky="w",
@@ -496,6 +512,13 @@ class Operate:
             self._sync_sliders()
         self._show_problems()
         self.tank.show_strokes(self._strokes())
+
+    def _on_record_changed(self) -> None:
+        self.model.record_analytics = bool(self.record_var.get())
+        self._say(
+            "Positions will be recorded to analytics for the next run."
+            if self.model.record_analytics else ""
+        )
 
     def _stroke_slider_changed(self, raw) -> None:
         if self._refreshing or self._dragging:
@@ -986,6 +1009,11 @@ class Operate:
             (self.calibrate_button, not busy),
         ):
             button.set_state("normal" if enabled else "disabled")
+
+        # Changing it mid-run would not take effect until the next run,
+        # so it is held still rather than quietly lying about what is
+        # being recorded.
+        self.record_box["state"] = "disabled" if busy else "normal"
 
         self.mode.set_state("disabled" if busy else "normal")
         self.start_button.set_state(

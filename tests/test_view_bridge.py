@@ -22,28 +22,56 @@ import pytest
 from Model import MachineState, Model, UiBridge
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def window():
+    """One real window, withdrawn, shared by every test in this file.
+
+    ``View`` creates its own ``tk.Tk()``, so this must not create one as well,
+    and it is built once rather than per test. Standing a Tk root up and tearing
+    it down repeatedly in one process fails part way through on Windows with
+    "tk wasn't installed properly" -- which it is. Per-test roots also meant a
+    TclError was caught and turned into a skip, so a genuine failure would have
+    been reported as "no display".
+    """
     tk = pytest.importorskip("tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:  # pragma: no cover - headless machine
-        pytest.skip("no display available: {0}".format(exc))
-    root.withdraw()
 
     from View import View
 
     model = Model(simulate=True)
-    view = View(model)
+    try:
+        view = View(model)
+    except tk.TclError as exc:  # pragma: no cover - headless machine
+        pytest.skip("no display available: {0}".format(exc))
     view.root.withdraw()
     try:
         yield view
     finally:
         try:
+            view.model.shutdown()
+        except Exception:  # pragma: no cover - best effort
+            pass
+        try:
             view.root.destroy()
         except Exception:  # pragma: no cover - already gone
             pass
-        root.destroy()
+
+
+def pump_until(view, predicate, seconds=3.0):
+    """Drive the Tk loop until ``predicate`` holds.
+
+    Bridge calls are queued and drained by ``View._pump`` on a 40 ms timer, so
+    a single ``update()`` races it. Waiting on the result rather than on a
+    fixed sleep keeps this deterministic.
+    """
+    import time
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        view.root.update()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 def _bridge_methods():
@@ -63,8 +91,9 @@ def test_every_bridge_method_is_callable_on_the_window(window):
 def test_progress_reaches_the_progress_bar(window):
     """The call the model makes while writing analytics must not raise."""
     window.progress(0.4, "Recording analytics")
-    window.root.update()
-    assert window.progress_bar["value"] == pytest.approx(40.0)
+    assert pump_until(
+        window, lambda: window.progress_bar["value"] == pytest.approx(40.0)
+    ), "progress never reached the bar"
 
     window.hide_progress()
     assert window.progress_bar["value"] == 0
@@ -73,8 +102,9 @@ def test_progress_reaches_the_progress_bar(window):
 def test_state_changed_reaches_every_tab(window):
     """A state change must survive the trip through the callback queue."""
     window.state_changed(MachineState.READY)
-    window.root.update()
-    assert window.state_chip.cget("text") == "READY"
+    assert pump_until(
+        window, lambda: window.state_chip.cget("text") == "READY"
+    ), "state change never reached the status bar"
 
 
 def test_tab_routing_matches_the_notebook_order(window):
