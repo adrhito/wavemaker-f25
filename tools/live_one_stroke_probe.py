@@ -146,13 +146,22 @@ def main(argv=None) -> int:
         print("one leg at {0} mm/s takes {1:.1f} s".format(
             args.speed, args.stroke / float(args.speed)))
 
-        returned = abs(end - start_mm) < args.stroke * 0.25
-        record["returned"] = returned
+        # Judged against the commanded stroke, not against where the piston
+        # happened to be standing. Homing can leave it well outside Position 1
+        # to Position 2, so "did it come back to where it started" answers the
+        # wrong question: it reported a correct out-and-back as a failure
+        # because the piston began at 350 mm on a stroke of 0 to 150.
+        tolerance = max(args.stroke * 0.1, 3.0)
+        reached_out = any(abs(s["mm"] - high) <= tolerance for s in samples)
+        ended_back = abs(end - args.low) <= tolerance
+        record["reached_position_2"] = reached_out
+        record["ended_at_position_1"] = ended_back
+        print("reached Position 2 ({0} mm): {1}".format(high, reached_out))
+        print("ended at Position 1 ({0} mm): {1}".format(args.low, ended_back))
         print("\nVERDICT: One stroke went {0}".format(
-            "OUT AND BACK -- it returned to where it started"
-            if returned else
-            "OUT ONLY -- it stayed at the far end, so Run_1 is a single move "
-            "and the application's out-and-back assumption is wrong"))
+            "OUT AND BACK -- to Position 2, then back to Position 1"
+            if reached_out and ended_back else
+            "OUT ONLY -- it never reached Position 2, or did not return"))
     finally:
         for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS,
                     tags.RUN_CURVE, tags.HOME_BUTTON):

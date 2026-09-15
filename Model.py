@@ -8,6 +8,7 @@ on it, so the window stays responsive while the machine works.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from enum import Enum
@@ -46,7 +47,7 @@ PROBE_SECONDS = 3.0
 #: Speed used to move pistons to their staggered starting points. Gentle: this
 #: is positioning, not part of the wave.
 STAGE_SPEED = 200
-#: How long to wait for them to get there before starting anyway.
+#: How long to wait for staging before cancelling the run.
 STAGE_SECONDS = 12.0
 #: Close enough to a staging point, in mm.
 STAGE_TOLERANCE = 5
@@ -77,6 +78,14 @@ PARK_SECONDS = 15.0
 PARK_TOLERANCE = 6
 #: Set False to leave the pistons where they stop.
 PARK_ON_STOP = True
+#: How long the resting move waits for _busy to come free before giving up.
+#: The Stop worker reaches _park_worker well before the run thread it just
+#: interrupted has unwound -- _hold_and_watch/_record_positions hold _busy for
+#: the whole run -- so an immediate, non-blocking acquire loses that race on
+#: almost every stop. This is a short wait for that thread's own cleanup, not
+#: a wait for an unrelated command; it still gives up rather than blocking
+#: forever if _busy is genuinely held by something else.
+PARK_ACQUIRE_TIMEOUT_SECONDS = 2.0
 
 # Where the pistons come to rest when stopped.
 REST_DOWN = "down"     # the bottom of travel, PARK_POSITION
@@ -349,13 +358,28 @@ class Model:
 
         self._state = MachineState.IDLE
         self._busy = threading.Lock()
+        self._motion_lock = threading.RLock()
         self._stop_requested = threading.Event()
         self._current_command: Optional[str] = None
         #: Set while the parking move is running, so a second Stop cancels it.
         self._parking = threading.Event()
         self._cancel_park = threading.Event()
+        #: Set while staging the cascade before a continuous run. Staging
+        #: runs with the state at PREPARING (see `_start_worker`), the same
+        #: state real homing uses, so `_halt_and_rest` needs this to tell the
+        #: two apart -- a Stop landing during staging must not be read as an
+        #: interrupted homing pass.
+        self._staging = threading.Event()
         #: Set while waiting for the end of a stroke before halting.
         self._stopping = threading.Event()
+        #: Set once by `shutdown()`. `probe_movement` runs on its own thread
+        #: (diagnostics probes are started independent of the worker thread),
+        #: takes neither `_busy` nor `_motion_lock`, and is the one command
+        #: that used to clear `_stop_requested` itself -- so without this gate
+        #: it could raise Run_1 after shutdown had already deselected every
+        #: piston and closed the transport.
+        self._shutdown = threading.Event()
+        self._stop_serial = 0
         #: Where the pistons come to rest after a stop.
         self.rest_position = REST_DOWN
 
@@ -388,6 +412,10 @@ class Model:
         self._lag_reported: set = set()
         #: Which mode the current run was started in.
         self._run_mode: Optional[RunMode] = None
+        #: A stroke edit requested during motion, waiting for a common end.
+        self._pending_live_stroke: Optional[int] = None
+        self._pending_live_stroke_axes: List[int] = []
+        self._pending_live_stroke_applied: set = set()
 
         paths.ensure_directories()
 
@@ -606,6 +634,17 @@ class Model:
         first -- previously each click spawned another thread, and two homing
         loops would fight over the Home_Button bit.
         """
+        # Reset and Reconnect are exempt from the RUNNING guard: a PlcError
+        # out of a run leaves the state at RUNNING (see _recover_after_failure),
+        # and those two commands are exactly how an operator gets out of a
+        # wedged machine, so refusing them here would make that state
+        # permanent until a Stop happened to succeed.
+        running_but_exempt = name in ("Reset", "Reconnect")
+        if not running_but_exempt and (
+                self._state is MachineState.RUNNING
+                or self._stopping.is_set() or self._parking.is_set()):
+            LOGGER.warning("Ignored %s: a stop or resting move is still running.", name)
+            return False
         if not self._busy.acquire(blocking=False):
             LOGGER.warning(
                 "Ignored %s: %s is still running.", name, self._current_command
@@ -613,6 +652,7 @@ class Model:
             return False
 
         self._current_command = name
+        self._stop_requested.clear()
 
         def run() -> None:
             try:
@@ -639,9 +679,20 @@ class Model:
         return True
 
     def _recover_after_failure(self) -> None:
-        """Put the state back somewhere the operator can act from."""
+        """Put the state back somewhere the operator can act from.
+
+        A PlcError out of a run (for instance a failed write(tag, 0) in
+        _hold_and_watch's finally) used to leave the state at RUNNING for
+        ever: this rewound PREPARING but not RUNNING, and _command refuses
+        Prepare, Start, Calibrate, Reset and Reconnect alike while RUNNING --
+        so nothing could ever get the machine out of it again. The drives are
+        still homed, exactly as after a normal stop, so this rewinds to
+        HOMED rather than forcing a fresh Prepare.
+        """
         if self._state is MachineState.PREPARING:
             self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+        elif self._state is MachineState.RUNNING:
+            self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
         else:
             self.bridge.state_changed(self._state)
 
@@ -652,13 +703,22 @@ class Model:
     # -- machine commands -----------------------------------------------------
 
     def clear_faults(self) -> None:
-        """Pulse Clear_Motor_Error, which also clears drive motion faults."""
+        """Pulse Clear_Motor_Error, which also clears drive motion faults.
+
+        Waits with `self._sleep` (``_stop_requested.wait``), not a raw
+        `time.sleep`: `shutdown()` sets `_stop_requested` specifically so this
+        pulse cuts short, and View calls `shutdown()` on the Tk thread from
+        the window's close handler, so a raw sleep here froze the window for
+        the whole five seconds.
+        """
         self.plc.write(tags.CLEAR_MOTOR_ERROR, 1)
-        self._sleep(CLEAR_FAULT_SECONDS)
-        self.plc.write(tags.CLEAR_MOTOR_ERROR, 0)
+        try:
+            self._sleep(CLEAR_FAULT_SECONDS)
+        finally:
+            self.plc.write(tags.CLEAR_MOTOR_ERROR, 0)
         LOGGER.info("Motion faults cleared.")
 
-    def all_stop(self) -> None:
+    def all_stop(self, include_home: bool = False) -> None:
         """Drop every run bit.
 
         Writes zero to all three run bits, so Stop means stop regardless of
@@ -666,8 +726,26 @@ class Model:
         low, because it reused the same function for starting and stopping --
         pressing Stop therefore commanded a moment of continuous motion first.
         """
-        for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE):
-            self.plc.write(tag, 0)
+        with self._motion_lock:
+            commands = [tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE]
+            if include_home:
+                commands.append(tags.HOME_BUTTON)
+            errors = []
+            for tag in commands:
+                try:
+                    self.plc.write(tag, 0)
+                except PlcError as exc:
+                    errors.append("{0}: {1}".format(tag, exc))
+            if errors:
+                raise PlcError("; ".join(errors))
+
+    def _begin_motion(self, tag: str) -> bool:
+        """Serialize command starts with Stop and recheck cancellation."""
+        with self._motion_lock:
+            if self._stop_requested.is_set():
+                return False
+            self.plc.write(tag, 1)
+            return True
 
     def _clear_live_motors(self) -> None:
         """Zero the Live_Motors array so only chosen pistons can be commanded."""
@@ -686,18 +764,25 @@ class Model:
         This is the safe resting state and is what the application does at
         startup and at shutdown.
         """
-        self.all_stop()
-        self.plc.write(tags.HOME_BUTTON, 0)
+        self.all_stop(include_home=True)
         self.clear_faults()
         self._clear_live_motors()
         self._homed_axes = set()
         LOGGER.info("Motors off; run bits and motion faults cleared.")
 
     def boot_motors(self) -> None:
-        """Pulse Motor_Boot to energise the drives."""
+        """Pulse Motor_Boot to energise the drives.
+
+        Waits with `self._sleep`, for the same reason as `clear_faults`: a
+        raw `time.sleep` here does not wake early on `shutdown()`'s
+        `_stop_requested`, and shutdown runs on the Tk thread, so the window
+        would sit frozen for the whole boot pulse while closing.
+        """
         self.plc.write(tags.MOTOR_BOOT, 1)
-        self._sleep(BOOT_PULSE_SECONDS)
-        self.plc.write(tags.MOTOR_BOOT, 0)
+        try:
+            self._sleep(BOOT_PULSE_SECONDS)
+        finally:
+            self.plc.write(tags.MOTOR_BOOT, 0)
         LOGGER.log(15, "Motors booted.")
 
     # -- prepare --------------------------------------------------------------
@@ -730,7 +815,6 @@ class Model:
 
     def _prepare_worker(self) -> None:
         self.unhomed_axes = []
-        self._stop_requested.clear()
         self._set_state(MachineState.PREPARING)
 
         self.bridge.status("Selecting motors...")
@@ -743,6 +827,9 @@ class Model:
         if self._already_homed():
             self.bridge.status("Already homed. Writing parameters...")
             self._write_all_parameters()
+            if self._stop_requested.is_set():
+                self._set_state(MachineState.READY)
+                return
             self._set_state(MachineState.HOMED)
             self.bridge.status("Ready to run.")
             LOGGER.log(15, "Skipped homing: these pistons are already homed.")
@@ -751,12 +838,15 @@ class Model:
         self.bridge.status("Clearing motion faults...")
         self.clear_faults()
 
+        if self._stop_requested.is_set():
+            self._set_state(MachineState.READY)
+            return
         self.bridge.status("Booting motors...")
         self.boot_motors()
 
         self._write_all_parameters()
 
-        if self._home_motors():
+        if self._home_motors() and not self._stop_requested.is_set():
             self._set_state(MachineState.HOMED)
             self.bridge.status("Motors homed and ready to run.")
             LOGGER.log(15, "Motors homed.")
@@ -850,7 +940,6 @@ class Model:
         return self._command("Calibrate", self._calibrate_worker)
 
     def _calibrate_worker(self) -> None:
-        self._stop_requested.clear()
         self._set_state(MachineState.PREPARING)
         every = list(range(tags.MOTOR_COUNT))
 
@@ -884,14 +973,19 @@ class Model:
 
         self.bridge.status("Clearing motion faults...")
         self.clear_faults()
-        self.bridge.status("Booting motors...")
-        self.boot_motors()
-
-        homed = self._home_motors(axes=every)
+        homed = False
+        if not self._stop_requested.is_set():
+            self.bridge.status("Booting motors...")
+            self.boot_motors()
+            homed = self._home_motors(axes=every)
 
         # Put the operator's own selection back on the machine.
         self._mark_live_motors()
 
+        if self._stop_requested.is_set():
+            self._homed_axes.clear()
+            self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+            return
         if homed:
             self._homed_axes = set(every)
             self.bridge.status("All 30 pistons are calibrated.")
@@ -904,7 +998,7 @@ class Model:
                     30 - len(stuck), tags.display_list(stuck)
                 )
             )
-        self._refresh_idle_state()
+        self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
 
     def _home_motors(self, axes=None) -> bool:
         """Home the pistons. Returns True once every drive reports homed.
@@ -931,7 +1025,10 @@ class Model:
 
             self.plc.write(tags.HOME_BUTTON, 0)
             self._sleep(HOME_POLL_SECONDS)
-            self.plc.write(tags.HOME_BUTTON, 1)
+            if self._stop_requested.is_set():
+                return False
+            if not self._begin_motion(tags.HOME_BUTTON):
+                return False
 
             homed = False
             try:
@@ -947,6 +1044,8 @@ class Model:
                     self.plc.keepalive()
                     self._sleep(HOME_POLL_SECONDS)
 
+                    if self._stop_requested.is_set():
+                        break
                     if all(motor.is_homed(self.plc) for motor in motors):
                         homed = True
                         if is_final:
@@ -958,6 +1057,8 @@ class Model:
             finally:
                 self.plc.write(tags.HOME_BUTTON, 0)
 
+            if self._stop_requested.is_set():
+                return False
             if is_final:
                 if not homed:
                     self._report_homing_failure(
@@ -1068,7 +1169,7 @@ class Model:
             motor = Motor(axis)
             expected_live = None
         else:
-            expected_live = True
+            expected_live = True if self._state in (MachineState.HOMED, MachineState.RUNNING) else None
 
         probe_fn = None
         if probe:
@@ -1093,45 +1194,105 @@ class Model:
         The piston is put back where it started, and the parameters are marked
         unwritten afterwards so the operator's own values go out again before
         any real run.
+
+        Runs on its own thread (diagnostics probes are started independent of
+        the worker thread) and takes neither `_busy` nor `_motion_lock` the
+        way `_command` does, so `shutdown()` -- which sets `_stop_requested`
+        and closes the transport, without taking either -- must be checked
+        here explicitly. `_stop_requested` itself is never cleared here: that
+        is `_command`'s job alone, so a probe run with a stop already pending
+        (from a Stop that has not fully unwound, or from shutdown) stays
+        refused rather than clearing the flag out from under it.
         """
+        if self._shutdown.is_set():
+            raise ValueError("The machine has been shut down.")
+        if not self._busy.acquire(blocking=False):
+            raise ValueError("The machine is busy; stop it before a movement test.")
+        # _command sets this for every other holder of _busy; probe_movement
+        # takes _busy directly and used to leave it None, so a command
+        # blocked behind a running movement test was logged as "Ignored
+        # Start: None is still running." -- true but useless for working out
+        # what was actually in the way.
+        self._current_command = "Movement test"
+        try:
+            if (self._shutdown.is_set()
+                    or self._state in (MachineState.RUNNING, MachineState.PREPARING)
+                    or self._parking.is_set() or self._stopping.is_set()
+                    or self._stop_requested.is_set()):
+                raise ValueError("Stop the machine before a movement test.")
+            return self._probe_movement_worker(axis, distance)
+        finally:
+            self._current_command = None
+            self._busy.release()
+
+    def _probe_movement_worker(self, axis: int, distance: float) -> float:
         motor = next((m for m in self.all_motors if m.axis == axis), Motor(axis))
         start = motor.read_position(self.plc)
-
+        spec = params.BY_NAME["Position 1"]
+        if not math.isfinite(start) or spec.validate(start):
+            raise ValueError("Movement test requires a finite starting position within travel limits.")
+        distance = float(distance)
+        if not math.isfinite(distance) or distance <= 0:
+            raise ValueError("Movement test distance must be finite and positive.")
         target = start + distance
-        if target > params.BY_NAME["Position 1"].maximum:
+        if spec.validate(target):
             target = start - distance
-
+        if not math.isfinite(target) or spec.validate(target):
+            raise ValueError("Movement test target is outside travel limits.")
+        target, return_target = int(round(target)), int(round(start))
+        if spec.validate(target) or spec.validate(return_target):
+            raise ValueError("Movement test targets are outside travel limits.")
+        # Save every bit before changing any: Run_1 acts on the global selection.
+        saved = [(tags.live_motor(a), self.plc.read(tags.live_motor(a)))
+                 for a in range(tags.MOTOR_COUNT)]
+        if any(self.plc.read(bit) for bit in
+               (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE, tags.HOME_BUTTON)):
+            raise ValueError("A machine command is active; movement test cancelled.")
+        furthest = start
+        errors = []
         try:
-            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
-            self.plc.write(params.BY_NAME["Position 1"].tag(axis), int(round(target)))
-            self.plc.write(params.BY_NAME["Position 2"].tag(axis), int(round(target)))
-            self.plc.write(params.BY_NAME["Speed 1"].tag(axis), PROBE_SPEED)
-            self.plc.write(params.BY_NAME["Speed 2"].tag(axis), PROBE_SPEED)
-
-            furthest = start
-            self.plc.write(tags.RUN_SINGLE, 1)
-            deadline = time.time() + PROBE_SECONDS
-            try:
-                while time.time() < deadline:
-                    try:
-                        where = motor.read_position(self.plc)
-                    except (PlcError, TypeError, ValueError):
-                        where = furthest
+            for a in range(tags.MOTOR_COUNT):
+                self.plc.write(tags.live_motor(a), 1 if a == axis else 0)
+            for name, value in (("Move Type", 0), ("Position 1", target),
+                                ("Position 2", target), ("Speed 1", PROBE_SPEED),
+                                ("Speed 2", PROBE_SPEED)):
+                self.plc.write(params.BY_NAME[name].tag(axis), value)
+            if not self._stop_requested.is_set():
+                self._begin_motion(tags.RUN_SINGLE)
+                deadline = time.time() + PROBE_SECONDS
+                while time.time() < deadline and not self._stop_requested.is_set():
+                    where = motor.read_position(self.plc)
+                    if not math.isfinite(where):
+                        raise ValueError("Movement test received invalid position feedback.")
                     if abs(where - start) > abs(furthest - start):
                         furthest = where
-                    time.sleep(STOP_POLL_INTERVAL)
-            finally:
+                    self._sleep(STOP_POLL_INTERVAL)
                 self.plc.write(tags.RUN_SINGLE, 0)
-
-            # Put it back, so a diagnosis does not leave the array uneven.
-            self.plc.write(params.BY_NAME["Position 1"].tag(axis), int(round(start)))
-            self.plc.write(params.BY_NAME["Position 2"].tag(axis), int(round(start)))
-            self.plc.write(tags.RUN_SINGLE, 1)
-            time.sleep(PROBE_SECONDS / 2.0)
-            self.plc.write(tags.RUN_SINGLE, 0)
+            if not self._stop_requested.is_set():
+                self.plc.write(params.BY_NAME["Position 1"].tag(axis), return_target)
+                self.plc.write(params.BY_NAME["Position 2"].tag(axis), return_target)
+                self._begin_motion(tags.RUN_SINGLE)
+                self._sleep(PROBE_SECONDS / 2.0)
         finally:
             motor.current_params = {}
             motor.write_success = False
+            cleared = False
+            try:
+                self.plc.write(tags.RUN_SINGLE, 0)
+                cleared = True
+            except PlcError as exc:
+                errors.append("Could not clear movement-test run bit: {0}".format(exc))
+            # Never reselect other pistons while Run_1 might still be high.
+            if cleared:
+                for tag, value in saved:
+                    try:
+                        self.plc.write(tag, value)
+                    except PlcError as exc:
+                        errors.append("Could not restore {0}: {1}".format(tag, exc))
+            if errors:
+                self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+                self.bridge.problem("Movement test cleanup failed", "\n".join(errors))
+                raise PlcError("; ".join(errors))
 
         moved = abs(furthest - start)
         LOGGER.info(
@@ -1226,6 +1387,7 @@ class Model:
             self._prepare_worker()
             if self._state is not MachineState.HOMED:
                 return  # homing failed or was cancelled; already reported
+            self.bridge.status("Homing complete. Starting {0}...".format(mode.value))
         self._start_worker(mode)
 
     def start(self, mode: RunMode) -> bool:
@@ -1239,9 +1401,219 @@ class Model:
             return False
         return self._command("Start", lambda: self._start_worker(mode))
 
+    def change_speed_live(self, speed: int, axes: Optional[Iterable[int]] = None) -> bool:
+        """Change both travel speeds while a run is already in progress.
+
+        The controller reads ``Spd_1``/``Spd_2`` on each motion leg, so no run
+        bit needs to be dropped and no new operation is started.  A partial
+        update is reported and the affected motors are left unsynchronized
+        for the next prepare.
+
+        ``_motion_lock`` is taken only for the initial stopping check, not for
+        the writes themselves. It also serializes `_begin_motion`'s and
+        `all_stop`'s run-bit transitions, and holding it across the whole
+        per-piston loop below -- up to sixty round trips on the real thirty-
+        piston array -- used to serialize Stop behind the entire sweep, since
+        `emergency_stop` takes the very same lock to drop a run bit. The
+        per-piston writes touch Spd_1/Spd_2, never a run bit, so they do not
+        need that lock; `_stop_requested` (a plain ``Event``, safe to read
+        without one) is checked between pistons instead, so a Stop landing
+        mid-sweep is noticed within one write pair rather than only after it.
+        """
+        if self._state is not MachineState.RUNNING or self._run_mode is None:
+            raise ValueError("Live speed changes are available only while running.")
+        if self._stopping.is_set() or self._parking.is_set():
+            # A graceful Stop sets _stopping up to GRACEFUL_STOP_SECONDS
+            # before it sets _stop_requested (it is waiting for the end of a
+            # stroke first), and the state is still RUNNING the whole time --
+            # so checking only _state and _stop_requested let a new speed be
+            # accepted while the machine was already supposed to be coming to
+            # rest.
+            raise ValueError("The machine is stopping; speed was not changed.")
+        value = int(speed)
+        spec = params.BY_NAME["Speed 1"]
+        problem = spec.validate(value)
+        if problem or value <= 0:
+            raise ValueError(problem or "Live speed must be greater than zero.")
+        wanted_axes = sorted(set(self.live_axes if axes is None else axes))
+        if not wanted_axes:
+            raise ValueError("No pistons are selected for the live speed change.")
+        motors = {motor.axis: motor for motor in self.all_motors}
+        missing = [axis for axis in wanted_axes if axis not in motors]
+        if missing:
+            raise ValueError("Piston selection changed while running.")
+        with self._motion_lock:
+            if self._stop_requested.is_set():
+                raise ValueError("The machine is stopping; speed was not changed.")
+        changed = []
+        try:
+            for axis in wanted_axes:
+                if self._stop_requested.is_set():
+                    raise ValueError("the machine is stopping")
+                motor = motors[axis]
+                # Record the requested value before the first write. If
+                # the second direction fails, the next prepare must know
+                # that this motor is only partially updated.
+                motor.write_params["Speed 1"] = value
+                motor.write_params["Speed 2"] = value
+                motor.write_success = False
+                self.plc.write(params.BY_NAME["Speed 1"].tag(axis), value)
+                motor.current_params["Speed 1"] = value
+                self.plc.write(params.BY_NAME["Speed 2"].tag(axis), value)
+                motor.current_params["Speed 2"] = value
+                motor.write_success = True
+                changed.append(axis)
+        except (PlcError, ValueError) as exc:
+            for axis in changed:
+                motors[axis].write_success = True
+            self.bridge.problem(
+                "Live speed change failed",
+                "The speed was updated on pistons {0}, then stopped at piston {1}: {2}."
+                .format(tags.display_list(changed), tags.display_number(axis), exc),
+            )
+            raise
+        self.bridge.status("Live speed set to {0} mm/s on pistons {1}.".format(
+            value, tags.display_list(wanted_axes)))
+        LOGGER.log(15, "Live speed changed to %d mm/s on pistons %s.",
+                   value, tags.display_list(wanted_axes))
+        return True
+
+    def change_stroke_live(self, stroke: int, axes: Optional[Iterable[int]] = None) -> bool:
+        """Queue a stroke change and apply it at a shared stroke endpoint.
+
+        Position 2 is part of the controller's active trajectory. Writing it
+        to one axis halfway through a leg while the other axes are still in
+        flight creates the phase jump that used to make the array drift apart.
+        The request is therefore retained until every selected axis reaches
+        its own lower or upper endpoint. Phase offsets are preserved.
+        """
+        if self._state is not MachineState.RUNNING or self._run_mode is None:
+            raise ValueError("Live stroke changes are available only while running.")
+        if self._stopping.is_set() or self._parking.is_set():
+            # See change_speed_live: _stopping can be set up to
+            # GRACEFUL_STOP_SECONDS before _stop_requested, with the state
+            # still RUNNING throughout, so that pair alone is not enough to
+            # reject a stroke change requested while a graceful Stop waits.
+            raise ValueError("The machine is stopping; stroke was not changed.")
+        value = int(stroke)
+        spec = params.BY_NAME["Position 2"]
+        if value <= 0:
+            raise ValueError("Live stroke must be greater than zero.")
+        wanted_axes = sorted(set(self.live_axes if axes is None else axes))
+        motors = {motor.axis: motor for motor in self.all_motors}
+        if not wanted_axes or any(axis not in motors for axis in wanted_axes):
+            raise ValueError("Piston selection changed while running.")
+        # Validate every target before changing the pending request.
+        for axis in wanted_axes:
+            low = int(motors[axis].write_params["Position 1"])
+            problem = spec.validate(low + value)
+            if problem:
+                raise ValueError("Piston {0}: {1}".format(tags.display_number(axis), problem))
+        with self._motion_lock:
+            if self._stop_requested.is_set():
+                raise ValueError("The machine is stopping; stroke was not changed.")
+            self._pending_live_stroke = value
+            self._pending_live_stroke_axes = wanted_axes
+            self._pending_live_stroke_applied = set()
+            applied = self._apply_pending_live_stroke_locked()
+        if applied:
+            self.bridge.status("Live stroke set to {0} mm on pistons {1}.".format(value, tags.display_list(wanted_axes)))
+        else:
+            self.bridge.status("Live stroke queued for the next synchronized endpoint.")
+        return True
+
+    def _apply_pending_live_stroke_locked(self) -> bool:
+        """Apply queued targets at each axis's own safe stroke endpoint.
+
+        Called with `_motion_lock` already held (see `_apply_pending_live_stroke`
+        and `change_stroke_live`), which has the same shape as the problem
+        `change_speed_live` had: up to thirty per-piston reads and writes,
+        with `emergency_stop` blocked behind the same lock the whole time.
+        This runs on every monitor tick, so `_stop_requested` -- a plain
+        Event, safe to read without the lock -- is checked between pistons in
+        both loops below, and the scan gives up the moment it is set rather
+        than reading or writing every remaining axis regardless.
+        """
+        value = self._pending_live_stroke
+        axes = list(self._pending_live_stroke_axes)
+        if value is None or not axes or self._state is not MachineState.RUNNING:
+            return False
+        motors = {motor.axis: motor for motor in self.all_motors}
+        ready = []
+        dropped = []
+        for axis in axes:
+            if axis in self._pending_live_stroke_applied:
+                continue
+            if self._stop_requested.is_set():
+                return False
+            motor = motors.get(axis)
+            if motor is None:
+                # Editing the tank selection mid-run is explicitly allowed
+                # and never interrupts a run, but it can remove an axis the
+                # queued stroke change is still waiting for. Aborting the
+                # whole scan here used to wedge the queue on every later
+                # monitor tick, silently, for every OTHER axis too, until the
+                # next Stop -- so drop this one axis from the pending request
+                # instead, say so, and let the rest still apply.
+                dropped.append(axis)
+                continue
+            try:
+                actual = motor.read_position(self.plc)
+            except (PlcError, TypeError, ValueError):
+                return False
+            low = float(motor.write_params["Position 1"])
+            high = float(motor.write_params["Position 2"])
+            tolerance = max(2.0, abs(high - low) * 0.03)
+            near_low = abs(actual - low) <= tolerance
+            near_high = abs(actual - high) <= tolerance
+            if not (near_low or near_high):
+                continue
+            ready.append(axis)
+        if dropped:
+            axes = [a for a in axes if a not in dropped]
+            self._pending_live_stroke_axes = axes
+            self.bridge.status(
+                "Piston(s) {0} left the selection before their live stroke "
+                "change applied; dropped from the pending request.".format(
+                    tags.display_list(dropped)
+                )
+            )
+            if not axes:
+                self._pending_live_stroke = None
+                self._pending_live_stroke_applied = set()
+                return False
+        if not ready:
+            return False
+        try:
+            for axis in ready:
+                if self._stop_requested.is_set():
+                    break
+                motor = motors[axis]
+                target = int(motor.write_params["Position 1"]) + int(value)
+                motor.write_success = False
+                self.plc.write(params.BY_NAME["Position 2"].tag(axis), target)
+                motor.write_params["Position 2"] = target
+                motor.current_params["Position 2"] = target
+                motor.write_success = True
+                self._pending_live_stroke_applied.add(axis)
+        except (PlcError, ValueError) as exc:
+            self.bridge.problem("Live stroke change failed", str(exc))
+            return False
+        complete = self._pending_live_stroke_applied.issuperset(axes)
+        if complete:
+            self._pending_live_stroke = None
+            self._pending_live_stroke_axes = []
+            self._pending_live_stroke_applied = set()
+        return complete
+
+    def _apply_pending_live_stroke(self) -> bool:
+        with self._motion_lock:
+            return self._apply_pending_live_stroke_locked()
+
     def _start_worker(self, mode: RunMode) -> None:
+        if self._stop_requested.is_set():
+            return
         self._run_mode = mode
-        self._stop_requested.clear()
 
         # Parameters may have been edited since homing. Push the differences
         # rather than making the operator home the machine again.
@@ -1254,8 +1626,15 @@ class Model:
         if mode is RunMode.SINGLE:
             self._set_state(MachineState.RUNNING)
             self.bridge.status("Running one stroke...")
-            travel = self._hold_and_watch(tags.RUN_SINGLE, self._stroke_seconds())
+            travel = self._single_stroke()
             self._set_state(MachineState.HOMED)
+            if travel is None:
+                # _begin_motion refused: a Stop landed between the HOMED
+                # check above and here. Nothing was commanded, so this is
+                # not the "Nothing moved" controller fault _report_travel
+                # would otherwise raise -- it is simply a cancelled start.
+                self.bridge.status("Stroke cancelled.")
+                return
             self._report_travel("stroke", travel)
 
         elif mode is RunMode.CURVE:
@@ -1265,7 +1644,7 @@ class Model:
             self._set_state(MachineState.RUNNING)
             self.bridge.status("Running curve...")
             if self.record_analytics:
-                self.plc.write(tags.RUN_CURVE, 1)
+                self._begin_motion(tags.RUN_CURVE)
                 try:
                     self._record_positions(CURVE_SECONDS)
                 finally:
@@ -1274,12 +1653,45 @@ class Model:
             else:
                 travel = self._hold_and_watch(tags.RUN_CURVE, self._stroke_seconds(CURVE_SECONDS))
             self._set_state(MachineState.HOMED)
+            if travel is None:
+                self.bridge.status("Curve cancelled.")
+                return
             self._report_travel("curve", travel)
 
         else:  # continuous
+            self._set_state(MachineState.PREPARING)
+            self._staging.set()
+            try:
+                staged = self._stage_cascade()
+            finally:
+                # Leave the flag set if a stop landed during staging: whoever
+                # is running _halt_and_rest for that stop (possibly on
+                # another thread, right now) is the one reading it to decide
+                # between HOMED and an interrupted-homing READY, and clearing
+                # it here first -- all_stop()'s PLC writes are enough of a
+                # scheduling gap for that to happen -- would race it back to
+                # the READY branch no matter which one runs second.
+                # _halt_and_rest clears it itself once it has read it.
+                if not self._stop_requested.is_set():
+                    self._staging.clear()
+            if self._stop_requested.is_set():
+                # Stop has already run _halt_and_rest while staging was still
+                # in flight -- it is what decides the resting state, and when
+                # the interruption was staging (not homing) it leaves the
+                # machine at HOMED rather than READY so the resting move
+                # below can run. Setting state here too would race that and
+                # could stomp HOMED back to READY right behind it.
+                self._run_mode = None
+                return
+            if not staged:
+                self._run_mode = None
+                self._set_state(MachineState.READY)
+                return
             self._set_state(MachineState.RUNNING)
-            self._stage_cascade()
-            self.plc.write(tags.RUN_CONTINUOUS, 1)
+            if not self._begin_motion(tags.RUN_CONTINUOUS):
+                self._run_mode = None
+                self._set_state(MachineState.READY)
+                return
             LOGGER.log(15, "Continuous motion started.")
             self.bridge.status("Running continuously. Press Stop when finished.")
             if self.record_analytics:
@@ -1293,20 +1705,28 @@ class Model:
         piston sets off the instant Run_2 goes high, which is why a staggered
         design still came out as thirty pistons slapping in unison.
 
-        The stagger is honoured here instead by starting each column from a
+        The stagger is honoured here instead by starting each piston from a
         different point along its stroke. The periods are identical, so the
         phase difference that creates is fixed and stays fixed -- a wave that
         marches down the chamber for as long as the run lasts.
+
+        Keyed on the piston, not on its column. Collapsing each column to one
+        offset threw away any stagger *within* a column, so "Rows out of step"
+        -- three rows of a column started at the bottom, the middle and the top
+        -- reached the drives correctly and was then staged as though every row
+        were identical. Reading each piston's own Curve Offset covers a
+        front-to-back wave, a row cascade, and any combination of the two,
+        because a front-to-back stagger simply gives every piston in a column
+        the same value.
 
         Empty when no stagger is set, which is the common case and costs
         nothing.
         """
         offsets: Dict[int, int] = {}
         for motor in self.all_motors:
-            column = motor.axis // tags.ROWS_PER_COLUMN
             try:
-                offsets.setdefault(
-                    column, int(motor.write_params.get("Curve Offset", 0))
+                offsets[motor.axis] = int(
+                    motor.write_params.get("Curve Offset", 0)
                 )
             except (TypeError, ValueError):
                 continue
@@ -1317,7 +1737,7 @@ class Model:
 
         targets: Dict[int, int] = {}
         for motor in self.all_motors:
-            fraction = fractions.get(motor.axis // tags.ROWS_PER_COLUMN)
+            fraction = fractions.get(motor.axis)
             if fraction is None:
                 continue
             try:
@@ -1331,44 +1751,77 @@ class Model:
     def _stage_cascade(self) -> bool:
         """Put the pistons at their starting points before continuous motion.
 
-        Returns False if there was nothing to stage or it could not be done;
-        the run goes ahead either way, because an unstaggered wave is worth
-        more than no wave.
+        Returns True when staging is unnecessary or completed safely.
         """
         targets = self.cascade_targets()
         if not targets:
-            return False
+            return not self._stop_requested.is_set()
 
         self.bridge.status("Staggering the pistons for a travelling wave...")
+        arrived = False
+        errors = []
         try:
             for axis, target in targets.items():
+                if self._stop_requested.is_set():
+                    return False
                 self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
                 self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
                 self.plc.write(params.BY_NAME["Position 2"].tag(axis), target)
                 self.plc.write(params.BY_NAME["Speed 1"].tag(axis), STAGE_SPEED)
                 self.plc.write(params.BY_NAME["Speed 2"].tag(axis), STAGE_SPEED)
 
-            self.plc.write(tags.RUN_SINGLE, 1)
+            if self._stop_requested.is_set():
+                return False
+            if not self._begin_motion(tags.RUN_SINGLE):
+                return False
             deadline = time.time() + STAGE_SECONDS
-            try:
-                while time.time() < deadline:
-                    if self._stop_requested.is_set():
-                        return False
-                    if self._all_within(targets, STAGE_TOLERANCE):
-                        break
-                    time.sleep(STOP_POLL_INTERVAL)
-            finally:
-                self.plc.write(tags.RUN_SINGLE, 0)
+            while time.time() < deadline:
+                if self._stop_requested.is_set():
+                    return False
+                if self._all_within(targets, STAGE_TOLERANCE):
+                    arrived = True
+                    break
+                time.sleep(STOP_POLL_INTERVAL)
 
-            # The operator's real parameters have to go back before the run,
-            # or every piston would sit on its staging point and never move.
+        except PlcError as exc:
+            errors.append(str(exc))
+        finally:
+            cleared = False
+            try:
+                self.plc.write(tags.RUN_SINGLE, 0)
+                cleared = True
+            except PlcError as exc:
+                errors.append("Could not clear staging run bit: {0}".format(exc))
             for motor in self.all_motors:
                 motor.current_params = {}
                 motor.write_success = False
-                motor.write_to(self.plc)
-        except PlcError as exc:
-            LOGGER.warning("Could not stagger the pistons: %s", exc)
+                if not cleared:
+                    continue  # changing targets while a run bit may be high is unsafe
+                try:
+                    motor.write_to(self.plc)
+                except (PlcError, ValueError) as exc:
+                    errors.append("Piston {0}: {1}".format(
+                        tags.display_number(motor.axis), exc))
+            if errors:
+                self.bridge.problem("Staging failed", "\n".join(errors))
+        if errors or self._stop_requested.is_set():
             return False
+        if not arrived:
+            # A timeout here is "could not stage", not "was stopped" -- and
+            # `_all_within` gives up on a single unreadable axis, so one
+            # flaky piston used to be enough to report "Staging failed" and
+            # cancel the whole run after the full STAGE_SECONDS wait. An
+            # unstaggered wave is worth more than no wave: run anyway, and
+            # say so rather than silently dropping the stagger.
+            self.bridge.status(
+                "Could not confirm the pistons reached their starting points; "
+                "running unstaggered instead."
+            )
+            LOGGER.warning(
+                "Staging did not complete within %s seconds; running unstaggered.",
+                STAGE_SECONDS,
+            )
+            return True
 
         spread = max(targets.values()) - min(targets.values())
         LOGGER.log(
@@ -1406,13 +1859,144 @@ class Model:
         # Half again, so a piston that is merely slow still finishes.
         return max(floor, min(longest * 1.5, MAX_STROKE_SECONDS))
 
-    def _hold_and_watch(self, tag: str, seconds: float) -> Dict[int, float]:
+    def _single_stroke(self) -> Optional[Dict[int, float]]:
+        """One stroke: out to Position 2, then back to Position 1.
+
+        Run_1 is not a stroke. At the machine it is an absolute move to
+        Position 1, and it never reads Position 2 at all. Measured on the array
+        on 15 September 2026: with Position 1 = 200 and Position 2 = 300 a
+        piston sitting at 0 went to 199.8; with Position 1 = 60 it then went to
+        60.1; and a piston already at Position 1 did not move for three
+        successive pulses of the bit. The application had been raising Run_1
+        for as long as a full out-and-back would take and calling whatever
+        happened a stroke, so One stroke only ever went one way -- and only to
+        Position 1, which might be the way it was already facing.
+
+        A stroke is therefore commanded as two moves, exactly the way
+        :meth:`_park_moves` commands one: put the destination in Position 1,
+        raise Run_1, wait for the pistons to arrive. The operator's own
+        Position 1 is written back at the end, whatever happens.
+
+        Returns travel per axis, or None if a stop landed before anything was
+        commanded, so the caller can tell a cancelled stroke from a dead one.
+        """
+        wanted = {}
+        for motor in self.all_motors:
+            try:
+                wanted[motor.axis] = (
+                    int(motor.write_params["Position 1"]),
+                    int(motor.write_params["Position 2"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not wanted:
+            return None
+
+        lowest: Dict[int, float] = {}
+        highest: Dict[int, float] = {}
+
+        def sample() -> None:
+            for motor in self.all_motors:
+                try:
+                    where = motor.read_position(self.plc)
+                except (PlcError, TypeError, ValueError):
+                    continue
+                axis = motor.axis
+                lowest[axis] = min(lowest.get(axis, where), where)
+                highest[axis] = max(highest.get(axis, where), where)
+
+        sample()
+        began = False
+        try:
+            for leg, out in enumerate((True, False)):
+                targets = {axis: (high if out else low)
+                           for axis, (low, high) in wanted.items()}
+                for axis, target in targets.items():
+                    # Absolute, or the target is taken as a relative lurch.
+                    self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+                    self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+                if self._stop_requested.is_set():
+                    break
+                if not self._begin_motion(tags.RUN_SINGLE):
+                    break
+                began = True
+                self.bridge.status(
+                    "Running one stroke: {0}...".format("out" if out else "back")
+                )
+                deadline = time.time() + self._leg_seconds(out)
+                while (time.time() < deadline
+                       and not self._stop_requested.is_set()):
+                    sample()
+                    if self._all_within(targets, PARK_TOLERANCE):
+                        break
+                    time.sleep(STOP_POLL_INTERVAL)
+                self.plc.write(tags.RUN_SINGLE, 0)
+                sample()
+                if self._stop_requested.is_set():
+                    break
+                dwell = 0.0
+                for motor in self.all_motors:
+                    try:
+                        dwell = max(dwell, float(motor.write_params.get(
+                            "Time 2" if out else "Time 1", 0)) / 1000.0)
+                    except (TypeError, ValueError):
+                        continue
+                if dwell:
+                    self._sleep(dwell)
+        finally:
+            try:
+                self.plc.write(tags.RUN_SINGLE, 0)
+            finally:
+                # Position 1 was borrowed as a destination; give it back, or
+                # the next run silently uses the far end as its near end.
+                for axis, (low, _high) in wanted.items():
+                    try:
+                        self.plc.write(
+                            params.BY_NAME["Position 1"].tag(axis), low)
+                    except PlcError:
+                        LOGGER.exception(
+                            "Could not restore Position 1 on piston %d",
+                            tags.display_number(axis))
+                self._forget_written_params()
+
+        if not began:
+            return None
+        return dict(
+            (axis, highest[axis] - lowest.get(axis, highest[axis]))
+            for axis in highest
+        )
+
+    def _leg_seconds(self, outbound: bool) -> float:
+        """How long one leg of a stroke should need, with headroom."""
+        longest = 0.0
+        for motor in self.all_motors:
+            wanted = motor.write_params
+            try:
+                stroke = abs(float(wanted["Position 2"])
+                             - float(wanted["Position 1"]))
+                speed = max(float(
+                    wanted["Speed 1" if outbound else "Speed 2"]), 1.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            longest = max(longest, stroke / speed)
+        # Generous: arrival is detected by position, so this is only a cap.
+        return min(max(longest * 2.0 + 2.0, 3.0), MAX_STROKE_SECONDS)
+
+    def _hold_and_watch(self, tag: str, seconds: float) -> Optional[Dict[int, float]]:
         """Hold a command bit and record how far each piston actually travels.
 
         Both the single stroke and the curve used to set a bit, wait a fixed
         five seconds, clear it and report success -- whether or not anything had
         moved. That is why they felt like they did nothing: there was no way to
         tell a working stroke from a bit that the ladder ignored.
+
+        Returns None, rather than an empty travel dict, if `_begin_motion`
+        refuses to raise the bit at all -- which happens when a Stop lands
+        between `_start_worker`'s own HOMED/RUNNING check and here. The watch
+        loop must not run in that case: it would measure zero travel from
+        pistons nothing was ever commanded to move, and the caller would
+        report that as the "Nothing moved ... the controller is not in Run"
+        controller fault, for a stop the operator asked for themselves.
         """
         lowest: Dict[int, float] = {}
         highest: Dict[int, float] = {}
@@ -1428,14 +2012,20 @@ class Model:
                 highest[axis] = max(highest.get(axis, where), where)
 
         sample()
-        self.plc.write(tag, 1)
+        began = self._begin_motion(tag)
         try:
-            deadline = time.time() + seconds
-            while time.time() < deadline and not self._stop_requested.is_set():
-                sample()
-                time.sleep(STOP_POLL_INTERVAL)
+            if began:
+                deadline = time.time() + seconds
+                while time.time() < deadline and not self._stop_requested.is_set():
+                    self._apply_pending_live_stroke()
+                    sample()
+                    time.sleep(STOP_POLL_INTERVAL)
         finally:
+            # Cleared unconditionally, whether or not it was ever raised:
+            # cheap, and leaves nothing to chance about the bit's state.
             self.plc.write(tag, 0)
+        if not began:
+            return None
         sample()
 
         return dict(
@@ -1496,8 +2086,17 @@ class Model:
         command holds the worker, which is exactly when it is needed.
         """
         already_stopping = self._stopping.is_set() or self._parking.is_set()
+        # Escape and the Stop button can land on this at the same instant
+        # from different threads; a bare read-increment-write here could lose
+        # one of them, or hand out the same serial to both, and this serial
+        # is exactly what tells a stale graceful-stop worker (see
+        # _graceful_stop_worker) that it has been superseded.
+        with self._motion_lock:
+            self._stop_serial += 1
+            serial = self._stop_serial
         if already_stopping:
             immediate = True  # second press means "now"
+            park = False
 
         self._cancel_park.set()
 
@@ -1510,12 +2109,15 @@ class Model:
             self._stop_requested.set()
             return self._halt_and_rest(park, waited=False)
 
-        self._spawn("Stop", lambda: self._graceful_stop_worker(park))
+        self._stopping.set()
+        self._spawn("Stop", lambda: self._graceful_stop_worker(park, serial))
         return True
 
-    def _graceful_stop_worker(self, park: Optional[bool]) -> None:
+    def _graceful_stop_worker(self, park: Optional[bool], serial=None) -> None:
         self._stopping.set()
         try:
+            if serial is not None and serial != self._stop_serial:
+                return
             self.bridge.status("Finishing the stroke...")
             waited = self._wait_for_stroke_end()
         except PlcError as exc:
@@ -1523,16 +2125,24 @@ class Model:
             waited = False
         finally:
             self._stopping.clear()
+        if serial is not None and serial != self._stop_serial:
+            return
         self._stop_requested.set()
         self._halt_and_rest(park, waited=waited)
 
     def _wait_for_stroke_end(self) -> bool:
-        """Wait until every piston is near an end of its stroke.
+        """Wait until every readable piston is near an end of its stroke.
 
         Returns True if they got there, False on timeout. A timeout is not a
         failure: with a staggered wave the pistons are deliberately out of step
         and may never all be at an end together, and the resting move that
         follows puts them somewhere known anyway.
+
+        An axis whose position cannot be read is skipped, not counted as "not
+        at rest": this is the exact fault this application exists to cope
+        with, and one flaky axis used to force every graceful Stop to sit out
+        the whole timeout even when every other piston was already parked on
+        an endpoint. It is recorded so the display can flag it.
         """
         deadline = time.time() + GRACEFUL_STOP_SECONDS
         while time.time() < deadline:
@@ -1541,10 +2151,15 @@ class Model:
             if self._stop_requested.is_set():
                 return False
             at_rest = True
+            unreadable = []
             for motor in self.all_motors:
                 try:
                     actual = motor.read_position(self.plc)
                 except (PlcError, TypeError, ValueError):
+                    unreadable.append(motor.axis)
+                    continue
+                if not math.isfinite(actual):
+                    unreadable.append(motor.axis)
                     continue
                 ends = (
                     motor.write_params["Position 1"],
@@ -1553,6 +2168,8 @@ class Model:
                 if min(abs(actual - end) for end in ends) > STROKE_END_TOLERANCE:
                     at_rest = False
                     break
+            if unreadable:
+                self.unreadable_axes = unreadable
             if at_rest:
                 return True
             time.sleep(STOP_POLL_INTERVAL)
@@ -1561,7 +2178,7 @@ class Model:
     def _halt_and_rest(self, park: Optional[bool], waited: bool) -> bool:
         """Drop the run bits, then move the pistons to their resting position."""
         try:
-            self.all_stop()
+            self.all_stop(include_home=self._state is MachineState.PREPARING)
         except PlcError as exc:
             LOGGER.critical("STOP FAILED: %s", exc)
             self.bridge.problem(
@@ -1575,8 +2192,31 @@ class Model:
         # Nothing is being watched once the run ends, so stale warnings must not
         # be left on screen looking like a live fault.
         self.clear_lag_warnings()
+        # A monitor tick can be inside _apply_pending_live_stroke_locked
+        # right now, holding _motion_lock while it reads and writes these
+        # same fields -- clearing them here without the same lock would race
+        # it: the monitor's own update could land in between and leave the
+        # fields part-cleared, part-stale.
+        with self._motion_lock:
+            self._pending_live_stroke = None
+            self._pending_live_stroke_axes = []
+            self._pending_live_stroke_applied = set()
         self._run_mode = None
-        if self._state in (MachineState.RUNNING, MachineState.PREPARING):
+        if self._state is MachineState.PREPARING:
+            if self._staging.is_set():
+                # Staging the cascade before a continuous run also runs with
+                # the state at PREPARING, but it never touches homing. Reading
+                # this the same as an interrupted homing pass would throw
+                # away a full Calibrate All (_homed_axes.clear()) and drop to
+                # READY, which then fails the "state is HOMED" park condition
+                # below -- so a Stop here left the pistons on their staging
+                # points, unrested, and un-homed the whole array for nothing.
+                self._staging.clear()
+                self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
+            else:
+                self._homed_axes.clear()
+                self._set_state(MachineState.READY if self.sets else MachineState.IDLE)
+        elif self._state is MachineState.RUNNING:
             self._set_state(MachineState.HOMED if self.sets else MachineState.IDLE)
 
         should_park = PARK_ON_STOP if park is None else park
@@ -1585,8 +2225,15 @@ class Model:
             and self.rest_position != REST_HOLD
             and self._state is MachineState.HOMED
             and self.all_motors
+            # A single stroke, a curve and an analytics-recording continuous run
+            # all hold _busy for the whole run, so a Stop landing mid-run always
+            # sees busy is True. _park_worker's own non-blocking _busy.acquire()
+            # is the real arbiter of "is something else already running" -- this
+            # condition only needs to stop a second resting move overlapping.
             and not self._parking.is_set()   # one resting move at a time
         ):
+            self._cancel_park.clear()
+            self._parking.set()
             self._spawn("Rest", self._park_worker)
         else:
             self.bridge.status("Motors stopped.")
@@ -1606,7 +2253,9 @@ class Model:
 
     def _park_worker(self) -> None:
         """Move the pistons to their resting position and confirm they arrive."""
-        self._cancel_park.clear()
+        if not self._busy.acquire(timeout=PARK_ACQUIRE_TIMEOUT_SECONDS):
+            self._parking.clear()
+            return
         self._parking.set()
         where = "top" if self.rest_position == REST_UP else "bottom"
         try:
@@ -1627,6 +2276,7 @@ class Model:
             self.bridge.status("Stopped, but the pistons could not be moved to rest.")
         finally:
             self._parking.clear()
+            self._busy.release()
 
     def _park_moves(self) -> bool:
         """Command the resting move and watch until the pistons get there.
@@ -1635,6 +2285,15 @@ class Model:
         held Run_1 high for a fixed six seconds and simply hoped; the positions
         are published continuously, so there is no need to guess.
         """
+        try:
+            return self._park_moves_inner()
+        finally:
+            try:
+                self.plc.write(tags.RUN_SINGLE, 0)
+            finally:
+                self._forget_written_params()
+
+    def _park_moves_inner(self) -> bool:
         targets = {}
         for motor in self.all_motors:
             if self._cancel_park.is_set():
@@ -1652,18 +2311,17 @@ class Model:
         if self._cancel_park.is_set():
             return False
 
-        self.plc.write(tags.RUN_SINGLE, 1)
+        with self._motion_lock:
+            if self._cancel_park.is_set():
+                return False
+            self.plc.write(tags.RUN_SINGLE, 1)
         arrived = False
         deadline = time.time() + PARK_SECONDS
-        try:
-            while time.time() < deadline and not self._cancel_park.is_set():
-                if self._all_within(targets, PARK_TOLERANCE):
-                    arrived = True
-                    break
-                time.sleep(STOP_POLL_INTERVAL)
-        finally:
-            self.plc.write(tags.RUN_SINGLE, 0)
-            self._forget_written_params()
+        while time.time() < deadline and not self._cancel_park.is_set():
+            if self._all_within(targets, PARK_TOLERANCE):
+                arrived = True
+                break
+            time.sleep(STOP_POLL_INTERVAL)
         return arrived
 
     def _all_within(self, targets: Dict[int, int], tolerance: float) -> bool:
@@ -1674,7 +2332,7 @@ class Model:
                 )
             except (PlcError, TypeError, ValueError):
                 return False
-            if abs(actual - target) > tolerance:
+            if not math.isfinite(actual) or abs(actual - target) > tolerance:
                 return False
         return True
 
@@ -1786,6 +2444,7 @@ class Model:
         while not self._monitor_stop.is_set():
             if self._state is MachineState.RUNNING:
                 try:
+                    self._apply_pending_live_stroke()
                     self._poll_positions()
                 except PlcError as exc:
                     # A failed poll is not worth interrupting a run for; the
@@ -1984,6 +2643,7 @@ class Model:
     def shutdown(self) -> None:
         """Stop the machine and close the connection. Called when the window closes."""
         self.stop_monitoring()
+        self._shutdown.set()
         self._cancel_park.set()
         self._stop_requested.set()
         try:

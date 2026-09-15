@@ -222,8 +222,19 @@ class SimulatedMachine(SimulatedPlc):
             out_speed = max(float(self._param(axis, "Speed 1")), 1.0)
             back_speed = max(float(self._param(axis, "Speed 2")), 1.0)
 
-            target = second if piston.outbound else first
-            speed = out_speed if piston.outbound else back_speed
+            if one_stroke:
+                # Run_1 is an absolute move to Position 1 and never reads
+                # Position 2 -- measured on the real array, where a piston
+                # already sitting at Position 1 did not move for three
+                # successive pulses. The mock used to run a full out-and-back
+                # here, which is why One stroke looked right in simulation and
+                # did half of nothing at the machine. Model._single_stroke
+                # builds a real stroke out of two of these moves.
+                target = first
+                speed = out_speed
+            else:
+                target = second if piston.outbound else first
+                speed = out_speed if piston.outbound else back_speed
 
             # A dwell at the end of a leg, from Time 1 and Time 2. These are
             # milliseconds on the drive and were ignored here entirely, so a
@@ -241,9 +252,9 @@ class SimulatedMachine(SimulatedPlc):
                 dwell_ms = float(self._param(
                     axis, "Time 2" if piston.outbound else "Time 1"))
                 piston.dwell_left = max(dwell_ms, 0.0) / 1000.0
-                if one_stroke and not piston.outbound:
+                if one_stroke:
                     self._follow(piston, speed, dt)
-                    continue  # a single stroke ends back at Position 1
+                    continue  # Run_1 arrives at Position 1 and stays there
                 piston.outbound = not piston.outbound
 
             # The piston follows it, and a worn one cannot quite keep up.

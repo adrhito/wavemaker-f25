@@ -624,15 +624,19 @@ class TestTravellingWaveBehaviour:
             "front staged at {0}, back at {1}: the back leads".format(front, back)
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="app/simulator.py:140-158 only resets a piston's direction on a "
-               "tick with every run bit low. Model._stage_cascade drops Run_1 "
-               "and raises Run_2 with no tick in between, so whether the array "
-               "sets off up or down -- and therefore which way the wave travels "
-               "-- depends on scheduling",
-    )
     def test_the_direction_of_travel_does_not_depend_on_scheduling(self, frozen):
+        """Which way the wave travels must not depend on thread timing.
+
+        This was a strict xfail: the mock only reset a piston's direction on a
+        tick with every run bit low, and _stage_cascade drops Run_1 and raises
+        Run_2 with no tick in between, so ``outbound`` survived staging as
+        whatever the last tick happened to leave it.
+
+        Fixed by correcting what Run_1 means. It is an absolute move to
+        Position 1 at the machine, so the mock no longer flips ``outbound``
+        during it -- and staging, which is built out of Run_1 moves, can no
+        longer leave the direction unpredictable.
+        """
         """Stage, stop the staging move, start the run: which way do they go?"""
         arm(frozen, axes=[0], pos1=0, pos2=300, speed=300)
 

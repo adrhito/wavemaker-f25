@@ -196,3 +196,67 @@ class TestTheWaveTabCanSendIt:
             "a front-to-back wave must not stagger within a column"
         )
         assert all(m.write_params["Curve ID"] == 1 for m in motors)
+
+
+class TestTheStagingHonoursIt:
+    """Model.cascade_targets: the part continuous motion actually reads."""
+
+    def _model(self, across, step=100):
+        from Model import Model
+
+        model = Model(simulate=True)
+        model.set_selection(list(range(tags.MOTOR_COUNT)))
+        model.create_set("cascade")
+        result = patterns.build(
+            list(range(tags.MOTOR_COUNT)), "Curve Offset", patterns.STAGGER,
+            start=0, step=step, across=across,
+        )
+        for motor in model.all_motors:
+            motor.set_param("Position 1", 0)
+            motor.set_param("Position 2", 300)
+            motor.set_param("Curve Offset", result.values[motor.axis])
+        return model
+
+    def test_a_row_stagger_starts_the_three_rows_at_different_heights(self):
+        targets = self._model(patterns.ACROSS_ROWS).cascade_targets()
+        by_row = {}
+        for axis, target in targets.items():
+            by_row.setdefault(row_of(axis), set()).add(target)
+        assert by_row[0] == {0}, "the top row should start at Position 1"
+        assert by_row[1] == {150}, "the middle row should start half way up"
+        assert by_row[2] == {300}, "the bottom row should start at Position 2"
+
+    def test_pistons_sharing_a_column_no_longer_stage_identically(self):
+        """The defect: a column was collapsed to one offset and rows lost.
+
+        Pistons 1, 2 and 3 are one column, so this is the case that used to
+        come out as three pistons starting in exactly the same place.
+        """
+        targets = self._model(patterns.ACROSS_ROWS).cascade_targets()
+        front = [targets[a] for a in range(tags.MOTOR_COUNT)
+                 if column_of(a) == 0]
+        assert sorted(front) == [0, 150, 300]
+
+    def test_a_front_to_back_stagger_still_stages_by_column(self):
+        """The mode that already worked must be unchanged by keying per axis.
+
+        A front-to-back stagger gives every piston in a column the same Curve
+        Offset, so reading each piston's own value lands on the same answer.
+        """
+        targets = self._model(patterns.ACROSS_COLUMNS, step=20).cascade_targets()
+        for column in range(tags.COLUMN_COUNT):
+            shared = {targets[a] for a in range(tags.MOTOR_COUNT)
+                      if column_of(a) == column}
+            assert len(shared) == 1, (
+                "column {0} staged unevenly: {1}".format(column, shared)
+            )
+        front = next(targets[a] for a in range(tags.MOTOR_COUNT)
+                     if column_of(a) == 0)
+        back = next(targets[a] for a in range(tags.MOTOR_COUNT)
+                    if column_of(a) == tags.COLUMN_COUNT - 1)
+        assert front < back, "the wave must still lead from the front"
+
+    def test_no_stagger_means_no_staging_at_all(self):
+        """The common case, and it must stay free."""
+        model = self._model(patterns.ACROSS_ROWS, step=0)
+        assert model.cascade_targets() == {}
