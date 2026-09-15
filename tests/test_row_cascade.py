@@ -122,3 +122,77 @@ class TestThePatternToolCanExpressIt:
         assert len(offsets) == tags.ROWS_PER_COLUMN, (
             "pistons 1, 2 and 3 share a column and must still differ"
         )
+
+
+class TestTheWaveTabCanSendIt:
+    """The other operator-facing route: Wave -> MOVES -> Rows out of step."""
+
+    def _designer(self, motors, direction):
+        from types import SimpleNamespace
+
+        from wave import WaveDesigner as designer_module
+
+        class FakeSet(list):
+            pass
+
+        designer = designer_module.WaveDesigner.__new__(
+            designer_module.WaveDesigner)
+        designer.model = SimpleNamespace(
+            sets=[FakeSet(motors)], mark_unprepared=lambda: None
+        )
+        designer.shape = waves.SHAPES[0]
+        designer.height = SimpleNamespace(get=lambda: 200)
+        designer.period = SimpleNamespace(get=lambda: 2.0)
+        designer.direction = SimpleNamespace(get=lambda: direction)
+        designer.result = SimpleNamespace(configure=lambda **kw: None)
+        designer.view = SimpleNamespace(status=lambda m: None,
+                                        refresh_all=lambda: None)
+        designer.logger = SimpleNamespace(info=lambda *a: None)
+        designer.send()
+        return designer
+
+    def test_a_cascade_gives_each_row_its_own_offset(self):
+        from Motor import Motor
+
+        motors = [Motor(a) for a in range(tags.MOTOR_COUNT)]
+        self._designer(motors, waves.CASCADING)
+
+        by_row = {}
+        for motor in motors:
+            by_row.setdefault(
+                row_of(motor.axis), set()
+            ).add(motor.write_params["Curve Offset"])
+
+        assert all(len(v) == 1 for v in by_row.values()), (
+            "every piston in a row must share one offset"
+        )
+        assert len({next(iter(v)) for v in by_row.values()}) == 3, (
+            "the three rows must differ, or nothing is out of step"
+        )
+
+    def test_a_cascade_is_not_turned_into_a_curve(self):
+        """Continuous motion stages it; only a travelling wave needs a curve.
+
+        Setting Curve ID here would send the operator to Start Curve for a
+        design that an ordinary Start handles perfectly well.
+        """
+        from Motor import Motor
+
+        motors = [Motor(a) for a in range(tags.MOTOR_COUNT)]
+        before = {m.axis: m.write_params["Curve ID"] for m in motors}
+        self._designer(motors, waves.CASCADING)
+        assert all(m.write_params["Curve ID"] == before[m.axis]
+                   for m in motors)
+
+    def test_a_travelling_wave_still_staggers_by_column(self):
+        """The mode that already worked must not have been disturbed."""
+        from Motor import Motor
+
+        motors = [Motor(a) for a in range(tags.MOTOR_COUNT)]
+        self._designer(motors, waves.TRAVELLING)
+
+        front = [m for m in motors if column_of(m.axis) == 0]
+        assert len({m.write_params["Curve Offset"] for m in front}) == 1, (
+            "a front-to-back wave must not stagger within a column"
+        )
+        assert all(m.write_params["Curve ID"] == 1 for m in motors)

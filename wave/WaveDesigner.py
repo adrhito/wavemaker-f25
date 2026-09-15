@@ -139,9 +139,10 @@ class WaveDesigner:
             [
                 (waves.TOGETHER, "All together"),
                 (waves.TRAVELLING, "Travelling front to back"),
+                (waves.CASCADING, "Rows out of step"),
             ],
             command=self._direction_changed,
-            width=300,
+            width=420,
             height=28,
         )
         self.direction_control.canvas.configure(background=theme.SURFACE)
@@ -181,10 +182,12 @@ class WaveDesigner:
     # -- behaviour ------------------------------------------------------------
 
     def _direction_changed(self, value) -> None:
-        """All together, or running front to back along the chamber.
+        """All together, front to back along the chamber, or rows out of step.
 
         A travelling wave needs per-column timing, which only the controller's
-        curve feature provides -- so this also changes which button runs it.
+        curve feature provides -- so that choice also changes which button runs
+        it. A row cascade does not: it is staged as a starting position per
+        piston, which an ordinary continuous run holds by itself.
         """
         self.direction.set(value)
         self._changed()
@@ -248,9 +251,14 @@ class WaveDesigner:
         margin = 20
         usable = width - margin * 2
         columns = 10
-        travelling = self.direction.get() == waves.TRAVELLING
+        direction = self.direction.get()
+        travelling = direction == waves.TRAVELLING
+        cascading = direction == waves.CASCADING
+        rows = tags.ROWS_PER_COLUMN
 
-        # Surface line: what the water is doing, roughly.
+        # Surface line: what the water is doing, roughly. A row cascade does
+        # not lean the surface -- every column is doing the same thing as every
+        # other -- so only a travelling wave tilts it.
         points = []
         for step in range(int(usable)):
             t = step / float(usable)
@@ -260,16 +268,27 @@ class WaveDesigner:
         if len(points) >= 4:
             c.create_line(*points, fill="#4fc3f7", width=2, smooth=True)
 
-        # The pistons below it.
+        # The pistons below it. A cascade is the one case where the three rows
+        # of a column are not doing the same thing, so it is drawn as three
+        # separate bars: the whole point of the mode is that they differ.
+        band = PREVIEW_H * 0.24
         for column in range(columns):
             x = margin + (column + 0.5) * usable / columns
-            phase = self._phase + (column / float(columns) * 1.5 if travelling else 0.0)
-            level = (self.shape.sample(phase) + 1.0) / 2.0
-            top = PREVIEW_H * 0.58 + (1.0 - level) * (PREVIEW_H * 0.24)
-            c.create_rectangle(
-                x - 9, top, x + 9, PREVIEW_H - 8,
-                fill="#30d158", outline="",
-            )
+            lead = column / float(columns) * 1.5 if travelling else 0.0
+            if not cascading:
+                level = (self.shape.sample(self._phase + lead) + 1.0) / 2.0
+                top = PREVIEW_H * 0.58 + (1.0 - level) * band
+                c.create_rectangle(x - 9, top, x + 9, PREVIEW_H - 8,
+                                   fill="#30d158", outline="")
+                continue
+            width_each = 18.0 / rows
+            for row in range(rows):
+                level = (self.shape.sample(
+                    self._phase + lead + row / float(rows)) + 1.0) / 2.0
+                top = PREVIEW_H * 0.58 + (1.0 - level) * band
+                x0 = x - 9 + row * width_each
+                c.create_rectangle(x0, top, x0 + width_each - 1, PREVIEW_H - 8,
+                                   fill="#30d158", outline="")
 
         c.create_text(
             margin, PREVIEW_H - 4, anchor="sw",
@@ -328,22 +347,35 @@ class WaveDesigner:
                 motor.update_params(values)
                 count += 1
 
-        travelling = self.direction.get() == waves.TRAVELLING
-        if travelling:
-            offsets = waves.column_offsets(period)
+        direction = self.direction.get()
+        travelling = direction == waves.TRAVELLING
+        cascading = direction == waves.CASCADING
+
+        if travelling or cascading:
+            # Both stagger Curve Offset; they differ only in what the offset is
+            # keyed on. Front to back delays each column, so a crest runs the
+            # length of the chamber. Rows out of step delays each row instead,
+            # so within every column one piston is near the top of its stroke,
+            # one near the middle and one near the bottom -- all of them on the
+            # identical stroke and speed.
+            offsets = (waves.column_offsets(period) if travelling
+                       else waves.row_offsets(period, tags.ROWS_PER_COLUMN))
             for motor_set in self.model.sets:
                 for motor in motor_set:
-                    # The offsets are keyed front to back, so they have to be
-                    # read by where the piston sits in the picture and not by
+                    # Keyed by where the piston sits in the picture, never by
                     # its axis: axis 0 is piston 30, at the far end of the
                     # chamber. Indexing by axis // 3 gave the front column the
                     # largest delay, so the wave marched the opposite way to
                     # the one the Pattern tool produces for the same request.
-                    column = (
-                        tags.display_number(motor.axis) - 1
-                    ) // tags.ROWS_PER_COLUMN
-                    motor.set_param("Curve Offset", offsets[column])
-                    motor.set_param("Curve ID", 1)
+                    place = tags.display_number(motor.axis) - 1
+                    index = (place // tags.ROWS_PER_COLUMN if travelling
+                             else place % tags.ROWS_PER_COLUMN)
+                    motor.set_param("Curve Offset", offsets[index])
+                    if travelling:
+                        # Only a curve run reads the per-leg timing. A row
+                        # cascade is staged as a starting position instead, so
+                        # it must not be turned into a curve.
+                        motor.set_param("Curve ID", 1)
 
         self.model.mark_unprepared()
         actual = waves.achievable_period(height, period)
@@ -353,12 +385,17 @@ class WaveDesigner:
                 self.shape.name, count, height, values["Speed 1"], actual
             )
         )
-        how = (
-            "  Go to Operate, choose Curve and press Start -- a travelling wave "
-            "needs the curve feature, because the per-column timing lives there."
-            if travelling else
-            "  Go to Operate and press Start."
-        )
+        if travelling:
+            how = ("  Go to Operate, choose Curve and press Start -- a "
+                   "travelling wave needs the curve feature, because the "
+                   "per-column timing lives there.")
+        elif cascading:
+            how = ("  Go to Operate and press Start. The rows are staggered by "
+                   "starting each one at a different point in the stroke, "
+                   "which ordinary continuous motion holds for as long as the "
+                   "run lasts.")
+        else:
+            how = "  Go to Operate and press Start."
         self.result.configure(text=message + how)
         self.view.status(message)
         self.logger.info("Wave applied - %s", message)

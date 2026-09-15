@@ -138,6 +138,12 @@ TOP = params.BY_NAME["Position 1"].minimum        # -20
 #: How the array is driven.
 TOGETHER = "together"       # every piston in step; run with Start
 TRAVELLING = "travelling"   # each column delayed; needs Start Curve
+#: Each ROW delayed instead of each column, so at any moment one row is near
+#: the top of its stroke, one near the middle and one near the bottom. Runs
+#: with an ordinary Start: the delay is staged as a different starting position
+#: per piston, which continuous motion can honour, rather than as per-leg
+#: timing, which only the curve feature reads.
+CASCADING = "cascading"
 
 MIN_PERIOD = 0.4
 MAX_PERIOD = 6.0
