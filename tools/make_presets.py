@@ -21,7 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import params, patterns, paths  # noqa: E402
+from app import params, patterns, paths, tags  # noqa: E402
 
 TOP = params.BY_NAME["Position 1"].minimum          # -20, top of travel
 BOTTOM = params.BY_NAME["Position 2"].maximum       # 370, bottom of travel
@@ -33,6 +33,21 @@ def base(**overrides):
     values = params.defaults()
     values.update(overrides)
     return values
+
+
+def front_columns(count):
+    """The axes in the first ``count`` columns, counting from the front.
+
+    Axis numbering runs from the far end of the chamber towards the operator,
+    so the front four columns are axes 18 to 29 and not 0 to 11. Working it out
+    from the displayed piston number keeps a preset pointed at the same pistons
+    as the picture and as Operate's "Select front 4 columns" button, instead of
+    at their mirror image at the other end of the tank.
+    """
+    return [
+        axis for axis in range(tags.MOTOR_COUNT)
+        if (tags.display_number(axis) - 1) // tags.ROWS_PER_COLUMN < count
+    ]
 
 
 def uniform(values, axes=range(30)):
@@ -214,7 +229,7 @@ add(
         "Speed 1": 400, "Speed 2": 400,
         "Accel 1": 9000, "Accel 2": 9000, "Decel 1": 9000, "Decel 2": 9000,
         "Jerk 1": 3500, "Jerk 2": 3500,
-    }), axes=range(12)),
+    }), axes=front_columns(4)),
     "Values for the front four columns only, low in the travel, for use when "
     "the tank is shallow. Select the front four columns before applying it.",
 )

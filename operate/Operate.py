@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from logging import Logger, getLogger
-from tkinter import StringVar, messagebox, ttk
+from tkinter import DoubleVar, StringVar, messagebox, ttk
 from typing import Dict, List, Optional
 
 from app import params, tags
@@ -44,6 +44,15 @@ from style import theme
 
 MIXED = "--"
 
+#: Width of the stroke and speed sliders. Both are given the same explicit
+#: length so the two controls read as a matched pair rather than one short
+#: slider beside one that stretches across half the window.
+SLIDER_WIDTH = 200
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
 
 class Operate:
     """The Operate tab."""
@@ -58,6 +67,9 @@ class Operate:
 
         self.editing: Optional[MotorSet] = None
         self._refreshing = False
+        #: Set while a slider is driving an entry box, so the entry box does
+        #: not immediately drive the slider back and fight the drag.
+        self._dragging = False
         self._invalid: Dict[str, str] = {}
 
         self.tab.columnconfigure(0, weight=1)
@@ -83,6 +95,8 @@ class Operate:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(1, weight=1)
 
+        # The window title already says what this application is; a second
+        # "WAVEMAKER" heading here only pushed the connection line down.
         self.connection_label = ttk.Label(header, text="", style="Dim.TLabel")
         self.connection_label.grid(row=0, column=0, sticky="w")
 
@@ -174,44 +188,84 @@ class Operate:
     def _build_controls(self, parent) -> None:
         card = ttk.Frame(parent, style="Card.TFrame",
                          padding=(theme.GUTTER, theme.GAP + 4, theme.GUTTER, theme.GAP + 4))
-        card.grid(row=2, column=0, sticky="ew", pady=(theme.GAP, 0))
-        card.columnconfigure(4, weight=1)
+        card.grid(row=3, column=0, sticky="ew", pady=(theme.GAP, 0))
+        # Only the spacer column stretches, so the two fields stay together on
+        # the left and the buttons stay pinned to the right. Letting the speed
+        # column take the slack is what left half a window of empty card
+        # between "STROKE" and the speed box.
+        card.columnconfigure(2, weight=1)
 
         # -- the two numbers that matter -------------------------------------
-        ttk.Label(card, text="STROKE", style="CardDim.TLabel").grid(
-            row=0, column=0, sticky="w", columnspan=3
-        )
-        self.pos1_var = StringVar()
-        self.pos2_var = StringVar()
-        self.pos1_entry = ttk.Entry(card, textvariable=self.pos1_var, width=6,
-                                    justify="center")
-        self.pos2_entry = ttk.Entry(card, textvariable=self.pos2_var, width=6,
-                                    justify="center")
-        self.pos1_entry.grid(row=1, column=0, pady=(4, 0))
-        ttk.Label(card, text="to", style="CardDim.TLabel").grid(
-            row=1, column=1, padx=theme.TIGHT, pady=(4, 0)
-        )
-        self.pos2_entry.grid(row=1, column=2, pady=(4, 0))
-        ttk.Label(card, text="mm", style="CardDim.TLabel").grid(
-            row=1, column=3, padx=(theme.TIGHT, theme.GUTTER), pady=(4, 0), sticky="w"
+        stroke = ttk.Frame(card, style="Card.TFrame")
+        stroke.grid(row=0, column=0, sticky="nw")
+        ttk.Label(stroke, text="STROKE", style="CardDim.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
 
+        fields = ttk.Frame(stroke, style="Card.TFrame")
+        fields.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.pos1_var = StringVar()
+        self.pos2_var = StringVar()
+        self.pos1_entry = ttk.Entry(fields, textvariable=self.pos1_var, width=6,
+                                    justify="center")
+        self.pos2_entry = ttk.Entry(fields, textvariable=self.pos2_var, width=6,
+                                    justify="center")
+        self.pos1_entry.grid(row=0, column=0)
+        ttk.Label(fields, text="to", style="CardDim.TLabel").grid(
+            row=0, column=1, padx=theme.TIGHT
+        )
+        self.pos2_entry.grid(row=0, column=2)
+        ttk.Label(fields, text="mm", style="CardDim.TLabel").grid(
+            row=0, column=3, padx=(theme.TIGHT, 0), sticky="w"
+        )
+
+        self.stroke_slider_var = DoubleVar()
+        self.stroke_slider = ttk.Scale(
+            stroke, from_=1, to=370, variable=self.stroke_slider_var,
+            command=self._stroke_slider_changed, length=SLIDER_WIDTH,
+            style="Horizontal.TScale",
+        )
+        self.stroke_slider.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        Tooltip(self.stroke_slider,
+                "Drag to change the stroke.\n"
+                "Let go while the machine is running and it is applied\n"
+                "at the end of the stroke.")
+
         speed = ttk.Frame(card, style="Card.TFrame")
-        speed.grid(row=0, column=4, rowspan=2, sticky="w")
+        speed.grid(row=0, column=1, sticky="nw", padx=(theme.GUTTER * 2, 0))
         ttk.Label(speed, text="SPEED", style="CardDim.TLabel").grid(
-            row=0, column=0, sticky="w", columnspan=2
+            row=0, column=0, sticky="w"
         )
+
+        rate = ttk.Frame(speed, style="Card.TFrame")
+        rate.grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.speed_var = StringVar()
-        self.speed_entry = ttk.Entry(speed, textvariable=self.speed_var, width=6,
+        self.speed_entry = ttk.Entry(rate, textvariable=self.speed_var, width=6,
                                      justify="center")
-        self.speed_entry.grid(row=1, column=0, pady=(4, 0))
-        ttk.Label(speed, text="mm/s", style="CardDim.TLabel").grid(
-            row=1, column=1, padx=(theme.TIGHT, 0), pady=(4, 0), sticky="w"
+        self.speed_entry.grid(row=0, column=0)
+        ttk.Label(rate, text="mm/s", style="CardDim.TLabel").grid(
+            row=0, column=1, padx=(theme.TIGHT, 0), sticky="w"
         )
+
+        self.rate_slider_var = DoubleVar()
+        self.rate_slider = ttk.Scale(
+            speed, from_=1, to=900, variable=self.rate_slider_var,
+            command=self._rate_slider_changed, length=SLIDER_WIDTH,
+            style="Horizontal.TScale",
+        )
+        self.rate_slider.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        Tooltip(self.rate_slider,
+                "Drag to change the speed.\n"
+                "Let go while the machine is running and it is applied\n"
+                "straight away.")
+        self.stroke_slider.bind("<ButtonRelease-1>",
+                                lambda _event: self._apply_slider_live("stroke"))
+        self.rate_slider.bind("<ButtonRelease-1>",
+                              lambda _event: self._apply_slider_live("rate"))
 
         # -- everything else --------------------------------------------------
         more = ttk.Frame(card, style="Card.TFrame")
-        more.grid(row=0, column=5, rowspan=2, sticky="e")
+        more.grid(row=0, column=3, sticky="ne")
         self.params_button = RoundedButton(
             more, "All parameters", self.open_parameters, size="small", width=120
         )
@@ -239,12 +293,12 @@ class Operate:
 
         self.problem_label = ttk.Label(card, text="", style="CardDim.TLabel",
                                        wraplength=900, justify="left")
-        self.problem_label.grid(row=2, column=0, columnspan=6, sticky="w",
+        self.problem_label.grid(row=1, column=0, columnspan=4, sticky="w",
                                 pady=(theme.GAP, 0))
 
         # -- group selector, hidden until there is more than one --------------
         self.group_row = ttk.Frame(card, style="Card.TFrame")
-        self.group_row.grid(row=3, column=0, columnspan=6, sticky="w",
+        self.group_row.grid(row=2, column=0, columnspan=4, sticky="w",
                             pady=(theme.GAP, 0))
         ttk.Label(self.group_row, text="Editing", style="CardDim.TLabel").grid(
             row=0, column=0, padx=(0, theme.TIGHT)
@@ -263,7 +317,7 @@ class Operate:
 
         # -- run --------------------------------------------------------------
         run = ttk.Frame(parent)
-        run.grid(row=3, column=0, sticky="ew", pady=(theme.GAP, 0))
+        run.grid(row=4, column=0, sticky="ew", pady=(theme.GAP, 0))
         run.columnconfigure(2, weight=1)
 
         self.mode = Segmented(
@@ -422,6 +476,13 @@ class Operate:
                 self._invalid[name] = str(exc)
                 continue
             self._invalid.pop(name, None)
+            # While moving, the speed entry is a live command field. Do not
+            # mark the run unprepared on every keystroke; Apply sends the
+            # complete validated value in one serialized PLC update.
+            if self.model.state is MachineState.RUNNING and name in (
+                "Speed 1", "Position 1", "Position 2"
+            ):
+                continue
             if group is not None:
                 group.set_param(name, value)
                 if name == "Speed 1":
@@ -431,8 +492,58 @@ class Operate:
                 self.model.set_pending_param(name, value)
                 if name == "Speed 1":
                     self.model.set_pending_param("Speed 2", value)
+        if not self._dragging:
+            self._sync_sliders()
         self._show_problems()
         self.tank.show_strokes(self._strokes())
+
+    def _stroke_slider_changed(self, raw) -> None:
+        if self._refreshing or self._dragging:
+            return
+        self._dragging = True
+        try:
+            stroke = max(1, int(round(float(raw))))
+            low = int(float(self.pos1_var.get()))
+            self.pos2_var.set(str(min(370, low + stroke)))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            self._dragging = False
+
+    def _rate_slider_changed(self, raw) -> None:
+        if self._refreshing or self._dragging:
+            return
+        self._dragging = True
+        try:
+            self.speed_var.set(str(max(1, int(round(float(raw))))))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            self._dragging = False
+
+    def _apply_slider_live(self, kind) -> None:
+        if self.model.state is not MachineState.RUNNING:
+            return
+        try:
+            if kind == "stroke":
+                self.model.change_stroke_live(
+                    int(round(float(self.stroke_slider_var.get())))
+                )
+            else:
+                self.model.change_speed_live(
+                    int(round(float(self.rate_slider_var.get())))
+                )
+        except (ValueError, TypeError) as exc:
+            self._say(str(exc))
+
+    def apply_live_speed(self) -> None:
+        """Apply the speed entry to the currently running selection."""
+        text = self.speed_var.get().strip()
+        try:
+            value = params.parse("Speed 1", text)
+            self.model.change_speed_live(value)
+        except (ValueError, TypeError) as exc:
+            self._say(str(exc))
 
     def _load_values(self) -> None:
         self._refreshing = True
@@ -448,16 +559,44 @@ class Operate:
                 else:
                     value = group.common_value(name)
                     var.set(MIXED if value is None else str(value))
+            # The sliders follow the boxes, whether those came from a group or
+            # from the pending defaults. Reading them only from a group left
+            # both handles parked at the far left until pistons were selected,
+            # which did not match the numbers shown right above them.
+            self._sync_sliders()
         finally:
             self._refreshing = False
 
+    def _sync_sliders(self) -> None:
+        """Put the two slider handles where the entry boxes say they are."""
+        try:
+            low = float(self.pos1_var.get())
+            high = float(self.pos2_var.get())
+        except ValueError:
+            pass  # a mixed selection, or half-typed text; leave the handle be
+        else:
+            self.stroke_slider_var.set(_clamp(high - low, 1, 370))
+
+        pending = getattr(self.model, "_pending_live_stroke", None)
+        if self.model.state is MachineState.RUNNING and pending is not None:
+            self.stroke_slider_var.set(_clamp(pending, 1, 370))
+
+        try:
+            self.rate_slider_var.set(_clamp(float(self.speed_var.get()), 1, 900))
+        except ValueError:
+            pass
+
     def _show_problems(self) -> None:
-        self.problem_label.configure(
-            text="  ".join(sorted(self._invalid.values())) if self._invalid else ""
-        )
+        self._say("  ".join(sorted(self._invalid.values())) if self._invalid else "")
 
     def _say(self, message: str) -> None:
         self.problem_label.configure(text=message)
+        # An empty label still reserves its line, which left a band of blank
+        # card under the sliders whenever there was nothing to report.
+        if message:
+            self.problem_label.grid()
+        else:
+            self.problem_label.grid_remove()
 
     # -- actions --------------------------------------------------------------
 
@@ -533,7 +672,8 @@ class Operate:
             columns = int(self.depth_var.get())
         except ValueError:
             return
-        axes = [a for a in range(30) if a // 3 < columns]
+        axes = [a for a in range(tags.MOTOR_COUNT)
+                if (tags.display_number(a) - 1) // tags.ROWS_PER_COLUMN < columns]
         free = [a for a in axes if self.model.axis_owner(a) is None
                 or self.model.axis_owner(a) is self._live_group()]
         self.model.set_selection(free)
@@ -718,7 +858,7 @@ class Operate:
             periods.append(stroke / out_speed + stroke / back_speed + dwell)
             profile = wanted.get("Profile", profile)
             # Curve Offset staggers the columns; it is what makes a wave travel.
-            column = motor.axis // tags.ROWS_PER_COLUMN
+            column = (tags.display_number(motor.axis) - 1) // tags.ROWS_PER_COLUMN
             try:
                 offsets[column] = float(wanted.get("Curve Offset", 0)) / 1000.0
             except (TypeError, ValueError):
@@ -823,9 +963,14 @@ class Operate:
 
         self._load_values()
 
-        entry_state = "disabled" if busy else "normal"
+        # Stroke and speed stay live while running -- changing them is the
+        # point of the sliders. Only homing locks them, because the values are
+        # being written to the machine at that moment.
+        entry_state = "disabled" if state is MachineState.PREPARING else "normal"
         for entry in (self.pos1_entry, self.pos2_entry, self.speed_entry):
             entry["state"] = entry_state
+        self.stroke_slider["state"] = entry_state
+        self.rate_slider["state"] = entry_state
         self.group_box["state"] = "disabled" if busy else "readonly"
         self.depth_box["state"] = "disabled" if busy else "readonly"
         self.rest.set_state("disabled" if busy else "normal")

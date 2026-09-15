@@ -15,6 +15,9 @@ Two things fell out of reading it that are worth knowing:
   homed. It is normal, not a fault, and treating it as one would flag the whole
   array every time. :func:`problems` leaves it out; :func:`describe` still names
   it if you ask for everything.
+* **Not every status bit means trouble when it is set.** Three of them read the
+  other way round, and a drive held in quick stop was reporting "no faults"
+  because the bit that says so is the one it clears. See ``STATUS_BITS``.
 """
 
 from __future__ import annotations
@@ -24,12 +27,18 @@ from typing import Dict, List, NamedTuple
 
 class Bit(NamedTuple):
     name: str
-    #: What it means when set, in the operator's terms rather than the manual's.
+    #: What it means when the bit is in the state worth reporting -- set for
+    #: most bits, clear for an ``active_low`` one -- in the operator's terms
+    #: rather than the manual's.
     meaning: str
-    #: True when the bit being set is a problem worth stopping for.
+    #: True when the bit being in that state is a problem worth stopping for.
     is_fault: bool = False
     #: True when it is expected in normal use and should not raise an alarm.
     is_routine: bool = False
+    #: True when the drive reports the condition by *clearing* the bit. Three
+    #: of the status bits read that way, and reading them like the rest makes
+    #: the fault invisible exactly when it matters -- see STATUS_BITS below.
+    active_low: bool = False
 
 
 #: Warn Word, manual section 3.25.
@@ -53,13 +62,25 @@ WARN_BITS: Dict[int, Bit] = {
 }
 
 #: Status Word, manual section 3.24.
+#
+# Bits 1, 4 and 5 are active low: the drive says everything is well by holding
+# them set, so it is the *clear* bit that is worth reporting and their
+# ``meaning`` below is written for the clear state. Bit 5 is the one that
+# matters -- a drive parked in quick stop holds bit 5 clear and sets nothing
+# else, so before this it read as "homed, no faults" while refusing to move.
+#
+# The polarity is inferred from the status table's own wording ("quick stop is
+# not active" *when the bit is set*); no vendor PDF is in the repo, so it has
+# not been confirmed against the manual and wants checking against section
+# 3.24 before anyone relies on it.
 STATUS_BITS: Dict[int, Bit] = {
     0: Bit("Operation Enabled", "the drive is enabled"),
-    1: Bit("Switch On Active", "switch-on is enabled"),
+    1: Bit("Switch On Active", "switch-on is not enabled", False, False, True),
     2: Bit("Enable Operation", "operation is enabled"),
     3: Bit("Error", "the drive is in an error state", True),
-    4: Bit("Voltage Enable", "the power bridge is on"),
-    5: Bit("Quick Stop", "quick stop is not active"),
+    4: Bit("Voltage Enable", "the power bridge is off", False, False, True),
+    5: Bit("Quick Stop", "the drive is being held in quick stop",
+           True, False, True),
     6: Bit("Switch On Locked", "switch-on is locked", True),
     7: Bit("Warning", "one or more warn word bits are set"),
     8: Bit("Event Handler Active", "an event handler is set up"),
@@ -84,6 +105,10 @@ def _set_bits(word: int, table: Dict[int, Bit]) -> List[int]:
     return [bit for bit in sorted(table) if (word >> bit) & 1]
 
 
+def _clear_bits(word: int, table: Dict[int, Bit]) -> List[int]:
+    return [bit for bit in sorted(table) if not (word >> bit) & 1]
+
+
 def describe(word: int, table: Dict[int, Bit]) -> List[str]:
     """Every bit that is set, named."""
     return [table[bit].name for bit in _set_bits(word, table)]
@@ -95,6 +120,12 @@ def problems(warn_word: int, status_word: int = 0) -> List[str]:
     Routine bits are left out. In particular a drive that has simply not been
     homed yet sets warn bit 7, which is expected and would otherwise flag every
     piston in the machine before the first homing of the day.
+
+    The active-low status bits are only consulted once the drive says it is
+    enabled (status bit 0). A word of all zeroes is what an unpowered drive --
+    and this function's own default argument -- looks like, and reading quick
+    stop out of that would flag every piston that has not been booted yet. A
+    drive that is not energised is already reported as such.
     """
     found: List[str] = []
     for bit in _set_bits(warn_word, WARN_BITS):
@@ -103,8 +134,13 @@ def problems(warn_word: int, status_word: int = 0) -> List[str]:
             found.append("{0} - {1}".format(entry.name, entry.meaning))
     for bit in _set_bits(status_word, STATUS_BITS):
         entry = STATUS_BITS[bit]
-        if entry.is_fault:
+        if entry.is_fault and not entry.active_low:
             found.append("{0} - {1}".format(entry.name, entry.meaning))
+    if (status_word >> 0) & 1:
+        for bit in _clear_bits(status_word, STATUS_BITS):
+            entry = STATUS_BITS[bit]
+            if entry.is_fault and entry.active_low:
+                found.append("{0} - {1}".format(entry.name, entry.meaning))
     return found
 
 

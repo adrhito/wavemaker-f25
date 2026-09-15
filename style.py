@@ -156,14 +156,25 @@ def style_GUI() -> None:
     style.configure("TSeparator", background=theme.DIVIDER)
 
     # ttk.Scale on Windows keeps the platform look unless every part is set.
-    style.configure("TScale", background=theme.SURFACE,
-                    troughcolor=theme.SURFACE_2, bordercolor=theme.SURFACE_2,
-                    lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)
-    style.configure("Horizontal.TScale", background=theme.SURFACE,
-                    troughcolor=theme.SURFACE_2, bordercolor=theme.SURFACE_2,
-                    lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)
-    style.map("Horizontal.TScale",
-              background=[("active", theme.SURFACE)])
+    # In clam the slider itself is drawn with ``background``, and the trough
+    # with ``troughcolor``; leaving the slider the same colour as the card is
+    # what made these look like a stray blue tick on an empty bar. The slider
+    # is the accent, the trough is the recessed surface, and every 3D edge is
+    # painted the same colour as the part it edges so nothing is bevelled.
+    for name in ("TScale", "Horizontal.TScale"):
+        style.configure(name, background=theme.ACCENT,
+                        troughcolor=theme.SURFACE_2,
+                        bordercolor=theme.SURFACE_2,
+                        lightcolor=theme.ACCENT, darkcolor=theme.ACCENT,
+                        borderwidth=0, gripcount=0, sliderthickness=16)
+        style.map(name,
+                  background=[("disabled", theme.SURFACE_3),
+                              ("active", theme.ACCENT_HOVER)],
+                  lightcolor=[("disabled", theme.SURFACE_3),
+                              ("active", theme.ACCENT_HOVER)],
+                  darkcolor=[("disabled", theme.SURFACE_3),
+                             ("active", theme.ACCENT_HOVER)],
+                  troughcolor=[("disabled", theme.SURFACE_2)])
     style.configure("TProgressbar", background=theme.ACCENT,
                     troughcolor=theme.SURFACE_2, borderwidth=0,
                     lightcolor=theme.ACCENT, darkcolor=theme.ACCENT)

@@ -75,9 +75,9 @@ class PatternResult(NamedTuple):
 def _index_of(axis: int, across: str, axes: Sequence[int]) -> int:
     """Where this axis sits along the chosen direction, counting from zero."""
     if across == ACROSS_COLUMNS:
-        return axis // 3
+        return (tags.display_number(axis) - 1) // tags.ROWS_PER_COLUMN
     if across == ACROSS_ROWS:
-        return axis % 3
+        return (tags.display_number(axis) - 1) % tags.ROWS_PER_COLUMN
     return list(axes).index(axis)
 
 
@@ -109,7 +109,7 @@ def build(
     if spec is None:
         raise KeyError("Unknown parameter: {0}".format(param))
 
-    axes = sorted(axes)
+    axes = sorted(axes, key=tags.display_number)
     if not axes:
         return PatternResult({}, [])
 

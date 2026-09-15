@@ -116,9 +116,9 @@ class View:
             fg=theme.LABEL_SECONDARY, font=("Segoe UI", 9), anchor="w",
         ).grid(row=0, column=2, sticky="ew")
 
-        self.progress = ttk.Progressbar(bar, length=190, maximum=100)
-        self.progress.grid(row=0, column=3, padx=(12, 12))
-        self.progress.grid_remove()
+        self.progress_bar = ttk.Progressbar(bar, length=190, maximum=100)
+        self.progress_bar.grid(row=0, column=3, padx=(12, 12))
+        self.progress_bar.grid_remove()
 
         # Drawn rather than a ttk.Button: ttk on Windows 7 ignores background
         # on buttons, so a red Stop is not achievable any other way.
@@ -137,12 +137,12 @@ class View:
         self.status_var.set(message)
 
     def show_progress(self, fraction: float, label: str) -> None:
-        self.progress.grid()
-        self.progress["value"] = min(max(fraction, 0.0), 1.0) * 100
+        self.progress_bar.grid()
+        self.progress_bar["value"] = min(max(fraction, 0.0), 1.0) * 100
 
     def hide_progress(self) -> None:
-        self.progress.grid_remove()
-        self.progress["value"] = 0
+        self.progress_bar.grid_remove()
+        self.progress_bar["value"] = 0
 
     def stop(self) -> None:
         """The Stop button: let the pistons finish the stroke, then rest.
@@ -209,7 +209,11 @@ class View:
 
     def _tab_changed(self, _event: object) -> None:
         index = self.tabControl.index(self.tabControl.select())
-        tabs = (self.operate, self.wave, self.preset_options, self.feedback)
+        # In notebook order. Diagnostics was missing, which shifted Feedback
+        # up a place: selecting Diagnostics ran Feedback's onSelect, and
+        # selecting Feedback ran nothing at all.
+        tabs = (self.operate, self.wave, self.preset_options,
+                self.diagnostics, self.feedback)
         for position, tab in enumerate(tabs):
             if position != index and hasattr(tab, "onLeave"):
                 tab.onLeave()

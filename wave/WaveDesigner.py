@@ -18,7 +18,7 @@ from logging import Logger, getLogger
 from tkinter import Canvas, DoubleVar, IntVar, StringVar, ttk
 from typing import Dict
 
-from app import params, waves
+from app import params, tags, waves
 from Model import MachineState, Model
 from modules.logging.log_utils import LOGGER_NAME
 from modules.widgets import RoundedButton, Segmented
@@ -333,7 +333,16 @@ class WaveDesigner:
             offsets = waves.column_offsets(period)
             for motor_set in self.model.sets:
                 for motor in motor_set:
-                    motor.set_param("Curve Offset", offsets[motor.axis // 3])
+                    # The offsets are keyed front to back, so they have to be
+                    # read by where the piston sits in the picture and not by
+                    # its axis: axis 0 is piston 30, at the far end of the
+                    # chamber. Indexing by axis // 3 gave the front column the
+                    # largest delay, so the wave marched the opposite way to
+                    # the one the Pattern tool produces for the same request.
+                    column = (
+                        tags.display_number(motor.axis) - 1
+                    ) // tags.ROWS_PER_COLUMN
+                    motor.set_param("Curve Offset", offsets[column])
                     motor.set_param("Curve ID", 1)
 
         self.model.mark_unprepared()

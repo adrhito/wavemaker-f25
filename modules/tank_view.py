@@ -26,8 +26,8 @@ Three per column, matching the machine's own grouping. Piston 1 drives axis 29.
 See :func:`app.tags.display_number`.
 
 The array is drawn rotated by half a turn from the raw axis order, so the
-picture matches the view from the operating position: the back of the chamber
-is on the left and the front, nearest the operator, on the right.
+picture matches the view from the operating position: the front, nearest the
+operator, is on the left and the back of the chamber is on the right.
 
 Each piston has a vertical bar beside it showing where it travels and, while
 running, where it actually is -- upright, because that is the direction the
@@ -55,21 +55,35 @@ TRACK_EDGE = "#3a3a3c"
 
 FREE_FILL = "#4a4a4e"
 FREE_EDGE = "#5a5a5e"
-SELECTED_EDGE = "#0a84ff"
+#: White, not the accent: the first group is now accent blue, and a blue ring
+#: around a blue paddle is no ring at all.
+SELECTED_EDGE = "#f5f5f7"
 LABEL = "#c8c8cc"
 LABEL_DIM = "#6e6e73"
 GRIP = "#f5f5f7"
 
-#: Fill per group, cycled. Apple's system colours, which stay distinguishable
-#: side by side and against the water.
+#: Fill per group, cycled. The accent leads, because the ordinary case is one
+#: group and the whole array taking the application's own blue looks like the
+#: rest of the window; the fully saturated green that used to lead turned the
+#: entire tank fluorescent the moment anybody pressed Select All. The rest stay
+#: far enough apart in hue to tell two groups apart at a glance, but are pulled
+#: back from full saturation so a tank of them is not painful to look at.
 SET_COLOURS: List[str] = [
-    "#30d158",  # green
-    "#0a84ff",  # blue
-    "#ff9f0a",  # orange
-    "#bf5af2",  # purple
-    "#ff375f",  # pink
-    "#ffd60a",  # yellow
+    "#3d8bfd",  # blue
+    "#35a85b",  # green
+    "#d98324",  # orange
+    "#9a5cd0",  # purple
+    "#d6456c",  # pink
+    "#c9a227",  # yellow
 ]
+
+
+def _readable_on(fill: str) -> str:
+    """Black or white, whichever the eye can actually read on ``fill``."""
+    red, green, blue = (int(fill[i:i + 2], 16) for i in (1, 3, 5))
+    # Rec. 601 luma, which is close enough for picking one of two.
+    luma = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+    return "#10161e" if luma > 0.6 else "#f5f5f7"
 
 POSITION_MIN = -20
 POSITION_MAX = 370
@@ -81,9 +95,8 @@ def describe_place(axis: int) -> str:
     "row 1, column 10" says nothing on its own; "top, back of chamber" is what
     the operator is actually looking at.
     """
-    row = axis % ROWS
-    column = axis // ROWS
-    vertical = ("bottom", "middle", "top")[row]
+    column, row = divmod(display_number(axis) - 1, ROWS)
+    vertical = ("top", "middle", "bottom")[row]
     if column == 0:
         depth = "front (nearest you)"
     elif column == COLUMNS - 1:
@@ -261,8 +274,8 @@ class TankView:
 
         The array is drawn rotated by half a turn from the raw axis
         numbering, so the picture matches how the machine is actually
-        looked at from the operating position: piston 28 (axis 27) sits
-        bottom left and piston 3 (axis 2) sits top right.
+        looked at from the operating position: piston 3 (axis 27) sits
+        bottom left and piston 28 (axis 2) sits top right.
         """
         row = (ROWS - 1) - axis % ROWS
         column = (COLUMNS - 1) - axis // ROWS
@@ -317,10 +330,9 @@ class TankView:
         c = self.canvas
         for slot in range(COLUMNS):
             x = m["pad_x"] + (slot + 0.5) * m["cell_w"]
-            # The drawing is rotated, so the chamber column that lands
-            # in this slot counts back from the far end.
+            # Columns count from the front, at the left of the drawing.
             c.create_text(
-                x, 10, text=str(COLUMNS - slot), fill=LABEL_DIM,
+                x, 10, text=str(slot + 1), fill=LABEL_DIM,
                 font=("Segoe UI", 8),
             )
 
@@ -338,7 +350,7 @@ class TankView:
         mid = m["width"] / 2.0
         c.create_line(
             mid - 62, baseline, mid + 62, baseline,
-            fill="#3f4a56", width=1, arrow="first", arrowshape=(7, 9, 3),
+            fill="#3f4a56", width=1, arrow="last", arrowshape=(7, 9, 3),
         )
 
     def _draw_piston(self, axis: int, m) -> None:
@@ -398,7 +410,7 @@ class TankView:
         c.create_text(
             cx, cy,
             text=str(display_number(axis)),
-            fill="#1c2530" if axis in self.set_of else LABEL,
+            fill=_readable_on(fill) if axis in self.set_of else LABEL,
             font=("Segoe UI", 8, "bold" if axis in self.set_of else "normal"),
         )
 

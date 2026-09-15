@@ -101,7 +101,8 @@ class TestItSaysWhy:
     def test_a_drive_holding_no_stroke_is_a_software_fault(self):
         """Position 1 == Position 2: it will sit still and report success."""
         report = diagnostics.diagnose(
-            Motor(14), drive(status=HEALTHY, pos1=200, pos2=200)
+            Motor(14), drive(status=HEALTHY | (1 << 13), pos1=200, pos2=200),
+            expected_live=True
         )
         assert "Software" in causes(report)
         assert "no stroke" in headlines(report)
@@ -112,7 +113,9 @@ class TestItSaysWhy:
         report = diagnostics.diagnose(
             motor, drive(status=HEALTHY, pos1=0, pos2=350)
         )
-        assert "not holding the parameters" in headlines(report)
+        assert "not holding the requested parameters" in headlines(report)
+        assert "may not have been sent yet" in report.findings[0].detail
+        assert "does not prove a failed write" in report.findings[0].detail
 
     def test_supply_voltage_is_not_called_mechanical(self):
         report = diagnostics.diagnose(
@@ -134,13 +137,14 @@ class TestItSaysWhy:
 class TestTheMovementTest:
     """The question reading cannot answer."""
 
-    def test_energised_and_did_not_move_is_certainly_mechanical(self):
+    def test_energised_and_did_not_move_is_only_possibly_mechanical(self):
         report = diagnostics.diagnose(
             Motor(14), drive(status=HEALTHY), probe=lambda: 0.0
         )
         mechanical = [f for f in report.findings if f.cause == "Mechanical"]
         assert mechanical, headlines(report)
-        assert mechanical[0].confidence == "certain"
+        assert mechanical[0].confidence == "likely"
+        assert "does not prove" in mechanical[0].detail
         assert "seized" in mechanical[0].action
 
     def test_a_piston_that_moves_is_not_accused_of_being_stuck(self):
@@ -156,7 +160,20 @@ class TestTheMovementTest:
         report = diagnostics.diagnose(
             Motor(14), drive(status=HEALTHY), probe=explode
         )
-        assert isinstance(report.findings, list)
+        assert not report.healthy
+        assert "movement test did not complete" in headlines(report)
+        assert "PLC went away" in report.findings[0].detail
+        assert "Mechanical" not in causes(report)
+        check = next(c for c in report.checks if c.name == "Movement test")
+        assert check.verdict == "unknown"
+
+    @pytest.mark.parametrize("movement", [float("nan"), float("inf"), -1])
+    def test_invalid_probe_result_is_reported_as_unavailable(self, movement):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=HEALTHY), probe=lambda: movement)
+        assert not report.healthy
+        assert "movement test did not complete" in headlines(report)
+        assert "Mechanical" not in causes(report)
 
 
 class TestTheReadings:
@@ -187,3 +204,63 @@ class TestTheReadings:
         warn = next(c for c in report.checks if c.name == "Drive warn word")
         assert warn.verdict == "ok"
         assert report.healthy
+
+
+class TestFaultContext:
+    def test_controller_hot_is_a_thermal_finding(self):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=ENABLED_NOT_HOMED, warn=1 << 6))
+        assert report.findings[0].cause == "Thermal"
+        assert "controller is hot" in headlines(report)
+
+    @pytest.mark.parametrize("bit", [14, 15])
+    def test_other_warnings_are_not_claimed_absent(self, bit):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=ENABLED_NOT_HOMED, warn=1 << bit))
+        assert "Warning" in headlines(report)
+        assert "no warning" not in " ".join(f.detail for f in report.findings)
+
+    def test_routine_not_homed_fallback_is_honest(self):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=ENABLED_NOT_HOMED, warn=1 << 7))
+        assert "routine Not Homed" in report.findings[0].detail
+
+    @pytest.mark.parametrize("position", [float("nan"), float("inf"), -58, 454])
+    def test_invalid_position_is_not_a_mechanical_diagnosis(self, position):
+        facts = {"axis": 14, "status_word": HEALTHY, "warn_word": 1 << 4,
+                 "actual_mm": position, "demand_mm": 0}
+        checks = diagnostics.checks_for(facts)
+        assert next(c for c in checks if c.name == "Actual position").verdict == "bad"
+        assert next(c for c in checks if c.name == "Following error").verdict == "unknown"
+        found = diagnostics.findings_for(facts)
+        assert any("unreliable" in f.headline for f in found)
+        assert not any(f.cause == "Mechanical" for f in found)
+
+    @pytest.mark.parametrize("position", [-57, 390, 453])
+    def test_drive_envelope_includes_home_and_boundaries(self, position):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=HEALTHY, actual=position, demand=position))
+        assert report.healthy
+
+    @pytest.mark.parametrize("fault", [1 << 12, 1 << 6, 1 << 3])
+    def test_faulted_drive_does_not_blame_parameters(self, fault):
+        motor = Motor(14)
+        motor.set_param("Position 2", 300)
+        report = diagnostics.diagnose(
+            motor, drive(status=fault, pos1=0, pos2=0), expected_live=True)
+        assert "not holding the requested parameters" not in headlines(report)
+        assert "no stroke" not in headlines(report)
+        assert next(c for c in report.checks if c.name ==
+                    "Stroke held on the drive").verdict == "unknown"
+
+    def test_idle_zero_stroke_is_not_a_fault(self):
+        motor = Motor(14)
+        motor.set_param("Position 2", 0)
+        report = diagnostics.diagnose(
+            motor, drive(status=HEALTHY, pos1=0, pos2=0), expected_live=True)
+        assert report.healthy
+
+    def test_thermal_warning_suppresses_mechanical_probe_claim(self):
+        report = diagnostics.diagnose(
+            Motor(14), drive(status=HEALTHY, warn=1 << 6), probe=lambda: 0)
+        assert "Mechanical" not in causes(report)

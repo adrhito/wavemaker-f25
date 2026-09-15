@@ -260,7 +260,7 @@ class PatternDialog:
 
         width = max(c.winfo_width(), 200)
         height = PREVIEW_BAR_HEIGHT
-        axes = sorted(self.result.values)
+        axes = sorted(self.result.values, key=tags.display_number)
         values = [self.result.values[a] for a in axes]
 
         low = min(values)
@@ -282,7 +282,7 @@ class PatternDialog:
             c.create_rectangle(x0, y0, x1, y1, fill="#4fc3f7", outline="")
             if bar_w > 16:
                 c.create_text(
-                    (x0 + x1) / 2, y1 + 7, text=str(axis),
+                    (x0 + x1) / 2, y1 + 7, text=str(tags.display_number(axis)),
                     fill="#7d8894", font=("Segoe UI", 7),
                 )
 

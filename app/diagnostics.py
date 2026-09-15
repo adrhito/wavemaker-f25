@@ -23,6 +23,7 @@ a probe to run.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 from app import drive_status, params, tags
@@ -31,6 +32,59 @@ from app import drive_status, params, tags
 STUCK_ERROR_MM = 5.0
 #: Movement, in mm, below which a probe counts as "did not move at all".
 NO_MOVEMENT_MM = 1.0
+# Configured drive travel (see app.params), not the narrower run input range.
+DRIVE_MIN_MM = -57.0
+DRIVE_MAX_MM = 453.0
+
+
+def _valid_position(value):
+    return (value is not None and math.isfinite(value)
+            and DRIVE_MIN_MM <= value <= DRIVE_MAX_MM)
+
+
+#: Causes that account for a piston not moving on their own. A drive that is
+#: too hot, unpowered or faulted does not also need to be accused of a seized
+#: shaft, and saying both sends somebody to the wrong end of the machine.
+EXPLAINS_NO_MOVEMENT = ("Thermal", "Electrical", "Drive")
+
+
+def _already_explained(found) -> bool:
+    """True when a physical cause already accounts for a piston not moving.
+
+    Deliberately narrower than "has anything been found at all". A Software
+    finding -- "the drive is not holding the requested parameters", which fires
+    whenever desired and held differ, so before every Prepare -- explains
+    nothing mechanical. Letting it suppress the result meant a movement test
+    the operator opted into, which physically moved the machine, could report
+    zero travel and have that silently dropped.
+    """
+    return any(finding.cause in EXPLAINS_NO_MOVEMENT for finding in found)
+
+
+def _parameters_relevant(facts):
+    status = facts.get("status_word") or 0
+    return not (drive_status.has_error(status) or _bit(status, 6))
+
+
+def _stroke_expected(facts):
+    # Selection alone does not mean a stroke has been commanded.
+    return _bit(facts.get("status_word") or 0, 13)
+
+
+def _stroke_wanted(facts):
+    """The stroke the operator has asked for, or None if it is not known.
+
+    Read from what the application holds for this piston rather than from the
+    drive. A piston standing still *because* Position 1 and Position 2 are the
+    same generates no setpoints, so status bit 13 is clear and
+    :func:`_stroke_expected` is no help at all -- which is exactly the case
+    worth flagging when a non-zero stroke was asked for.
+    """
+    wanted = facts.get("wanted_params") or {}
+    try:
+        return abs(float(wanted["Position 2"]) - float(wanted["Position 1"]))
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 class Check(NamedTuple):
@@ -136,6 +190,15 @@ def checks_for(facts: Dict[str, Any]) -> List[Check]:
             "Power stage", "enabled" if _bit(status, 0) else "NOT enabled",
             "ok" if _bit(status, 0) else "bad",
         ))
+        # Quick stop reads backwards: status bit 5 SET means quick stop is
+        # *not* active, so it is the clear bit that stops the piston. Only
+        # worth reading once the drive says it is enabled -- on an unpowered
+        # drive every bit is clear and the power stage check above says so.
+        if _bit(status, 0):
+            out.append(Check(
+                "Quick stop", "not active" if _bit(status, 5) else "ACTIVE",
+                "ok" if _bit(status, 5) else "bad",
+            ))
         out.append(Check(
             "Homed (status bit 11)", "yes" if _bit(status, 11) else "no",
             "ok" if _bit(status, 11) else "warn",
@@ -164,13 +227,19 @@ def checks_for(facts: Dict[str, Any]) -> List[Check]:
     if actual is None:
         out.append(Check("Position sensor", "no reply", "unknown"))
     else:
-        out.append(Check("Actual position", "{0:.1f} mm".format(actual)))
+        out.append(Check("Actual position", "{0:.1f} mm".format(actual),
+                         "ok" if _valid_position(actual) else "bad"))
+    if demand is not None:
+        out.append(Check("Commanded position", "{0:.1f} mm".format(demand),
+                         "ok" if _valid_position(demand) else "bad"))
     if actual is not None and demand is not None:
         error = abs(demand - actual)
-        out.append(Check("Commanded position", "{0:.1f} mm".format(demand)))
         out.append(Check(
-            "Following error", "{0:.1f} mm".format(error),
-            "bad" if error > STUCK_ERROR_MM else "ok",
+            "Following error",
+            "{0:.1f} mm".format(error) if (_valid_position(actual) and
+                _valid_position(demand)) else "unreliable position readings",
+            ("bad" if error > STUCK_ERROR_MM else "ok") if
+            (_valid_position(actual) and _valid_position(demand)) else "unknown",
         ))
 
     live = facts.get("live")
@@ -182,12 +251,27 @@ def checks_for(facts: Dict[str, Any]) -> List[Check]:
 
     stroke = _stroke_held(facts)
     if stroke is not None:
+        if not _parameters_relevant(facts):
+            verdict = "unknown"
+        elif stroke >= 1:
+            verdict = "ok"
+        elif _stroke_expected(facts):
+            # Moving, and yet holding no stroke: the drive is running a cycle
+            # that goes nowhere.
+            verdict = "bad"
+        else:
+            # Standing still. That is *why* bit 13 is clear, so it proves
+            # nothing either way; what settles it is whether a stroke was
+            # asked for. Amber rather than red: the drive may simply not have
+            # been sent its parameters yet.
+            wanted = _stroke_wanted(facts)
+            verdict = "warn" if wanted is not None and wanted >= 1 else "ok"
         out.append(Check(
-            "Stroke held on the drive", "{0:.0f} mm".format(stroke),
-            "bad" if stroke < 1 else "ok",
-        ))
+            "Stroke held on the drive", "{0:.0f} mm".format(stroke), verdict))
 
     moved = facts.get("probe_movement_mm")
+    if facts.get("probe_error"):
+        out.append(Check("Movement test", facts["probe_error"], "unknown"))
     if moved is not None:
         out.append(Check(
             "Movement when commanded", "{0:.1f} mm".format(moved),
@@ -253,6 +337,23 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
             "Lower the deceleration, or run fewer strokes back to back.",
             "certain",
         ))
+    if _bit(warn, 6):
+        found.append(Finding(
+            "Thermal", "The servo controller is hot",
+            "Controller Hot (warn bit 6) is set. This is the controller's "
+            "thermal warning; it does not establish a mechanical jam.",
+            "Check controller cooling, ventilation and loading before retrying.",
+            "certain",
+        ))
+    for bit in (14, 15):
+        if _bit(warn, bit):
+            found.append(Finding(
+                "Drive", drive_status.WARN_BITS[bit].name,
+                drive_status.WARN_BITS[bit].meaning + ". The warn word alone "
+                "does not identify the underlying cause.",
+                "Inspect the drive's detailed diagnostics before retrying.",
+                "certain",
+            ))
 
     # -- electrical ---------------------------------------------------------
     if _bit(warn, 2) or _bit(warn, 3):
@@ -319,7 +420,8 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
         ))
 
     stroke = _stroke_held(facts)
-    if stroke is not None and stroke < 1:
+    if (_parameters_relevant(facts) and _stroke_expected(facts)
+            and stroke is not None and stroke < 1):
         found.append(Finding(
             "Software", "The drive has been given no stroke to run",
             "Position 1 and Position 2 on this drive are the same, so a "
@@ -342,14 +444,17 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
                 drifted.append(key)
         except (TypeError, ValueError):
             continue
-    if drifted:
+    if drifted and _parameters_relevant(facts):
         found.append(Finding(
-            "Software", "The drive is not holding the parameters it was sent",
-            "{0} differ between what the application asked for and what the "
-            "drive reports back, so the piston is obeying the machine's values "
-            "rather than yours.".format(", ".join(drifted)),
-            "Press Prepare to write them again. If they keep drifting, the "
-            "write is failing silently for this axis.",
+            "Software", "The drive is not holding the requested parameters",
+            "{0} differ between the application's desired settings and the "
+            "values read from the PLC. The desired settings may not have been "
+            "sent yet. These readings are sequential, so a concurrent parameter "
+            "write can also produce a temporary mismatch; this does not prove "
+            "a failed write.".format(", ".join(drifted)),
+            "When preparation has finished, read the parameters again. If the "
+            "mismatch remains, check the intended settings and prepare again "
+            "when appropriate.",
             "certain",
         ))
 
@@ -359,10 +464,25 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
     moved = facts.get("probe_movement_mm")
     lagging = drive_status.is_lagging(warn)
     error_mm = None
-    if facts.get("actual_mm") is not None and facts.get("demand_mm") is not None:
+    invalid_positions = [key for key in ("actual_mm", "demand_mm")
+                         if facts.get(key) is not None
+                         and not _valid_position(facts[key])]
+    if invalid_positions:
+        found.append(Finding(
+            "Drive", "Position feedback is unreliable",
+            "{0} contains a non-finite value or a value outside the configured "
+            "drive envelope (-57 to 453 mm). Following error cannot be "
+            "interpreted reliably. A faulted drive, stale data, a conversion "
+            "problem or sensor trouble are possibilities, not proven causes.".format(
+                ", ".join(invalid_positions)),
+            "Check drive fault details and position units, then compare fresh "
+            "readings with an independent observation before commanding motion.",
+            "certain",
+        ))
+    if _valid_position(facts.get("actual_mm")) and _valid_position(facts.get("demand_mm")):
         error_mm = abs(facts["demand_mm"] - facts["actual_mm"])
 
-    if not enabled and not found:
+    if not enabled and not _already_explained(found):
         found.append(Finding(
             "Software", "The power stage is not enabled",
             "Status bit 0 is clear, so this drive is not energised. It cannot "
@@ -373,19 +493,36 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
             "certain",
         ))
 
-    if enabled and moved is not None and moved < NO_MOVEMENT_MM:
+    # After the power stage, not before it: a probe that raised on a drive
+    # that was never energised is explained by the drive being de-energised,
+    # and "the movement test did not complete" on its own sends nobody
+    # anywhere useful.
+    if facts.get("probe_error"):
+        found.append(Finding(
+            "Unknown", "The movement test did not complete",
+            "{0}. No valid movement result is available, so this test cannot "
+            "establish whether the piston moved or is mechanically stuck.".format(
+                facts["probe_error"]),
+            "Check the reported error and the machine's current state before "
+            "deciding whether another movement test is appropriate.",
+            "certain",
+        ))
+
+    if (enabled and not _already_explained(found)
+            and moved is not None and moved < NO_MOVEMENT_MM):
         found.append(Finding(
             "Mechanical", "Commanded, energised, and it did not move",
             "The drive is enabled and took the command, and the encoder "
-            "reports it travelled {0:.1f} mm. A drive that is powered and "
-            "willing but cannot move its shaft is being held by something "
-            "physical.".format(moved),
+            "reports it travelled {0:.1f} mm. Mechanical resistance is one "
+            "possibility, but unchanged feedback does not prove a jam or "
+            "frozen data; command delivery and feedback need checking.".format(moved),
             "Check piston {0} for a seized shaft, a jammed seal, debris in the "
-            "track, or a mechanical stop in the way. Software cannot clear "
-            "this.".format(name),
-            "certain",
+            "track, or a mechanical stop in the way. Also verify command "
+            "delivery and position feedback.".format(name),
+            "likely",
         ))
-    elif enabled and lagging and error_mm is not None and error_mm > STUCK_ERROR_MM:
+    elif (enabled and not _already_explained(found) and lagging
+            and error_mm is not None and error_mm > STUCK_ERROR_MM):
         found.append(Finding(
             "Mechanical", "Falling a long way behind its commanded position",
             "The drive reports following error and the gap is {0:.1f} mm. It "
@@ -395,7 +532,7 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
             "in one part of the stroke, suspect the seal or the alignment "
             "there.".format(name),
         ))
-    elif enabled and lagging:
+    elif enabled and not _already_explained(found) and lagging:
         found.append(Finding(
             "Mechanical", "The drive reports it cannot keep up",
             "Position or speed lag is set, from the drive's own configured "
@@ -407,12 +544,13 @@ def findings_for(facts: Dict[str, Any]) -> List[Finding]:
     if not homed and not found:
         found.append(Finding(
             "Unknown", "Not homed, and nothing says why",
-            "The drive is enabled, reports no fault, no warning and no "
-            "following error, and still has not referenced its position "
-            "sensor.",
-            "Watch piston {0} during homing. If it never moves it is held "
-            "mechanically; if it moves and never finishes, suspect the "
-            "position sensor or its reference.".format(name),
+            "The available readings do not explain why the drive has not "
+            "referenced its position sensor. The warn word may include the "
+            "routine Not Homed flag; missing readings cannot exclude a fault.",
+            "Observe an authorised homing operation on piston {0}. If it "
+            "does not move, check command delivery, drive readiness and "
+            "mechanical resistance; if it moves without finishing, also "
+            "check the position sensor and its reference.".format(name),
         ))
     return found
 
@@ -429,9 +567,13 @@ def diagnose(motor, plc, expected_live: Optional[bool] = None,
     facts = gather(motor, plc, expected_live=expected_live)
     if probe is not None:
         try:
-            facts["probe_movement_mm"] = float(probe())
-        except Exception:  # noqa: BLE001 - a failed probe is simply no reading
+            movement = float(probe())
+            if not math.isfinite(movement) or movement < 0:
+                raise ValueError("Movement test returned an invalid distance")
+            facts["probe_movement_mm"] = movement
+        except Exception as exc:  # noqa: BLE001 - expose failed tests in the report
             facts["probe_movement_mm"] = None
+            facts["probe_error"] = str(exc) or type(exc).__name__
 
     findings = findings_for(facts)
     checks = checks_for(facts)

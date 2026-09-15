@@ -179,8 +179,8 @@ class Diagnostics:
             "Move piston {0}?".format(tags.display_number(axis)),
             "The movement test asks piston {0} to move 10 mm and measures how "
             "far it actually goes.\n\n"
-            "It is the only way to tell a jammed piston from one that was "
-            "never commanded, but it does move the machine. Make sure the "
+            "The result can help investigate a motion problem, but unchanged "
+            "feedback alone cannot prove a jam. Make sure the "
             "chamber is clear.\n\n"
             "Continue?".format(tags.display_number(axis)),
             parent=self.tab,

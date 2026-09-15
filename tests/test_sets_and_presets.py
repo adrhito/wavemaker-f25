@@ -363,25 +363,33 @@ class TestTheShippedPresetLibrary:
 
     def test_the_travelling_presets_really_do_stagger(self):
         """A travelling wave preset is only travelling if its offsets differ."""
-        from app import paths
+        from app import paths, tags
         from preset_options.PresetProcessor import PresetProcessor
 
         preset = PresetProcessor().load(
             str(paths.PRESET_DIR / "Travelling wave - front to back.csv")
         )
-        offsets = [preset.values_for(a)["Curve Offset"] for a in range(0, 30, 3)]
+        # One piston per column, read the way the operator sees the array:
+        # piston 1 is the front column and drives axis 29, so stepping through
+        # the axes instead would read the chamber back to front.
+        columns = [tags.axis_from_display(1 + tags.ROWS_PER_COLUMN * c)
+                   for c in range(tags.COLUMN_COUNT)]
+        offsets = [preset.values_for(a)["Curve Offset"] for a in columns]
         assert offsets == sorted(offsets)
         assert len(set(offsets)) == 10
         assert offsets[0] < offsets[-1]
 
     def test_the_shallow_preset_covers_the_front_columns(self):
-        from app import paths
+        from app import paths, tags
         from preset_options.PresetProcessor import PresetProcessor
 
         preset = PresetProcessor().load(
             str(paths.PRESET_DIR / "Shallow water - front four columns.csv")
         )
-        # Motors 0-11 are the front four columns and carry real motion.
-        assert preset.rows[0]["Speed 1"] > 0
-        assert preset.rows[11]["Speed 1"] > 0
-        assert preset.rows[12]["Speed 1"] == 0
+        # Pistons 1-12 are the front four columns -- axes 18-29, not 0-11 --
+        # and they are the ones that carry real motion. Piston 13 starts the
+        # fifth column back and stays still.
+        for number in range(1, 13):
+            axis = tags.axis_from_display(number)
+            assert preset.rows[axis]["Speed 1"] > 0, number
+        assert preset.rows[tags.axis_from_display(13)]["Speed 1"] == 0

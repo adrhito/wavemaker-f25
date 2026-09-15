@@ -11,7 +11,7 @@ ALL = list(range(30))
 
 def by_column(result):
     """One value per column, taking the top row of each."""
-    return [result.values[axis] for axis in range(0, 30, 3)]
+    return [result.values[axis] for axis in range(29, -1, -3)]
 
 
 class TestStagger:
@@ -40,8 +40,8 @@ class TestStagger:
             ALL, "Curve Offset", patterns.STAGGER, start=0, step=5,
             across=patterns.ACROSS_ROWS,
         )
-        assert [result.values[a] for a in (0, 1, 2)] == [0, 5, 10]
-        assert result.values[3] == 0  # next column, back to row 1
+        assert [result.values[a] for a in (29, 28, 27)] == [0, 5, 10]
+        assert result.values[26] == 0  # next column, back to row 1
 
 
 class TestRampAndMirror:
@@ -68,8 +68,8 @@ class TestRampAndMirror:
         array, or a six-piston set would only use a fifth of the range."""
         axes = [0, 3, 6, 9, 12]
         result = patterns.build(axes, "Position 2", patterns.RAMP, start=0, end=300)
-        assert result.values[0] == 0
-        assert result.values[12] == 300
+        assert result.values[12] == 0
+        assert result.values[0] == 300
 
 
 class TestLimits:
@@ -137,6 +137,6 @@ class TestAppliedToASet:
         assert model.prepare()
 
         # Axis 0 is Curve_1, axis 3 is Curve_4, axis 6 is Curve_7.
-        assert plc.read("Program:Wave_Control.Curve_1.CurveOffset") == 0
+        assert plc.read("Program:Wave_Control.Curve_1.CurveOffset") == 20
         assert plc.read("Program:Wave_Control.Curve_4.CurveOffset") == 10
-        assert plc.read("Program:Wave_Control.Curve_7.CurveOffset") == 20
+        assert plc.read("Program:Wave_Control.Curve_7.CurveOffset") == 0
