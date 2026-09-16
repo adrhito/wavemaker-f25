@@ -101,8 +101,19 @@ def test_wave_preview_offsets_follow_front_to_back_columns():
             "Position 1": 0, "Position 2": 100,
             "Speed 1": 100, "Speed 2": 100, "Curve Offset": offset,
         }))
-    view.model = SimpleNamespace(all_motors=motors)
+    # cascade_targets is consulted for where each column starts; a model
+    # without one must not break the picture.
+    view.model = SimpleNamespace(all_motors=motors, cascade_targets=dict)
     calls = []
-    view.wave_preview = SimpleNamespace(show=lambda *args: calls.append(args))
+    view.wave_preview = SimpleNamespace(
+        show=lambda *args, **kwargs: calls.append((args, kwargs))
+    )
     view._refresh_wave_preview()
-    assert calls[0][3] == {0: 0.1, 1: 0.2, 9: 0.9}
+    args, kwargs = calls[0]
+    assert args[3] == {0: 0.1, 1: 0.2, 9: 0.9}
+    # The speeds and dwells reach the strip too, or it cannot draw the
+    # fast-up-slow-down asymmetry or the flats at the ends of the stroke.
+    assert kwargs["speed_1"] == 100
+    assert kwargs["speed_2"] == 100
+    assert kwargs["dwell_1_s"] == 0.0
+    assert kwargs["dwell_2_s"] == 0.0
