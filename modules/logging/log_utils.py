@@ -1,11 +1,14 @@
 """Logging for the application.
 
-Two destinations:
+Three destinations:
 
 * ``logs/<date>.log`` -- everything from INFO up, set up at startup so the
   connection attempt and any early failure are recorded.  Previously the file
   handler was only attached when the Feedback tab was built and was set to
   CRITICAL, so a day's log file stayed empty no matter what went wrong.
+* ``logs/errors/<date>-errors.log`` -- WARNING and up only, so a fault can be
+  found without reading a whole day's INFO/SUCCESS lines. A day with nothing
+  to report never creates the file, since the handler opens it lazily.
 * The Feedback tab -- everything, colour-coded, attached when that tab exists.
 """
 
@@ -28,6 +31,13 @@ LOGGER_NAME = "logger"
 FORMAT = "%(asctime)s %(name)s#%(levelname)s - %(message)s"
 DATE_FORMAT = "%m/%d/%Y at %I:%M:%S %p"
 
+# Includes module/line, unlike FORMAT, because this file exists to be read on
+# its own without the surrounding INFO lines for context -- the record has to
+# say where it came from.  logging.Formatter appends the traceback itself
+# whenever a record carries exc_info (i.e. from LOGGER.exception(...)), so
+# nothing extra is needed here for that.
+ERROR_FORMAT = "%(asctime)s %(levelname)s %(name)s %(module)s:%(lineno)d - %(message)s"
+
 _LEVEL_COLOURS = {
     "SUCCESS": "lime green",
     "DEBUG": "#8ab4f8",
@@ -40,6 +50,7 @@ _LEVEL_COLOURS = {
 #: Set once so repeated calls do not stack duplicate handlers, which used to
 #: happen whenever the Feedback tab was rebuilt.
 _file_handler: Optional[Handler] = None
+_error_handler: Optional[Handler] = None
 _textbox_handler: Optional[Handler] = None
 
 
@@ -140,6 +151,45 @@ def setup_file_logging() -> Handler:
     handler.setFormatter(Formatter(FORMAT, datefmt=DATE_FORMAT))
     logger.addHandler(handler)
     _file_handler = handler
+
+    # Wired in here, rather than left for a caller to remember, so every
+    # entry point that gets the day's log also gets the errors-only one.
+    setup_error_file_logging()
+
+    return handler
+
+
+def setup_error_file_logging() -> Optional[Handler]:
+    """Attach the day's WARNING-and-up file. Safe to call more than once.
+
+    Kept independent of ``setup_file_logging`` -- a bad path, permissions, or
+    anything else wrong with ``logs/errors/`` is swallowed here rather than
+    raised, so it can never take down the handler that writes the main log.
+    """
+    global _error_handler
+
+    if _error_handler is not None:
+        return _error_handler
+
+    logger = getLogger(LOGGER_NAME)
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        paths.ensure_directories()
+        # delay=True means the file is not opened until the first record
+        # actually reaches this handler, i.e. the first WARNING or worse. An
+        # error-free day therefore leaves logs/errors/ untouched instead of
+        # littering it with empty files.
+        handler = logging.FileHandler(
+            str(paths.error_log_file()), encoding="utf-8", delay=True
+        )
+        handler.setLevel(logging.WARNING)
+        handler.setFormatter(Formatter(ERROR_FORMAT, datefmt=DATE_FORMAT))
+    except OSError:
+        return None
+
+    logger.addHandler(handler)
+    _error_handler = handler
     return handler
 
 

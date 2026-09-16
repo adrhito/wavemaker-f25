@@ -49,6 +49,13 @@ MIXED = "--"
 #: slider beside one that stretches across half the window.
 SLIDER_WIDTH = 200
 
+#: Travel limits, taken from the Position parameters so the sliders and the
+#: entry boxes cannot disagree about what the machine will accept.
+MIN_TRAVEL_MM = -20
+MAX_TRAVEL_MM = 370
+#: The smallest gap the two bounds are pushed apart to when they would cross.
+MIN_STROKE_MM = 1
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -225,17 +232,44 @@ class Operate:
             row=0, column=3, padx=(theme.TIGHT, 0), sticky="w"
         )
 
-        self.stroke_slider_var = DoubleVar()
-        self.stroke_slider = ttk.Scale(
-            stroke, from_=1, to=370, variable=self.stroke_slider_var,
-            command=self._stroke_slider_changed, length=SLIDER_WIDTH,
-            style="Horizontal.TScale",
+        # Two sliders, not one. A single "stroke length" slider could only move
+        # the top of the stroke: it took Position 1 as given and set Position 2
+        # from it, so there was no way to raise the whole stroke up the travel
+        # without typing in the boxes. The bottom and the top are the two
+        # things an operator actually sets, so each gets its own.
+        low_spec = params.BY_NAME["Position 1"]
+        high_spec = params.BY_NAME["Position 2"]
+
+        bounds = ttk.Frame(stroke, style="Card.TFrame")
+        bounds.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        ttk.Label(bounds, text="bottom", style="CardDim.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, theme.TIGHT)
         )
-        self.stroke_slider.grid(row=2, column=0, sticky="w", pady=(10, 0))
-        Tooltip(self.stroke_slider,
-                "Drag to change the stroke.\n"
-                "Let go while the machine is running and it is applied\n"
-                "at the end of the stroke.")
+        self.low_slider_var = DoubleVar()
+        self.low_slider = ttk.Scale(
+            bounds, from_=low_spec.minimum, to=low_spec.maximum,
+            variable=self.low_slider_var, command=self._low_slider_changed,
+            length=SLIDER_WIDTH - 46, style="Horizontal.TScale",
+        )
+        self.low_slider.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(bounds, text="top", style="CardDim.TLabel").grid(
+            row=1, column=0, sticky="w", padx=(0, theme.TIGHT), pady=(6, 0)
+        )
+        self.high_slider_var = DoubleVar()
+        self.high_slider = ttk.Scale(
+            bounds, from_=high_spec.minimum, to=high_spec.maximum,
+            variable=self.high_slider_var, command=self._high_slider_changed,
+            length=SLIDER_WIDTH - 46, style="Horizontal.TScale",
+        )
+        self.high_slider.grid(row=1, column=1, sticky="w", pady=(6, 0))
+
+        for widget in (self.low_slider, self.high_slider):
+            Tooltip(widget,
+                    "The bottom and the top of the stroke, in mm.\n"
+                    "Let go while the machine is running and the new stroke\n"
+                    "is applied at the end of the current one.")
 
         speed = ttk.Frame(card, style="Card.TFrame")
         speed.grid(row=0, column=1, sticky="nw", padx=(theme.GUTTER * 2, 0))
@@ -264,8 +298,9 @@ class Operate:
                 "Drag to change the speed.\n"
                 "Let go while the machine is running and it is applied\n"
                 "straight away.")
-        self.stroke_slider.bind("<ButtonRelease-1>",
-                                lambda _event: self._apply_slider_live("stroke"))
+        for bound in (self.low_slider, self.high_slider):
+            bound.bind("<ButtonRelease-1>",
+                       lambda _event: self._apply_slider_live("stroke"))
         self.rate_slider.bind("<ButtonRelease-1>",
                               lambda _event: self._apply_slider_live("rate"))
 
@@ -526,14 +561,34 @@ class Operate:
             if self.model.record_analytics else ""
         )
 
-    def _stroke_slider_changed(self, raw) -> None:
+    def _low_slider_changed(self, raw) -> None:
+        """The bottom of the stroke. It may not climb past the top."""
+        self._bound_changed(raw, self.pos1_var, self.pos2_var, is_low=True)
+
+    def _high_slider_changed(self, raw) -> None:
+        """The top of the stroke. It may not drop below the bottom."""
+        self._bound_changed(raw, self.pos2_var, self.pos1_var, is_low=False)
+
+    def _bound_changed(self, raw, mine, other, is_low: bool) -> None:
         if self._refreshing or self._dragging:
             return
         self._dragging = True
         try:
-            stroke = max(1, int(round(float(raw))))
-            low = int(float(self.pos1_var.get()))
-            self.pos2_var.set(str(min(370, low + stroke)))
+            wanted = int(round(float(raw)))
+            try:
+                limit = int(float(other.get()))
+            except (TypeError, ValueError):
+                limit = None
+            # Crossing the two over would ask for a negative stroke, which the
+            # drive would take as Position 1 above Position 2 and run backwards.
+            # The dragged bound pushes the other one along instead of stopping,
+            # so a drag never silently does nothing.
+            if limit is not None:
+                if is_low and wanted >= limit:
+                    other.set(str(min(MAX_TRAVEL_MM, wanted + MIN_STROKE_MM)))
+                elif not is_low and wanted <= limit:
+                    other.set(str(max(MIN_TRAVEL_MM, wanted - MIN_STROKE_MM)))
+            mine.set(str(wanted))
         except (TypeError, ValueError):
             pass
         finally:
@@ -555,9 +610,11 @@ class Operate:
             return
         try:
             if kind == "stroke":
-                self.model.change_stroke_live(
-                    int(round(float(self.stroke_slider_var.get())))
-                )
+                # change_stroke_live takes a length, and the sliders describe
+                # two positions, so the length is the gap between them.
+                low = float(self.low_slider_var.get())
+                high = float(self.high_slider_var.get())
+                self.model.change_stroke_live(int(round(high - low)))
             else:
                 self.model.change_speed_live(
                     int(round(float(self.rate_slider_var.get())))
@@ -604,11 +661,17 @@ class Operate:
         except ValueError:
             pass  # a mixed selection, or half-typed text; leave the handle be
         else:
-            self.stroke_slider_var.set(_clamp(high - low, 1, 370))
+            self.low_slider_var.set(_clamp(low, MIN_TRAVEL_MM, MAX_TRAVEL_MM))
+            self.high_slider_var.set(_clamp(high, MIN_TRAVEL_MM, MAX_TRAVEL_MM))
 
         pending = getattr(self.model, "_pending_live_stroke", None)
         if self.model.state is MachineState.RUNNING and pending is not None:
-            self.stroke_slider_var.set(_clamp(pending, 1, 370))
+            try:
+                self.high_slider_var.set(_clamp(
+                    float(self.pos1_var.get()) + pending,
+                    MIN_TRAVEL_MM, MAX_TRAVEL_MM))
+            except (TypeError, ValueError):
+                pass
 
         try:
             self.rate_slider_var.set(_clamp(float(self.speed_var.get()), 1, 900))
@@ -881,6 +944,11 @@ class Operate:
 
         strokes, periods, offsets = [], [], {}
         profile = 3
+        speeds_out, speeds_back, dwell_1, dwell_2 = [], [], [], []
+        # Where each column actually sets off from, as a fraction of the
+        # stroke. That is what the machine is given -- a starting position, not
+        # a timing offset -- so it is what the picture should be drawn from.
+        start_fractions = {}
         for motor in motors:
             wanted = motor.write_params
             try:
@@ -894,6 +962,13 @@ class Operate:
             strokes.append(stroke)
             periods.append(stroke / out_speed + stroke / back_speed + dwell)
             profile = wanted.get("Profile", profile)
+            speeds_out.append(out_speed)
+            speeds_back.append(back_speed)
+            try:
+                dwell_1.append(float(wanted.get("Time 1", 0)) / 1000.0)
+                dwell_2.append(float(wanted.get("Time 2", 0)) / 1000.0)
+            except (TypeError, ValueError):
+                pass
             # Curve Offset staggers the columns; it is what makes a wave travel.
             column = (tags.display_number(motor.axis) - 1) // tags.ROWS_PER_COLUMN
             try:
@@ -914,8 +989,34 @@ class Operate:
                 "Pistons have different cycle times ({0:.1f}-{1:.1f} s); they "
                 "will drift apart.".format(min(periods), max(periods))
             )
+        # The staged start of each column, read from the model rather than
+        # inferred from Curve Offset: the stagger is applied as a position.
+        try:
+            staged = self.model.cascade_targets()
+        except Exception:  # noqa: BLE001 - the picture must never break a run
+            staged = {}
+        for motor in motors:
+            target = staged.get(motor.axis)
+            if target is None:
+                continue
+            try:
+                low = float(motor.write_params["Position 1"])
+                high = float(motor.write_params["Position 2"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if high == low:
+                continue
+            column = (tags.display_number(motor.axis) - 1) // tags.ROWS_PER_COLUMN
+            start_fractions[column] = _clamp(
+                (float(target) - low) / (high - low), 0.0, 1.0)
+
         self.wave_preview.show(
-            max(strokes), period, int(profile), offsets, note
+            max(strokes), period, int(profile), offsets, note,
+            speed_1=max(speeds_out) if speeds_out else None,
+            speed_2=max(speeds_back) if speeds_back else None,
+            dwell_1_s=max(dwell_1) if dwell_1 else 0.0,
+            dwell_2_s=max(dwell_2) if dwell_2 else 0.0,
+            start_fractions=start_fractions or None,
         )
 
     def _strokes(self):
@@ -1006,7 +1107,8 @@ class Operate:
         entry_state = "disabled" if state is MachineState.PREPARING else "normal"
         for entry in (self.pos1_entry, self.pos2_entry, self.speed_entry):
             entry["state"] = entry_state
-        self.stroke_slider["state"] = entry_state
+        self.low_slider["state"] = entry_state
+        self.high_slider["state"] = entry_state
         self.rate_slider["state"] = entry_state
         self.group_box["state"] = "disabled" if busy else "readonly"
         self.depth_box["state"] = "disabled" if busy else "readonly"
