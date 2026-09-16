@@ -30,6 +30,11 @@ def instant_timings(monkeypatch):
         "SINGLE_STROKE_SECONDS",
         "CURVE_SECONDS",
         "HOME_POLL_SECONDS",
+        # The staging parity pulse. Without these the suite waits out a real
+        # 0.5 s pulse and a 1.2 s settle for every cascaded run it exercises,
+        # which is minutes of wall clock across the whole suite.
+        "PARITY_PULSE_SECONDS",
+        "PARITY_SETTLE_SECONDS",
     ):
         monkeypatch.setattr(model_module, name, 0.0)
 

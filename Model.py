@@ -50,6 +50,12 @@ PROBE_SECONDS = 3.0
 STAGE_SPEED = 200
 #: How long to wait for staging before cancelling the run.
 STAGE_SECONDS = 12.0
+#: How long the parity pulse holds continuous motion so every drive
+#: commits to the same leg of its cycle. Long enough to be taken, short
+#: enough that no piston reaches the far end and turns round again.
+PARITY_PULSE_SECONDS = 0.5
+#: Time for the pistons to come to rest after the parity pulse.
+PARITY_SETTLE_SECONDS = 1.2
 #: Close enough to a staging point, in mm.
 STAGE_TOLERANCE = 5
 #: How long Run_Curve is held high for one curve run.
@@ -1749,6 +1755,13 @@ class Model:
             targets[motor.axis] = int(round(first + fraction * (second - first)))
         return targets
 
+    def _motor_for(self, axis: int):
+        """The Motor object for an axis, or None if it is not selected."""
+        for motor in self.all_motors:
+            if motor.axis == axis:
+                return motor
+        return None
+
     def _stage_cascade(self) -> bool:
         """Put the pistons at their starting points before continuous motion.
 
@@ -1761,28 +1774,85 @@ class Model:
         self.bridge.status("Staggering the pistons for a travelling wave...")
         arrived = False
         errors = []
-        try:
-            for axis, target in targets.items():
-                if self._stop_requested.is_set():
-                    return False
+
+        # Staging a piston at a position is only half of what decides its
+        # phase. Measured at the machine on 15 September 2026: pistons 4, 5 and
+        # 6 were all parked at exactly 45 mm of an identical 0-180 stroke, and
+        # when Run_2 went high 4 and 5 set off downwards while 6 set off
+        # upwards -- dead anti-phase, and repeatable at 135 mm too. Each drive
+        # remembers which leg of its cycle it is on and carries on from there,
+        # and that memory survives between runs, so two pistons in the same
+        # place can be half a cycle apart. That is what made a cascade come out
+        # as a broken wave: the columns staged at the very bottom and the very
+        # top held together, because a piston at the end of its travel cannot
+        # go the wrong way, and only the ones staged mid-stroke scattered.
+        #
+        # So the stagger is laid down in three moves: everyone to the bottom,
+        # where direction is forced; a brief continuous pulse, which sets every
+        # drive off upwards from that same end and so onto the same leg; then
+        # out to the individual starting points. Verified at the machine: after
+        # the pulse, three pistons staged at 45 mm all set off upwards.
+        floors = {}
+        for axis in targets:
+            motor = self._motor_for(axis)
+            try:
+                floors[axis] = int(min(float(motor.write_params["Position 1"]),
+                                       float(motor.write_params["Position 2"])))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                floors[axis] = targets[axis]
+
+        def settle(wanted, what):
+            """Send the pistons to ``wanted`` and wait. True once they arrive."""
+            for axis, target in wanted.items():
                 self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
                 self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
                 self.plc.write(params.BY_NAME["Position 2"].tag(axis), target)
                 self.plc.write(params.BY_NAME["Speed 1"].tag(axis), STAGE_SPEED)
                 self.plc.write(params.BY_NAME["Speed 2"].tag(axis), STAGE_SPEED)
+            if self._stop_requested.is_set():
+                return None
+            if not self._begin_motion(tags.RUN_SINGLE):
+                return None
+            self.bridge.status("Staggering: moving the pistons {0}...".format(what))
+            got_there = False
+            deadline = time.time() + STAGE_SECONDS
+            try:
+                while time.time() < deadline:
+                    if self._stop_requested.is_set():
+                        return None
+                    if self._all_within(wanted, STAGE_TOLERANCE):
+                        got_there = True
+                        break
+                    self._sleep(STOP_POLL_INTERVAL)
+            finally:
+                # Dropped between moves so the next one is a fresh command
+                # rather than a target changed underneath a travelling piston.
+                self.plc.write(tags.RUN_SINGLE, 0)
+            return got_there
 
+        try:
+            if settle(floors, "to the bottom of their stroke") is None:
+                return False
+
+            # The parity pulse. Long enough for every drive to commit to the
+            # upward leg, short enough that nobody reaches the top and turns
+            # round again -- which would put them back out of step.
             if self._stop_requested.is_set():
                 return False
-            if not self._begin_motion(tags.RUN_SINGLE):
+            for motor in self.all_motors:
+                motor.write_to(self.plc, force=True)
+            if not self._begin_motion(tags.RUN_CONTINUOUS):
                 return False
-            deadline = time.time() + STAGE_SECONDS
-            while time.time() < deadline:
-                if self._stop_requested.is_set():
-                    return False
-                if self._all_within(targets, STAGE_TOLERANCE):
-                    arrived = True
-                    break
-                time.sleep(STOP_POLL_INTERVAL)
+            try:
+                self._sleep(PARITY_PULSE_SECONDS)
+            finally:
+                self.plc.write(tags.RUN_CONTINUOUS, 0)
+            self._sleep(PARITY_SETTLE_SECONDS)
+
+            outcome = settle(targets, "to their starting points")
+            if outcome is None:
+                return False
+            arrived = bool(outcome)
 
         except PlcError as exc:
             errors.append(str(exc))
