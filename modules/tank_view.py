@@ -120,12 +120,15 @@ class TankView:
         self,
         parent,
         on_select: Optional[Callable[[List[int], bool], None]] = None,
+        on_context: Optional[Callable[[int, int, int], None]] = None,
         on_hover: Optional[Callable[[Optional[int]], None]] = None,
         on_stroke: Optional[Callable[[int, int, int], None]] = None,
         height: int = 260,
         interactive: bool = True,
     ) -> None:
         self.on_select = on_select
+        #: Right-click on one piston: ``on_context(axis, screen_x, screen_y)``.
+        self.on_context = on_context
         self.on_hover = on_hover
         #: Dragging the bar above a piston sets how far that piston travels.
         #: Far more obvious than typing two numbers into boxes, and it is the
@@ -174,6 +177,10 @@ class TankView:
             self.canvas.bind("<B1-Motion>", self._on_drag)
             self.canvas.bind("<ButtonRelease-1>", self._on_release)
             self.canvas.bind("<Motion>", self._on_motion)
+            # Right-click edits the one piston under the pointer. Bound even
+            # while a drag-select is possible, because it is a different
+            # button and so cannot be confused with choosing a selection.
+            self.canvas.bind("<Button-3>", self._on_right_click)
             self.canvas.bind("<Leave>", lambda _e: self._set_hover(None))
 
     # -- placement ------------------------------------------------------------
@@ -515,6 +522,15 @@ class TankView:
         )
 
     # -- selecting ------------------------------------------------------------
+
+    def _on_right_click(self, event) -> None:
+        """Ask the owner to edit whichever piston was clicked."""
+        if self.on_context is None:
+            return
+        axis = self._axis_at(event.x, event.y)
+        if axis is None:
+            return
+        self.on_context(axis, event.x_root, event.y_root)
 
     def _on_press(self, event) -> None:
         grabbed = self._track_at(event.x, event.y)

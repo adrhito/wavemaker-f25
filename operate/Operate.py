@@ -57,6 +57,41 @@ MAX_TRAVEL_MM = 370
 MIN_STROKE_MM = 1
 
 
+class OnePiston:
+    """One piston, wearing the small interface ParameterDialog expects.
+
+    The dialog was written against a MotorSet -- a name, the axes in it, a
+    common value per parameter and a setter. A single piston satisfies all of
+    that, so right-click editing reuses the dialog exactly as it is rather
+    than growing a second one that would drift out of step with it.
+
+    Edits land on that motor's own write_params, which is where per-piston
+    values have always lived; MotorSet.set_param just writes the same value to
+    every motor in the group. So this is not a new kind of state, only a way
+    to reach state the machine already had.
+    """
+
+    def __init__(self, motor) -> None:
+        self.motor = motor
+        self.name = "Piston {0}".format(tags.display_number(motor.axis))
+
+    @property
+    def axes(self):
+        return [self.motor.axis]
+
+    def __len__(self) -> int:
+        return 1
+
+    def __iter__(self):
+        return iter((self.motor,))
+
+    def common_value(self, name: str):
+        return self.motor.write_params.get(name)
+
+    def set_param(self, name: str, value: int) -> None:
+        self.motor.set_param(name, value)
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -135,6 +170,7 @@ class Operate:
             on_select=self._on_tank_select,
             on_hover=self._on_tank_hover,
             on_stroke=self._on_stroke_dragged,
+            on_context=self._on_piston_right_click,
             height=250,
         )
         self.tank.grid(row=0, column=0, sticky="nsew")
@@ -316,8 +352,15 @@ class Operate:
         self.group_button = RoundedButton(
             more, "Add group", self.add_group, size="small", width=92
         )
+        # Saving used to live only on Preset Options, which told you to go to
+        # Operate and choose some pistons -- so saving what you had just built
+        # meant leaving the tab you built it on. It belongs here.
+        self.save_button = RoundedButton(
+            more, "Save preset", self.save_preset, size="small", width=96
+        )
         for column, button in enumerate(
-            (self.params_button, self.pattern_button, self.group_button)
+            (self.params_button, self.pattern_button, self.group_button,
+             self.save_button)
         ):
             button.set_background(theme.SURFACE)
             button.grid(row=0, column=column, padx=(theme.TIGHT, 0))
@@ -331,6 +374,9 @@ class Operate:
         Tooltip(self.group_button.canvas,
                 "Run a second group of pistons with different parameters\n"
                 "at the same time.")
+        Tooltip(self.save_button.canvas,
+                "Save everything set up right now as a preset, "
+                "so it can be loaded again from Preset Options.")
 
         # Recording was built, tested and then left unreachable: nothing in
         # the interface ever set Model.record_analytics, so the position
@@ -471,6 +517,54 @@ class Operate:
         if self.model._implicit_group and len(self.model.sets) > index:
             return self.model.sets[index]
         return None
+
+    def save_preset(self) -> None:
+        """Save the current setup, named, without leaving this tab."""
+        if not self.model.sets:
+            self._say("Choose some pistons on the tank above first.")
+            return
+
+        from tkinter import simpledialog
+
+        from preset_options.PresetProcessor import PresetError, PresetProcessor
+
+        name = simpledialog.askstring(
+            "Save preset", "Name for this preset:", parent=self.tab
+        )
+        if not name:
+            return
+        try:
+            target = PresetProcessor().save(name, self.model.sets)
+        except (PresetError, OSError) as exc:
+            messagebox.showerror("Could not save preset", str(exc),
+                                 parent=self.tab)
+            return
+        self._say("Saved {0}.".format(os.path.basename(str(target))))
+        self.logger.info("Preset saved to %s", target)
+
+    def _on_piston_right_click(self, axis: int, _x: int, _y: int) -> None:
+        """Edit one piston on its own, without disturbing its group.
+
+        Every other route sets a parameter across a whole selection, so tuning
+        a single piston -- to trim one that sits low, or to take one out of a
+        wave without dropping it from the run -- meant putting it in a group of
+        its own first.
+        """
+        owner = self.model.axis_owner(axis)
+        if owner is None:
+            self._say(
+                "Piston {0} is not selected. Click it first, then right-click "
+                "to set its own parameters.".format(tags.display_number(axis))
+            )
+            return
+        motor = owner.motors[axis]
+        ParameterDialog(self.tab, OnePiston(motor), self._after_piston_edit)
+
+    def _after_piston_edit(self) -> None:
+        self.model.mark_unprepared()
+        self._load_values()
+        self.tank.show_strokes(self._strokes())
+        self._refresh_wave_preview()
 
     def _on_stroke_dragged(self, axis: int, low: int, high: int) -> None:
         """The operator dragged the stroke bar above one piston."""
@@ -1119,6 +1213,7 @@ class Operate:
             (self.params_button, has_pistons and not busy),
             (self.pattern_button, has_pistons and not busy),
             (self.group_button, has_pistons and not busy),
+            (self.save_button, has_pistons and not busy),
             (self.delete_group_button, has_pistons and not busy),
             (self.reset_button, has_pistons and not busy),
             (self.depth_button, not busy),
