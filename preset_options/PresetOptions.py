@@ -48,6 +48,7 @@ class PresetOptions:
         self._build_preview()
         self._build_set_picker()
 
+        self._load_default_preset()
         self.refresh(model.state)
         root.add(self.tab, text="Preset Options")
 
@@ -173,6 +174,39 @@ class PresetOptions:
             )
 
     # -- actions --------------------------------------------------------------
+
+    def _load_default_preset(self) -> None:
+        """Show :data:`paths.DEFAULT_PRESET`, which is already in force.
+
+        The Model seeds every piston from this same file (see
+        :func:`~preset_options.PresetProcessor.default_parameters`), so the
+        values are in force from the moment the application opens and this tab
+        only has to say so.  Loading it here as well means Apply is there for
+        putting it back after the parameters have been changed, and the preview
+        shows what "default" actually means.
+
+        A missing or unreadable file is logged and leaves the tab empty rather
+        than greeting the operator with an error box before they have done
+        anything -- the Model falls back to the factory defaults in the same
+        case.
+        """
+        default = paths.DEFAULT_PRESET
+        if not default.is_file():
+            self.logger.warning("Default preset %s is not there", default)
+            return
+
+        try:
+            self.preset = self.processor.load(str(default))
+        except PresetError as exc:
+            self.preset = None
+            self.logger.warning("Could not load the default preset: %s", exc)
+            return
+
+        self._show_preview()
+        self.loaded_var.set(
+            "{0} -- the default. These values are already on every "
+            "piston you select.".format(self.preset.name)
+        )
 
     def browse(self) -> None:
         paths.ensure_directories()

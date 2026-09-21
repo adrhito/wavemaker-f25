@@ -17,6 +17,68 @@ from typing import Callable, Optional
 from style import theme
 
 
+def set_state(widget, state: str) -> None:
+    """Enable or disable a ttk widget on any version of Tk.
+
+    ``widget["state"] = "disabled"`` is the obvious way and it is not portable.
+    ``ttk::scale`` had no ``-state`` option until **Tk 8.6.10**; ask an older
+    one for it and it raises ``TclError: unknown option "-state"``. The lab PC
+    runs Python 3.7.0, which ships **Tk 8.6.6** -- so that one line took the
+    whole application down on the lab PC while working perfectly on every
+    developer machine, which have newer Tk. It happened while the first tab was
+    still being built, so the window never appeared at all.
+
+    Every ttk widget in every version understands the state *flags* API
+    instead, so that is what is used, with the ``-state`` option attempted
+    afterwards and ignored if refused:
+
+    * ``widget.state(["disabled"])`` greys it out and is what ``style.map(...,
+      "disabled", ...)`` in ``style.py`` paints from. Universal.
+    * ``widget["state"]`` additionally stops the widget responding on the
+      versions that have it. Best-effort.
+
+    On older Tk the flag alone does not stop a scale being dragged -- the
+    binding that checks for it was added at the same time as the option -- so
+    :func:`lock_scale` covers that case for the widgets where it matters.
+    """
+    disabled = state == "disabled"
+    try:
+        widget.state(["disabled" if disabled else "!disabled"])
+    except (tk.TclError, AttributeError):
+        pass  # a classic (non-ttk) widget; the option below is the real path
+    try:
+        widget["state"] = state
+    except tk.TclError:
+        pass  # Tk too old for -state on this widget; the flag above stands
+
+
+def lock_scale(scale, locked: bool) -> None:
+    """Stop a ``ttk.Scale`` being dragged, on any version of Tk.
+
+    :func:`set_state` greys a scale out everywhere, but on Tk older than 8.6.10
+    the class bindings do not consult the disabled flag, so the slider still
+    moves under the mouse. Here the press is swallowed instead: a widget-level
+    binding runs before the class binding and returning ``"break"`` stops it
+    getting there.
+
+    Used where a value is being written to the machine and must not change
+    under it -- not merely where a control looks inactive.
+    """
+    scale._wavemaker_locked = bool(locked)
+    if getattr(scale, "_wavemaker_guarded", False):
+        return
+
+    def guard(_event, widget=scale):
+        if getattr(widget, "_wavemaker_locked", False):
+            return "break"
+        return None
+
+    for sequence in ("<Button-1>", "<B1-Motion>", "<ButtonRelease-1>",
+                     "<Key>", "<MouseWheel>"):
+        scale.bind(sequence, guard, add="+")
+    scale._wavemaker_guarded = True
+
+
 def rounded_rect(canvas: tk.Canvas, x0, y0, x1, y1, radius, **kwargs):
     """A rectangle with round corners, as a single filled polygon.
 

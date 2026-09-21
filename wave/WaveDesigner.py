@@ -43,6 +43,9 @@ class WaveDesigner:
         self.height = IntVar(value=self.shape.height)
         self.period = DoubleVar(value=self.shape.period)
         self.direction = StringVar(value=waves.TOGETHER)
+        #: Which way round the array a cascade puts the pistons out of step.
+        #: Only consulted when the direction is CASCADING.
+        self.cascade_axis = StringVar(value=waves.BY_ROW)
         self._cards: Dict[str, Canvas] = {}
         self._phase = 0.0
         self._animating = False
@@ -134,19 +137,46 @@ class WaveDesigner:
         )
         picker = ttk.Frame(card, style="Card.TFrame")
         picker.grid(row=2, column=1, sticky="w", padx=theme.GAP, pady=(theme.GAP, 0))
+        # Two options, both of which run from the ordinary Start button. A
+        # front-to-back travelling wave used to sit between them, but it was
+        # the one design on this tab that produced a curve run, so it needed
+        # Start Curve instead and quietly broke the promise the tab makes.
+        # The same motion is still available here as a cascade keyed on
+        # Columns, which an ordinary continuous run holds by itself.
         self.direction_control = Segmented(
             picker,
             [
                 (waves.TOGETHER, "All together"),
-                (waves.TRAVELLING, "Travelling front to back"),
                 (waves.CASCADING, "Rows out of step"),
             ],
             command=self._direction_changed,
-            width=420,
+            # 140 px a segment, as before -- the control shrinks with the
+            # option that left it rather than stretching the two that remain.
+            width=280,
             height=28,
         )
         self.direction_control.canvas.configure(background=theme.SURFACE)
         self.direction_control.grid(row=0, column=0)
+
+        # Shown only for a cascade, because it is the only mode it changes.
+        # Kept in its own row of the same frame so the control above does not
+        # move when it appears and disappears.
+        self.cascade_row = ttk.Frame(card, style="Card.TFrame")
+        self.cascade_row.grid(row=3, column=0, columnspan=3, sticky="w",
+                              pady=(theme.TIGHT, 0))
+        ttk.Label(self.cascade_row, text="OUT OF STEP BY",
+                  style="CardDim.TLabel").grid(row=0, column=0, sticky="w")
+        self.cascade_control = Segmented(
+            self.cascade_row,
+            list(waves.CASCADE_AXES),
+            command=self._cascade_axis_changed,
+            width=330,
+            height=28,
+            value=self.cascade_axis.get(),
+        )
+        self.cascade_control.canvas.configure(background=theme.SURFACE)
+        self.cascade_control.grid(row=0, column=1, padx=(theme.GAP, 0))
+        self.cascade_row.grid_remove()
 
     def _build_preview(self, parent) -> None:
         holder = ttk.Frame(parent)
@@ -182,14 +212,27 @@ class WaveDesigner:
     # -- behaviour ------------------------------------------------------------
 
     def _direction_changed(self, value) -> None:
-        """All together, front to back along the chamber, or rows out of step.
+        """All together, or rows out of step.
 
-        A travelling wave needs per-column timing, which only the controller's
-        curve feature provides -- so that choice also changes which button runs
-        it. A row cascade does not: it is staged as a starting position per
-        piston, which an ordinary continuous run holds by itself.
+        Both are staged as a starting position per piston, which an ordinary
+        continuous run holds by itself -- so whichever is chosen, the design
+        this tab sends is run with Start. Only the cascade has anything more
+        to ask about, so its sub-picker is shown only for that.
         """
         self.direction.set(value)
+        if value == waves.CASCADING:
+            self.cascade_row.grid()
+        else:
+            self.cascade_row.grid_remove()
+        self._changed()
+
+    def _cascade_axis_changed(self, value) -> None:
+        """Which way round the array a cascade puts the pistons out of step.
+
+        Rows, columns, or both -- see :func:`waves.cascade_offsets`. All three
+        run from the ordinary Start button; only the keying differs.
+        """
+        self.cascade_axis.set(value)
         self._changed()
 
     def _select(self, key: str) -> None:
@@ -251,31 +294,37 @@ class WaveDesigner:
         margin = 20
         usable = width - margin * 2
         columns = 10
-        direction = self.direction.get()
-        travelling = direction == waves.TRAVELLING
-        cascading = direction == waves.CASCADING
+        cascading = self.direction.get() == waves.CASCADING
+        axis = self.cascade_axis.get()
+        # A cascade keyed on rows alone leaves every column doing the same
+        # thing; keyed on columns, or on both, it also runs along the chamber.
+        by_row = cascading and axis in (waves.BY_ROW, waves.BY_BOTH)
+        by_column = cascading and axis in (waves.BY_COLUMN, waves.BY_BOTH)
         rows = tags.ROWS_PER_COLUMN
 
-        # Surface line: what the water is doing, roughly. A row cascade does
-        # not lean the surface -- every column is doing the same thing as every
-        # other -- so only a travelling wave tilts it.
+        # Surface line: what the water is doing, roughly. It only leans when
+        # the stagger runs along the chamber, which a rows-only cascade does
+        # not -- there every column is doing the same thing as every other.
+        along = by_column
         points = []
         for step in range(int(usable)):
             t = step / float(usable)
-            phase = self._phase + (t * 1.5 if travelling else 0.0)
+            phase = self._phase + (t * 1.5 if along else 0.0)
             y = PREVIEW_H * 0.42 - self.shape.sample(phase) * (PREVIEW_H * 0.22)
             points.extend((margin + step, y))
         if len(points) >= 4:
             c.create_line(*points, fill="#4fc3f7", width=2, smooth=True)
 
-        # The pistons below it. A cascade is the one case where the three rows
-        # of a column are not doing the same thing, so it is drawn as three
-        # separate bars: the whole point of the mode is that they differ.
+        # The pistons below it. A cascade keyed on rows is the case where the
+        # three rows of a column are not doing the same thing, so it is drawn
+        # as three separate bars: the whole point of the mode is that they
+        # differ. Keyed on columns alone they move together again, and the
+        # column-to-column lead is what there is to see.
         band = PREVIEW_H * 0.24
         for column in range(columns):
             x = margin + (column + 0.5) * usable / columns
-            lead = column / float(columns) * 1.5 if travelling else 0.0
-            if not cascading:
+            lead = column / float(columns) * 1.5 if along else 0.0
+            if not by_row:
                 level = (self.shape.sample(self._phase + lead) + 1.0) / 2.0
                 top = PREVIEW_H * 0.58 + (1.0 - level) * band
                 c.create_rectangle(x - 9, top, x + 9, PREVIEW_H - 8,
@@ -347,19 +396,23 @@ class WaveDesigner:
                 motor.update_params(values)
                 count += 1
 
-        direction = self.direction.get()
-        travelling = direction == waves.TRAVELLING
-        cascading = direction == waves.CASCADING
+        cascading = self.direction.get() == waves.CASCADING
+        axis = self.cascade_axis.get()
 
-        if travelling or cascading:
-            # Both stagger Curve Offset; they differ only in what the offset is
-            # keyed on. Front to back delays each column, so a crest runs the
-            # length of the chamber. Rows out of step delays each row instead,
-            # so within every column one piston is near the top of its stroke,
-            # one near the middle and one near the bottom -- all of them on the
-            # identical stroke and speed.
-            offsets = (waves.column_offsets(period) if travelling
-                       else waves.row_offsets(period, tags.ROWS_PER_COLUMN))
+        if cascading:
+            # A cascade staggers Curve Offset, keyed on rows, on columns, or on
+            # both -- rows so that within every column one piston is near the
+            # top of its stroke, one near the middle and one near the bottom;
+            # columns so the lead runs along the chamber, which is the
+            # front-to-back travelling wave, reached without a curve run; both
+            # so it runs diagonally. Every piston keeps the identical stroke
+            # and speed whichever it is, and Curve ID is deliberately left
+            # alone: the stagger is staged as a starting position, which an
+            # ordinary continuous run honours, so turning it into a curve run
+            # would only make Start the wrong button.
+            cascade = waves.cascade_offsets(
+                period, axis, tags.COLUMN_COUNT, tags.ROWS_PER_COLUMN
+            )
             for motor_set in self.model.sets:
                 for motor in motor_set:
                     # Keyed by where the piston sits in the picture, never by
@@ -368,14 +421,8 @@ class WaveDesigner:
                     # largest delay, so the wave marched the opposite way to
                     # the one the Pattern tool produces for the same request.
                     place = tags.display_number(motor.axis) - 1
-                    index = (place // tags.ROWS_PER_COLUMN if travelling
-                             else place % tags.ROWS_PER_COLUMN)
-                    motor.set_param("Curve Offset", offsets[index])
-                    if travelling:
-                        # Only a curve run reads the per-leg timing. A row
-                        # cascade is staged as a starting position instead, so
-                        # it must not be turned into a curve.
-                        motor.set_param("Curve ID", 1)
+                    column, row = divmod(place, tags.ROWS_PER_COLUMN)
+                    motor.set_param("Curve Offset", cascade[(column, row)])
 
         self.model.mark_unprepared()
         actual = waves.achievable_period(height, period)
@@ -385,15 +432,19 @@ class WaveDesigner:
                 self.shape.name, count, height, values["Speed 1"], actual
             )
         )
-        if travelling:
-            how = ("  Go to Operate, choose Curve and press Start -- a "
-                   "travelling wave needs the curve feature, because the "
-                   "per-column timing lives there.")
-        elif cascading:
-            how = ("  Go to Operate and press Start. The rows are staggered by "
-                   "starting each one at a different point in the stroke, "
-                   "which ordinary continuous motion holds for as long as the "
-                   "run lasts.")
+        # Everything this tab sends now runs from plain Start, so the message
+        # never has to send anyone to a different button -- it only explains
+        # what a cascade did, because a stagger is worth saying out loud.
+        if cascading:
+            what = {
+                waves.BY_ROW: "The rows are",
+                waves.BY_COLUMN: "The columns are",
+                waves.BY_BOTH: "The rows and the columns are both",
+            }[axis]
+            how = ("  Go to Operate and press Start. {0} staggered by starting "
+                   "each piston at a different point in the stroke, which "
+                   "ordinary continuous motion holds for as long as the run "
+                   "lasts.".format(what))
         else:
             how = "  Go to Operate and press Start."
         self.result.configure(text=message + how)

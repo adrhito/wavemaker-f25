@@ -36,6 +36,58 @@ class PresetError(Exception):
     operator, so it says what is wrong and where."""
 
 
+#: Cache for :func:`default_parameters`, so the file is read once per run.
+_DEFAULT_PARAMS: Optional[Dict[str, int]] = None
+
+
+def default_parameters() -> Dict[str, int]:
+    """The parameters a piston starts with when the application opens.
+
+    ``params.defaults()`` are the factory values, and a piston holding them has
+    no stroke and no speed: it does not move. The lab's usual starting point is
+    :data:`app.paths.DEFAULT_PRESET`, so that file is read here and its ``All``
+    row becomes the starting point instead -- every piston selected on the tank
+    gets it without anyone opening the Preset Options tab first.
+
+    Read once and cached. Anything out of range is pulled back to the limit,
+    the same way applying a preset by hand does, and a missing or unreadable
+    file falls back to the factory defaults rather than stopping the launch.
+    """
+    global _DEFAULT_PARAMS
+    if _DEFAULT_PARAMS is not None:
+        return dict(_DEFAULT_PARAMS)
+
+    values = params.defaults()
+    source = paths.DEFAULT_PRESET
+    if source.is_file():
+        try:
+            preset = PresetProcessor().load(str(source))
+        except PresetError as exc:
+            LOGGER.warning("Could not read the default preset %s: %s", source, exc)
+        else:
+            for name, value in preset.preview().items():
+                spec = params.BY_NAME.get(name)
+                if spec is None:
+                    continue
+                if spec.minimum is not None and value < spec.minimum:
+                    value = spec.minimum
+                if spec.maximum is not None and value > spec.maximum:
+                    value = spec.maximum
+                values[name] = value
+            LOGGER.info("Default parameters taken from preset %s", preset.name)
+    else:
+        LOGGER.warning("Default preset %s is not there; using the factory "
+                       "defaults", source)
+
+    _DEFAULT_PARAMS = dict(values)
+    return dict(values)
+
+
+def default_preset_name() -> str:
+    """The name shown for :func:`default_parameters`, for the interface."""
+    return os.path.splitext(paths.DEFAULT_PRESET.name)[0]
+
+
 class PresetProcessor:
     """Loads and saves presets."""
 

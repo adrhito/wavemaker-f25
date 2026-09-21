@@ -148,7 +148,14 @@ class PLC:
             _getUDT(self)
             return self.TagList
         if programName not in programNames:
-            print("Program not found, please check name!")
+            # Local change to the vendored library: this was a bare print().
+            # The application is launched with pythonw.exe, which has no
+            # console, so sys.stdout is None there and the print raised
+            # AttributeError: 'NoneType' object has no attribute 'write' --
+            # turning a "that tag does not exist" message into a crash, on the
+            # lab PC only.
+            if sys.stdout is not None:
+                print("Program not found, please check name!")
             return None
 
 
