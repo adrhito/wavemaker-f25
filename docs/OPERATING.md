@@ -1,5 +1,181 @@
 # Operating the wavemaker
 
+> **The lab PC is Windows 7.** Everything in this application is written to run
+> there. If it will not start on that machine, go straight to
+> [Running on Windows 7](#windows-7) — do not install a newer Python to
+> "fix" it.
+>
+> **If a command window flashes up and vanishes and nothing runs, double-click
+> `Diagnose Wavemaker.cmd`.** That window stays open and says why.
+
+<a id="windows-7"></a>
+
+## Running on Windows 7
+
+**This is a hard constraint, not a preference. Nothing in this repository may
+require anything newer than Python 3.7.**
+
+Windows 7 is the last Windows the lab PC runs, and **Python 3.9 and newer will
+not install or run on it at all** — 3.8 is the last version with a Windows 7
+installer, and 3.7 also works. So the application targets **Python 3.7**, and
+that ceiling governs every line of code in here.
+
+### The rules
+
+- **No syntax newer than Python 3.7.** No `dict | dict` merging (3.9), no
+  built-in generics such as `list[str]` in evaluated positions (3.9), no
+  `match` statements (3.10), no parenthesised context managers (3.10).
+- **No standard-library calls newer than Python 3.7.** The ones that catch
+  people out: `str.removeprefix` / `removesuffix`, `math.prod`, `math.dist`,
+  `functools.cached_property`, `typing.Protocol`, `typing.Literal`,
+  `typing.TypedDict`, `importlib.metadata`, `zoneinfo`, `graphlib`,
+  `Path.is_relative_to`, `shlex.join`. `Model.UiBridge` and `app.plc.Transport`
+  are plain base classes instead of `typing.Protocol` for exactly this reason —
+  leave them that way.
+- **No third-party packages.** The only dependency is `pylogix`, vendored under
+  `modules/`. Nothing here may need `pip install`.
+- **Tk is old there too.** Use the Canvas-based widgets in `modules/widgets.py`
+  (`RoundedButton`, `Segmented`) rather than ttk for anything that needs a
+  colour or a selected state — ttk on Windows 7 ignores background colours on
+  buttons and draws radio buttons as small grey circles that are easy to miss.
+  On the Canvas, a `dash` pattern only draws on a **one-pixel** line on
+  Windows; widen the line and the dash silently disappears there while still
+  looking right on a newer machine.
+- **Assume a slow machine.** Anything on a redraw path has to be cheap. Work
+  out physics once when the parameters change, not once per animation frame.
+
+### Checking a machine, or a change
+
+Run the environment check with the interpreter that machine actually uses:
+
+```
+py -3 docs\check_python.py
+```
+
+or, if the `py` launcher is not on PATH:
+
+```
+C:\Python37\python.exe docs\check_python.py
+```
+
+It prints the Python version, confirms `tkinter` is present, imports every
+module of the application, and loads every preset. It contacts no PLC and
+changes nothing. Anything that would fail on the lab PC fails there, by name.
+
+To check a change from a *newer* machine, where you cannot simply run 3.7, this
+parses every file under the 3.7 grammar and names anything too new:
+
+```
+python -c "import ast,pathlib;[ast.parse(p.read_text(encoding='utf-8'),str(p),feature_version=(3,7)) for p in pathlib.Path('.').rglob('*.py') if '__pycache__' not in p.parts]"
+```
+
+Silence means every file is valid Python 3.7. It catches new *syntax* only, so
+the standard-library list above still has to be checked by eye.
+
+### A command window flashes up and disappears, and nothing runs
+
+**Start here: double-click `Diagnose Wavemaker.cmd`.** It stays open, lists
+every Python on the machine, runs the environment check, prints the last
+recorded crash, and offers to start the application with a console attached so
+the error is visible. Nothing in it touches the PLC unless you answer `Y` at
+the last step.
+
+The flash itself is not the fault, which is why this was so hard to see.
+`Open Wavemaker.cmd` starts the application with **`pythonw.exe`** — the
+windowless interpreter, so no console sits behind the interface — and then
+exits, which closes its own window. That flash is the launcher working. But a
+windowless interpreter has **no `stdout` and no `stderr`**: if Python or the
+application fails on the way up, the traceback is written nowhere. Flash, then
+nothing, and no clue anywhere.
+
+Three things now make that failure visible:
+
+- **`main.py` catches it.** Any failure before the window appears is written to
+  `logs/startup-error.txt` — with the Python version and the exact interpreter
+  that ran — logged to the day's error log, and shown in a message box.
+- **`Diagnose Wavemaker.cmd`** shows all of it in a window that stays open.
+- **The launchers no longer pick the newest Python.** The `py` launcher's plain
+  `-3` selects the **newest** installed Python. If a Python 3.9 or newer has
+  ever been installed on that Windows 7 machine, `pyw -3` chose it — and 3.9+
+  cannot run on Windows 7 at all. It dies instantly, before printing anything,
+  and because it was launched windowless there was nothing to see.
+  `Open Wavemaker.cmd` and `Mock Wavemaker (no machine).cmd` now look for a
+  known-good 3.8 or 3.7 by full path first, then ask the launcher for `-3.8` or
+  `-3.7` **by name** (testing with console `py.exe` before launching with
+  windowless `pyw.exe`), and only then fall back to newest-wins, which is right
+  on a modern machine.
+
+If a 3.9+ is installed there, the fix is to install **Python 3.8** — the last
+version with a Windows 7 installer — with **tcl/tk and IDLE** ticked. Removing
+the newer one is not necessary now that the launchers pin a version, but it
+removes the trap for good.
+
+**What it actually was, on 21 September 2026.** Not the Python version: the lab
+PC had a healthy Python 3.7.0 32-bit and every module imported. The application
+was dying while building its first tab, on
+`self.low_slider["state"] = "disabled"` — see *Tk on the lab PC is older than
+yours* below. Two things had hidden it: the windowless interpreter threw the
+traceback away, and the launchers' install-path list did not include the
+`Python3x-32` folders the 32-bit installer creates, so Python was only being
+found via PATH. Both are fixed, and the list now covers `-32`.
+
+### If it still will not start
+
+1. Run `Diagnose Wavemaker.cmd`, or the environment check above. Between them
+   they name the problem in most cases.
+2. `Could not find Python on this machine.` — Python is not installed, or not
+   on PATH. The launchers already look in `C:\Python37`, `C:\Python38`,
+   `C:\Program Files\Python3x`, `C:\Program Files (x86)\Python3x-32` and
+   `%LOCALAPPDATA%\Programs\Python\Python3x`. If it is somewhere else, run it
+   directly: `C:\<your path>\python.exe "C:\...\WaveMaker_F25_new\main.py"` —
+   note `python.exe`, not `pythonw.exe`, so you can see the error.
+3. A `SyntaxError` naming a file in this repository means something newer than
+   3.7 got committed. That is a bug in the change, not in the machine — fix the
+   code, do not upgrade the PC.
+4. `FAIL tkinter is not available`, or `ImportError: DLL load failed ...
+   _tkinter` — re-run the Python installer and tick **tcl/tk and IDLE**.
+5. The window opens but nothing connects — that is a network or controller
+   question, not a Windows 7 one. See
+   [When something goes wrong](#when-something-goes-wrong).
+
+### Tk on the lab PC is older than yours — check widget options
+
+Python 3.7.0 ships **Tcl/Tk 8.6.6**. A current Python ships 8.6.12 or newer.
+Widget options added in between exist on your machine and do not exist there,
+and asking for one raises `_tkinter.TclError: unknown option "-..."` — which,
+during window construction, means no window at all.
+
+This has already bitten once. `self.low_slider["state"] = "disabled"` worked on
+every developer machine and killed the application on the lab PC, because
+**`-state` was only added to `ttk::scale` in Tk 8.6.10** (and to
+`ttk::progressbar` and `ttk::scrollbar` at the same time).
+
+**Use `modules.widgets.set_state(widget, "disabled")`, not
+`widget["state"] = ...`, for any ttk widget that is not a Button, Entry,
+Combobox or Checkbutton.** It sets the ttk *state flag*, which every version
+understands and which `style.py` already paints a `disabled` look from, then
+tries the `-state` option and ignores a refusal.
+
+One caveat, and it matters for safety: on Tk older than 8.6.10 the disabled
+flag greys a scale out but does **not** stop it being dragged — the binding
+that checks the flag arrived with the option. Where a control is locked because
+a value is being written to the machine, call
+`modules.widgets.lock_scale(scale, True)` as well; it swallows the press.
+
+To check a change against old Tk without the machine, make the affected widget
+classes refuse `-state` and drive the interface through every state — that is
+how the fix above was verified across all five tabs and all five machine
+states. The Tk release notes are the reference for when an option appeared.
+
+### Never print to the console
+
+The application runs under `pythonw.exe`, where `sys.stdout` and `sys.stderr`
+are `None`. A bare `print()` there raises
+`AttributeError: 'NoneType' object has no attribute 'write'` — on the lab PC
+only, invisibly. **Use the logger, never `print`.** There is no `print` in the
+application's own code; the one in the vendored `modules/eip.py` is guarded
+with `if sys.stdout is not None`, and any new one must be too.
+
 ## Starting up
 
 1. Wall disconnect on.
@@ -147,6 +323,12 @@ to go.
 
 Preset files live in `Presets/` and are ordinary CSVs you can edit in Excel.
 Start from `Preset Outline (COPY ME).csv`.
+
+**One preset is already in force when the application opens:**
+`Preset 1-Big Wave Demo2.csv`. Every piston you pick on the tank starts with
+its values, so a normal run is select pistons then **Start** — there is no need
+to visit Preset Options first. To make a different preset the default, change
+`DEFAULT_PRESET` in `app/paths.py` to point at it.
 
 A preset has one row per piston plus a final `All` row. **A row of zeroes means
 "this piston was not part of the preset"**, not "hold this piston at zero" —

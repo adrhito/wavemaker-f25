@@ -145,6 +145,21 @@ TRAVELLING = "travelling"   # each column delayed; needs Start Curve
 #: timing, which only the curve feature reads.
 CASCADING = "cascading"
 
+#: What a cascade is keyed on -- which way round the array the pistons are put
+#: out of step. Rows alone leaves every column doing the same thing; columns
+#: alone marches the disturbance along the chamber without a curve run; both
+#: does the two at once, so the lead runs diagonally across the array.
+BY_ROW = "row"
+BY_COLUMN = "column"
+BY_BOTH = "both"
+
+#: Offered in the picker, in the order they read.
+CASCADE_AXES = (
+    (BY_ROW, "Rows"),
+    (BY_COLUMN, "Columns"),
+    (BY_BOTH, "Rows and columns"),
+)
+
 MIN_PERIOD = 0.4
 MAX_PERIOD = 6.0
 MIN_HEIGHT = 20
@@ -255,6 +270,46 @@ def row_offsets(period: float, rows: int = 3):
         (row, int(round((row / float(rows)) * period * 100)))
         for row in range(rows)
     )
+
+
+def cascade_offsets(period: float, across: str = BY_ROW, columns: int = 10,
+                    rows: int = 3) -> Dict[tuple, int]:
+    """Curve Offset for every place in the array, keyed ``(column, row)``.
+
+    One stagger, keyed on whichever way round the array the operator asked for:
+
+    ``BY_ROW``      the three rows of every column are spread around the cycle,
+                    so within a column one piston is near the top of its
+                    stroke, one near the middle and one near the bottom, and
+                    every column does the same thing as every other.
+    ``BY_COLUMN``   each column is delayed a little on the one in front, so the
+                    disturbance runs along the chamber, the rows of a column
+                    staying together.
+    ``BY_BOTH``     the two added together, so a piston is out of step with the
+                    one beside it *and* the one behind it and the lead runs
+                    diagonally across the array.
+
+    The row and column staggers each span one cycle, so added together they
+    span rather more than one. That is not a problem: only the differences
+    between pistons matter, and :func:`cascade_fractions` rescales whatever
+    spread it is given onto the one leg continuous motion can hold.
+
+    This is the continuous-run stagger. :func:`column_offsets` is the curve-run
+    equivalent for a front-to-back wave, where the controller reads the offset
+    as per-leg timing rather than the application staging it as a starting
+    position.
+    """
+    cycle = clamp_period(period) * 100.0
+    offsets: Dict[tuple, int] = {}
+    for column in range(columns):
+        for row in range(rows):
+            value = 0.0
+            if across in (BY_COLUMN, BY_BOTH):
+                value += (column / float(columns)) * cycle
+            if across in (BY_ROW, BY_BOTH):
+                value += (row / float(rows)) * cycle
+            offsets[(column, row)] = int(round(value))
+    return offsets
 
 
 def cascade_fractions(offsets: Dict[int, int]) -> Dict[int, float]:

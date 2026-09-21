@@ -37,7 +37,8 @@ from modules.logging.log_utils import LOGGER_NAME
 from modules.tank_view import TankView, describe_place
 from modules.tooltip import Tooltip
 from modules.wave_preview import WavePreview
-from modules.widgets import RoundedButton, Segmented
+from modules.widgets import (RoundedButton, Segmented, lock_scale,
+                             set_state)
 from operate.ParameterDialog import ParameterDialog
 from operate.PatternDialog import PatternDialog
 from style import theme
@@ -1043,6 +1044,9 @@ class Operate:
         # stroke. That is what the machine is given -- a starting position, not
         # a timing offset -- so it is what the picture should be drawn from.
         start_fractions = {}
+        # column -> {row: fraction}. Kept beside start_fractions rather than
+        # replacing it so a caller that only knows about columns still works.
+        row_fractions = {}
         for motor in motors:
             wanted = motor.write_params
             try:
@@ -1075,7 +1079,9 @@ class Operate:
             return
 
         period = max(periods) if periods else 1.0
-        note = "About {0:.0f} mm and {1:.1f} s a cycle - a sketch, not a model.".format(
+        # The pistons, in two numbers. What the water makes of them is the
+        # caption on the other end of the strip, which the preview writes.
+        note = "Pistons: {0:.0f} mm stroke, {1:.1f} s a cycle.".format(
             max(strokes), period
         )
         if len(set(round(p, 2) for p in periods)) > 1:
@@ -1100,9 +1106,18 @@ class Operate:
                 continue
             if high == low:
                 continue
-            column = (tags.display_number(motor.axis) - 1) // tags.ROWS_PER_COLUMN
-            start_fractions[column] = _clamp(
-                (float(target) - low) / (high - low), 0.0, 1.0)
+            # Keyed by piston, not by column. Keying the staged start by column
+            # alone meant the three rows of a column overwrote one another and
+            # the last one won -- so a row cascade, where the whole point is
+            # that the rows differ, drew the identical picture to "All
+            # together". Every column came out at fraction 0.0 and the operator
+            # saw a feature that had plainly done nothing, on a run that was
+            # working correctly at the machine.
+            place = tags.display_number(motor.axis) - 1
+            column, row = divmod(place, tags.ROWS_PER_COLUMN)
+            fraction = _clamp((float(target) - low) / (high - low), 0.0, 1.0)
+            row_fractions.setdefault(column, {})[row] = fraction
+            start_fractions[column] = fraction
 
         self.wave_preview.show(
             max(strokes), period, int(profile), offsets, note,
@@ -1111,7 +1126,22 @@ class Operate:
             dwell_1_s=max(dwell_1) if dwell_1 else 0.0,
             dwell_2_s=max(dwell_2) if dwell_2 else 0.0,
             start_fractions=start_fractions or None,
+            row_fractions=self._rows_by_column(row_fractions) or None,
         )
+
+    @staticmethod
+    def _rows_by_column(row_fractions):
+        """Turn ``{column: {row: fraction}}`` into ``{column: [fraction, ...]}``.
+
+        Ordered by row, and only for columns where every row reported, so the
+        preview never has to reason about a half-filled column.
+        """
+        ordered = {}
+        for column, rows in row_fractions.items():
+            if len(rows) != tags.ROWS_PER_COLUMN:
+                continue
+            ordered[column] = [rows[row] for row in sorted(rows)]
+        return ordered
 
     def _strokes(self):
         return dict(
@@ -1201,9 +1231,17 @@ class Operate:
         entry_state = "disabled" if state is MachineState.PREPARING else "normal"
         for entry in (self.pos1_entry, self.pos2_entry, self.speed_entry):
             entry["state"] = entry_state
-        self.low_slider["state"] = entry_state
-        self.high_slider["state"] = entry_state
-        self.rate_slider["state"] = entry_state
+        # set_state, not entry["state"]: ttk.Scale had no -state option before
+        # Tk 8.6.10, and the lab PC's Python 3.7.0 ships Tk 8.6.6, where that
+        # assignment raises TclError and took the whole application down before
+        # its window had even appeared. lock_scale is what actually stops a
+        # drag there -- on that Tk the disabled flag greys the slider out but
+        # the binding still moves it, and these are locked precisely because
+        # the values are being written to the machine.
+        locked = entry_state == "disabled"
+        for scale in (self.low_slider, self.high_slider, self.rate_slider):
+            set_state(scale, entry_state)
+            lock_scale(scale, locked)
         self.group_box["state"] = "disabled" if busy else "readonly"
         self.depth_box["state"] = "disabled" if busy else "readonly"
         self.rest.set_state("disabled" if busy else "normal")

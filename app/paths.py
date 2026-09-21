@@ -23,6 +23,13 @@ ERROR_LOG_DIR: Path = LOG_DIR / "errors"
 ANALYTICS_DIR: Path = APP_DIR / "analytics"
 PRESET_DIR: Path = APP_DIR / "Presets"
 
+#: Preset loaded into the Preset Options tab when the application starts, so
+#: the usual demo is ready to apply without browsing for it first.  It is only
+#: loaded, never applied -- nothing moves until an operator picks groups and
+#: presses Apply.  If the file is missing or unreadable the tab simply starts
+#: empty, as it did before.
+DEFAULT_PRESET: Path = PRESET_DIR / "Preset 1-Big Wave Demo2.csv"
+
 
 def ensure_directories() -> None:
     """Create the writable directories the app needs, if they are missing."""
