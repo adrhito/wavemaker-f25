@@ -104,6 +104,8 @@ logs/  analytics/   written at run time
 archive/            superseded documentation and the old test scripts
 ```
 
-## Licence
+## Credits
 
-See `LICENSE`. Built on pylogix by Burt Peterson, maintained by Dustin Roeder.
+- Adrian Hito
+- William Keffer
+- Alexander Caza
