@@ -2,6 +2,9 @@
 
 This repository controls 30 physical LinMot pistons through an Allen-Bradley ControlLogix PLC. Read this file before changing code, and treat motion control as safety critical. The current implementation and tests take precedence when older prose in `README.md` or `docs/` disagrees with them.
 
+For machine-specific history and operating observations, also read `.claude/skills/wavemaker/SKILL.md` before changing motion code.
+For water-height or soliton work, read `docs/CALIBRATION_NOTES.md`; piston stroke is not a measured water-wave height.
+
 ## Where to work
 
 - `main.py` parses `--mock` / `--simulate`, `--ip`, `--slot`, and `--fresh-connection`, then builds `Model` and `View`.
@@ -35,3 +38,5 @@ This repository controls 30 physical LinMot pistons through an Allen-Bradley Con
 ## When work explicitly involves the real array
 
 Coordinate with the operator and make sure no other app or live tool is controlling the PLC: the software has no exclusive ownership check. Never run two live sessions concurrently. Check command bits and drive status before motion, use a small conservative selection first, and arrange cleanup that drops all run and home bits even on error or interruption. Inspect the resulting logs and held parameters; keep simulator results distinct from physical observations. Do not run live tools merely to validate a code change.
+
+The development Mac cannot contact the wavemaker. Hardware runs and water measurements happen on a separate Windows 7 lab computer without internet access. Keep new runtime requirements compatible with that machine and plan for offline transfer of code and measurements. The mock's piston animation is not a model of water height.
