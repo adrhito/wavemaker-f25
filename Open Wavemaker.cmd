@@ -28,54 +28,91 @@ REM  startup and a failure here is not reported.
 call :start_mongo
 
 REM --- Start the application --------------------------------------------------
-REM  pyw.exe is the windowless Windows Python launcher: no console window sits
-REM  behind the interface. py.exe is the fallback (it shows a console).
-REM  Plain "python" is deliberately last -- on lab machines it is often the
-REM  Microsoft Store stub, which fails with "Python was not found".
-REM  Tried in order: windowless launcher, windowless interpreter, then the
-REM  console versions. The lab PC is Windows 7 and may not have the py
-REM  launcher on PATH, so common install locations are checked directly.
-if exist "%SystemRoot%\pyw.exe" (
-    start "" "%SystemRoot%\pyw.exe" -3 "%~dp0main.py" %*
-    goto :eof
-)
-where pyw >nul 2>&1 && (
-    start "" pyw -3 "%~dp0main.py" %*
-    goto :eof
-)
-where pythonw >nul 2>&1 && (
-    start "" pythonw "%~dp0main.py" %*
-    goto :eof
-)
+REM  pythonw.exe / pyw.exe are the windowless Windows interpreters: no console
+REM  window sits behind the interface. That is also why a failure on the way up
+REM  used to be invisible. A windowless interpreter has no stdout and no stderr,
+REM  so a traceback went nowhere and all the operator saw was this window flash
+REM  and close. main.py now catches that and writes logs\startup-error.txt and
+REM  a message box, and 'Diagnose Wavemaker.cmd' shows the lot in a window that
+REM  stays open. If this ever flashes and nothing appears, run that.
+REM
+REM  ORDER MATTERS, and it is not the obvious one. The lab PC is Windows 7,
+REM  where Python 3.9 and newer will not run AT ALL -- they fail before printing
+REM  anything. The py launcher's plain -3 picks the NEWEST Python installed. So
+REM  on a Windows 7 machine that also has a 3.9+ lying around, "pyw -3" chooses
+REM  an interpreter that dies instantly and silently, which looks exactly like
+REM  the application being broken. Hence: a known-good 3.8/3.7 by full path
+REM  first, then the launcher asked for 3.8 or 3.7 BY NAME, and only then the
+REM  generic newest-wins fallbacks, which are right on a modern machine.
+REM
+REM  Plain "python" stays last -- on lab machines it is often the Microsoft
+REM  Store stub, which fails with "Python was not found".
+set "PYW="
+set "PYWARG="
 for %%P in (
     "%LOCALAPPDATA%\Programs\Python\Python38\pythonw.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python38-32\pythonw.exe"
     "%LOCALAPPDATA%\Programs\Python\Python37\pythonw.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python37-32\pythonw.exe"
     "C:\Python38\pythonw.exe"
     "C:\Python37\pythonw.exe"
     "C:\Program Files\Python38\pythonw.exe"
     "C:\Program Files\Python37\pythonw.exe"
+    "C:\Program Files (x86)\Python38-32\pythonw.exe"
+    "C:\Program Files (x86)\Python37-32\pythonw.exe"
 ) do (
-    if exist %%P (
-        start "" %%P "%~dp0main.py" %*
-        goto :eof
-    )
+    if not defined PYW if exist %%P set "PYW=%%~P"
 )
+if defined PYW goto :launch
+
+call :pin 3.8
+if defined PYW goto :launch
+call :pin 3.7
+if defined PYW goto :launch
+
+if exist "%SystemRoot%\pyw.exe" (
+    set "PYW=%SystemRoot%\pyw.exe"
+    set "PYWARG=-3"
+)
+if defined PYW goto :launch
+where pyw >nul 2>&1 && set "PYW=pyw" && set "PYWARG=-3"
+if defined PYW goto :launch
+where pythonw >nul 2>&1 && set "PYW=pythonw"
+if defined PYW goto :launch
 REM  Console fallbacks: these leave a window open behind the interface, but
 REM  starting is better than not starting.
-where py >nul 2>&1 && (
-    start "" py -3 "%~dp0main.py" %*
-    goto :eof
-)
-where python >nul 2>&1 && (
-    start "" python "%~dp0main.py" %*
-    goto :eof
-)
+where py >nul 2>&1 && set "PYW=py" && set "PYWARG=-3"
+if defined PYW goto :launch
+where python >nul 2>&1 && set "PYW=python"
+if defined PYW goto :launch
+goto :nopython
 
+:launch
+start "" "%PYW%" %PYWARG% "%~dp0main.py" %*
+goto :eof
+
+:pin
+REM  %1 is a version such as 3.8. py.exe (console) is used only to TEST that
+REM  the version exists and actually starts; pyw.exe (windowless) is what then
+REM  launches it. Testing with the console build is the point -- a 3.9 on
+REM  Windows 7 fails here, quietly, instead of being launched and vanishing.
+if not exist "%SystemRoot%\py.exe" goto :eof
+if not exist "%SystemRoot%\pyw.exe" goto :eof
+"%SystemRoot%\py.exe" -%1 -c "pass" >nul 2>&1
+if errorlevel 1 goto :eof
+set "PYW=%SystemRoot%\pyw.exe"
+set "PYWARG=-%1"
+goto :eof
+
+:nopython
 echo Could not find Python on this machine.
 echo.
 echo Windows 7 supports Python up to 3.8. If Python is installed but not on
 echo PATH, run it directly, for example:
 echo     C:\Python37\pythonw.exe "%~dp0main.py"
+echo.
+echo Or double-click 'Diagnose Wavemaker.cmd', which lists every Python it
+echo can find and says what is wrong.
 pause
 goto :eof
 

@@ -19,43 +19,71 @@ REM ---------------------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
 
-if exist "%SystemRoot%\pyw.exe" (
-    start "" "%SystemRoot%\pyw.exe" -3 "%~dp0main.py" --mock %*
-    goto :eof
-)
-where pyw >nul 2>&1 && (
-    start "" pyw -3 "%~dp0main.py" --mock %*
-    goto :eof
-)
-where pythonw >nul 2>&1 && (
-    start "" pythonw "%~dp0main.py" --mock %*
-    goto :eof
-)
+REM  Same interpreter search as 'Open Wavemaker.cmd', and for the same reason:
+REM  on Windows 7 the py launcher's -3 picks the newest Python installed, and
+REM  anything from 3.9 up cannot run there at all -- it dies before printing
+REM  anything, which looks exactly like this launcher being broken. Known-good
+REM  3.8/3.7 by full path first, then the launcher asked for a version by name,
+REM  then the generic fallbacks. If this window flashes and nothing appears,
+REM  run 'Diagnose Wavemaker.cmd'.
+set "PYW="
+set "PYWARG="
 for %%P in (
     "%LOCALAPPDATA%\Programs\Python\Python38\pythonw.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python38-32\pythonw.exe"
     "%LOCALAPPDATA%\Programs\Python\Python37\pythonw.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python37-32\pythonw.exe"
     "C:\Python38\pythonw.exe"
     "C:\Python37\pythonw.exe"
     "C:\Program Files\Python38\pythonw.exe"
     "C:\Program Files\Python37\pythonw.exe"
+    "C:\Program Files (x86)\Python38-32\pythonw.exe"
+    "C:\Program Files (x86)\Python37-32\pythonw.exe"
 ) do (
-    if exist %%P (
-        start "" %%P "%~dp0main.py" --mock %*
-        goto :eof
-    )
+    if not defined PYW if exist %%P set "PYW=%%~P"
 )
-where py >nul 2>&1 && (
-    start "" py -3 "%~dp0main.py" --mock %*
-    goto :eof
-)
-where python >nul 2>&1 && (
-    start "" python "%~dp0main.py" --mock %*
-    goto :eof
-)
+if defined PYW goto :launch
 
+call :pin 3.8
+if defined PYW goto :launch
+call :pin 3.7
+if defined PYW goto :launch
+
+if exist "%SystemRoot%\pyw.exe" (
+    set "PYW=%SystemRoot%\pyw.exe"
+    set "PYWARG=-3"
+)
+if defined PYW goto :launch
+where pyw >nul 2>&1 && set "PYW=pyw" && set "PYWARG=-3"
+if defined PYW goto :launch
+where pythonw >nul 2>&1 && set "PYW=pythonw"
+if defined PYW goto :launch
+where py >nul 2>&1 && set "PYW=py" && set "PYWARG=-3"
+if defined PYW goto :launch
+where python >nul 2>&1 && set "PYW=python"
+if defined PYW goto :launch
+goto :nopython
+
+:launch
+start "" "%PYW%" %PYWARG% "%~dp0main.py" --mock %*
+goto :eof
+
+:pin
+if not exist "%SystemRoot%\py.exe" goto :eof
+if not exist "%SystemRoot%\pyw.exe" goto :eof
+"%SystemRoot%\py.exe" -%1 -c "pass" >nul 2>&1
+if errorlevel 1 goto :eof
+set "PYW=%SystemRoot%\pyw.exe"
+set "PYWARG=-%1"
+goto :eof
+
+:nopython
 echo Could not find Python on this machine.
 echo.
 echo Install Python 3 from python.org. Windows 7 supports up to 3.8;
 echo anything from 3.7 onwards works.
+echo.
+echo Or double-click 'Diagnose Wavemaker.cmd', which lists every Python it
+echo can find and says what is wrong.
 pause
 goto :eof

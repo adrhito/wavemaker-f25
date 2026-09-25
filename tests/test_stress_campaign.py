@@ -794,14 +794,6 @@ class TestRapidOperatorAbuse:
                 model.change_speed_live(bad)
         model.stop(immediate=True, park=False)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Model.toggle/_sync_implicit_group rebuild the group during a "
-               "run without touching Live_Motors, so a piston removed from the "
-               "group is still live on the PLC. Model._park_moves then raises "
-               "Run_1 and that piston strokes on its old parameters while the "
-               "rest park",
-    )
     def test_deselecting_a_piston_mid_run_stops_commanding_it(self, plc):
         model = ready_model(plc, axes=(0, 1, 2))
         model.run(RunMode.CONTINUOUS)
