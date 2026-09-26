@@ -370,3 +370,73 @@ def axes_for(columns: int) -> List[int]:
             if number <= tags.MOTOR_COUNT:
                 wanted.append(tags.axis_from_display(number))
     return sorted(wanted)
+
+
+# -- running one without a stored curve ---------------------------------------
+
+class Step(NamedTuple):
+    """One column joining the push, at ``at`` seconds after the first."""
+
+    at: float
+    column: int
+    axes: List[int]
+
+
+def sequence_plan(design: SolitonDesign, columns: Optional[int] = None) -> List[Step]:
+    """When each column joins the push, for a run with no stored curve.
+
+    Curve Offset is the machine's only real per-piston timing and the
+    controller reads it during a curve run only. If no curve is loaded on the
+    drives -- which is an open question, see docs/CALIBRATION_NOTES.md -- there
+    is nothing for Start Curve to play, and the stagger has to be produced by
+    the application instead: hold the single-stroke bit high and let each
+    column into ``Live_Motors`` when its turn comes.
+
+    This returns the schedule only. It touches nothing, so it can be printed,
+    tested and reviewed before any piston moves.
+
+    The delays come from the same celerity the curve route uses, so both routes
+    describe the same wave and only the mechanism differs.
+    """
+    if columns is None:
+        columns = len(design.offsets) or submerged_columns(design.depth)
+    plan: List[Step] = []
+    for column in range(int(columns)):
+        ticks = design.offsets.get(column)
+        if ticks is None:
+            continue
+        axes = []
+        for row in range(tags.ROWS_PER_COLUMN):
+            number = column * tags.ROWS_PER_COLUMN + row + 1
+            if number <= tags.MOTOR_COUNT:
+                axes.append(tags.axis_from_display(number))
+        plan.append(Step(
+            at=ticks / OFFSET_TICKS_PER_SECOND,
+            column=column,
+            axes=sorted(axes),
+        ))
+    plan.sort(key=lambda step: (step.at, step.column))
+    return plan
+
+
+def describe_plan(design: SolitonDesign, plan: List[Step]) -> str:
+    """The schedule as something an operator can read before running it."""
+    if not plan:
+        return "Nothing to run: no columns selected."
+    lines = [
+        "Soliton by sequenced strokes, no stored curve needed:",
+        "  {0} mm wave on {1} mm of water, travelling at {2:.0f} mm/s".format(
+            design.amplitude, design.depth, design.celerity),
+        "  each column pushes {0:.0f} mm, {1:.2f} s long".format(
+            design.stroke, design.duration),
+        "",
+    ]
+    for step in plan:
+        lines.append(
+            "  t+{0:5.2f}s  column {1:2d}  pistons {2}".format(
+                step.at, step.column + 1, tags.display_list(step.axes))
+        )
+    lines.append("")
+    lines.append("  total {0:.2f} s of stagger, then {1:.2f} s to finish".format(
+        plan[-1].at, design.duration))
+    return "\n".join(lines)

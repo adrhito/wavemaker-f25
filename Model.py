@@ -15,7 +15,8 @@ from enum import Enum
 from logging import Logger, getLogger
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
-from app import network, params, paths, plc as plc_module, tags, waves
+from app import (network, params, paths, plc as plc_module, solitons,
+                 tags, waves)
 from app.plc import PlcError, Transport
 from Motor import Motor
 from modules.logging.log_utils import LOGGER_NAME
@@ -2177,6 +2178,188 @@ class Model:
         LOGGER.log(
             15, "Pistons staggered across %d mm for a travelling wave.", spread
         )
+        return True
+
+    def soliton_plan(self, design):
+        """The schedule a sequenced soliton would follow. Touches nothing."""
+        return solitons.sequence_plan(design)
+
+    def run_soliton(self, design, dry_run: bool = True) -> bool:
+        """One solitary wave, staggered by the application rather than a curve.
+
+        The curve route is the proper one: Curve Offset is real per-piston
+        timing and the controller honours it directly. This exists for the case
+        where no curve is loaded on the drives, which is an open question --
+        the archived 2018 configuration has a usable curve on drive 1 and none
+        at all on drive 2, and ``tools/live_curve_probe.py`` has never been run.
+
+        **The mechanism here rests on one thing nobody has checked at the
+        machine**: that a piston whose ``Live_Motors`` bit goes high while
+        ``Run_1`` is already high sets off then, rather than having needed the
+        bit before the command was given. Everything else is built from
+        behaviour this repository has verified -- ``Run_1`` is an absolute move
+        to Position 1, measured on 15 September 2026, and :meth:`_park_moves`
+        commands one the same way.
+
+        If the assumption is wrong the symptom is specific and harmless: every
+        column sets off together, giving a hump instead of a soliton, and the
+        travel report says how far each piston went so it can be seen.
+
+        Defaults to a dry run. Pass ``dry_run=False`` deliberately.
+        """
+        plan = solitons.sequence_plan(design)
+        if dry_run:
+            LOGGER.info("%s", solitons.describe_plan(design, plan))
+            self.bridge.status(
+                "Dry run: {0} column(s), {1:.2f} s of stagger. Nothing moved."
+                .format(len(plan), plan[-1].at if plan else 0.0)
+            )
+            return True
+        if not plan:
+            self.bridge.problem("Nothing to run",
+                                "No columns were selected for the soliton.")
+            return False
+        return self._command(
+            "Soliton", lambda: self._soliton_worker(design, plan)
+        )
+
+    def _soliton_worker(self, design, plan) -> None:
+        axes = sorted(set(a for step in plan for a in step.axes))
+        if not axes:
+            return
+
+        # Run_1 moves to Position 1, so the push is commanded by putting the
+        # far end of the stroke there and giving the operator's value back
+        # afterwards -- exactly what _single_stroke and _park_moves do.
+        held = {}
+        for axis in axes:
+            motor = self._motor_for(axis)
+            if motor is None:
+                continue
+            try:
+                held[axis] = (int(motor.write_params["Position 1"]),
+                              int(motor.write_params["Position 2"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not held:
+            return
+
+        started = {}
+        try:
+            # 1. Everyone to the top of the push, together. Nothing is
+            #    staggered yet; this only sets the starting line.
+            tops = dict((axis, first) for axis, (first, _second) in held.items())
+            if not self._settle_at(tops, "to the start of the push"):
+                return
+            if self._stop_requested.is_set():
+                return
+
+            # 2. Arm. The far end of the stroke becomes the Run_1 destination,
+            #    and nobody is live, so raising the bit commands nothing yet.
+            self._clear_live_motors()
+            for axis, (_first, second) in held.items():
+                self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+                self.plc.write(params.BY_NAME["Position 1"].tag(axis), second)
+            started = self._positions_of(
+                [m for m in self.all_motors if m.axis in held])
+
+            # 3. Push, letting each column in when its turn comes.
+            if not self._begin_motion(tags.RUN_SINGLE):
+                return
+            self.bridge.status("Soliton: pushing...")
+            began = time.time()
+            for step in plan:
+                remaining = step.at - (time.time() - began)
+                if remaining > 0:
+                    self._sleep(remaining)
+                if self._stop_requested.is_set():
+                    return
+                for axis in step.axes:
+                    if axis in held:
+                        self.plc.write(tags.live_motor(axis), 1)
+
+            deadline = began + plan[-1].at + design.duration
+            while time.time() < deadline and not self._stop_requested.is_set():
+                self._sleep(STOP_POLL_INTERVAL)
+        except PlcError as exc:
+            LOGGER.error("Soliton failed: %s", exc)
+            self.bridge.problem("Soliton failed", str(exc))
+        finally:
+            # Every asserted bit comes down and every borrowed value goes back,
+            # whatever happened above, including a stop landing mid-push.
+            try:
+                self.plc.write(tags.RUN_SINGLE, 0)
+            except PlcError:
+                LOGGER.exception("Could not drop the single-stroke bit")
+            for axis, (first, _second) in held.items():
+                try:
+                    self.plc.write(params.BY_NAME["Position 1"].tag(axis), first)
+                except PlcError:
+                    LOGGER.exception(
+                        "Could not restore Position 1 on piston %d",
+                        tags.display_number(axis))
+            self._forget_written_params()
+
+        if started:
+            moved = self._positions_of(
+                [m for m in self.all_motors if m.axis in held])
+            travel = dict(
+                (axis, abs(moved.get(axis, 0.0) - started.get(axis, 0.0)))
+                for axis in started
+            )
+            self._report_travel("soliton push", travel)
+
+    def _settle_at(self, targets, what: str) -> bool:
+        """Send pistons to ``targets`` with Run_1 and wait. True on arrival.
+
+        Close to what :meth:`_stage_cascade` does, but deliberately without the
+        parity pulse. That pulse exists to put every drive on the same leg of a
+        repeating cycle, and a soliton has no cycle to be on the wrong leg of --
+        it is one push from a known end of the travel, where direction is
+        forced anyway.
+        """
+        for axis, target in targets.items():
+            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+            self.plc.write(params.BY_NAME["Speed 1"].tag(axis), STAGE_SPEED)
+        self._mark_live_motors()
+        if self._stop_requested.is_set():
+            return False
+        if not self._begin_motion(tags.RUN_SINGLE):
+            return False
+        self.bridge.status("Soliton: moving the pistons {0}...".format(what))
+        arrived = False
+        deadline = time.time() + STAGE_SECONDS
+        try:
+            while time.time() < deadline:
+                if self._stop_requested.is_set():
+                    return False
+                if self._all_within(targets, STAGE_TOLERANCE):
+                    arrived = True
+                    break
+                self._sleep(STOP_POLL_INTERVAL)
+        finally:
+            self.plc.write(tags.RUN_SINGLE, 0)
+        if not arrived:
+            late = self._outside(targets, STAGE_TOLERANCE)
+            names = tags.display_list([axis for axis, _a, _g in late])
+            if names:
+                detail = "Piston(s) {0} did not reach the start of the push".format(
+                    names)
+            else:
+                # Every reading failed, so there is nobody to name. Saying
+                # "Piston(s)  did not reach" with a hole in it is worse than
+                # saying plainly that nothing could be read.
+                detail = ("The pistons did not report reaching the start of "
+                          "the push")
+            self.bridge.problem(
+                "Could not start the soliton",
+                "{0} within {1:.0f} seconds, so nothing was run. Free or "
+                "deselect them and try again.".format(detail, STAGE_SECONDS),
+            )
+            LOGGER.warning("Soliton refused: %s within %s seconds.",
+                           detail, STAGE_SECONDS)
+            return False
         return True
 
     def _stroke_seconds(self, floor: float = SINGLE_STROKE_SECONDS) -> float:

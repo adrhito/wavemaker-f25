@@ -108,14 +108,44 @@ def test_state_changed_reaches_every_tab(window):
 
 
 def test_tab_routing_matches_the_notebook_order(window):
-    """Selecting a tab must run that tab's own onSelect, not its neighbour's."""
-    order = (window.operate, window.wave, window.preset_options,
-             window.diagnostics, window.feedback)
-    assert window.tabControl.index("end") == len(order)
+    """Selecting a tab must run that tab's own onSelect, not its neighbour's.
+
+    The router walks a hand-written tuple of tabs and indexes it by the
+    notebook position. Leaving a tab out of that tuple shifts every tab after
+    it along by one, so selecting one runs another's onSelect and the last runs
+    nothing at all -- which is exactly what happened when Diagnostics was
+    missing from it.
+
+    The previous version of this test compared the tuple with itself, which is
+    true however wrong the router is. This one records which tab was actually
+    called.
+    """
+    order = (window.operate, window.wave, window.soliton,
+             window.preset_options, window.diagnostics, window.feedback)
+    assert window.tabControl.index("end") == len(order), (
+        "a tab was added to the notebook without being added to this test"
+    )
+
+    called = []
+    for tab in order:
+        # Some tabs have no onSelect; give every one a recorder so the router
+        # cannot appear to work by calling a method that does not exist.
+        tab.onSelect = (lambda t=tab: called.append(t))
 
     for position, tab in enumerate(order):
+        # Move away first: selecting the tab that is already selected fires no
+        # <<NotebookTabChanged>>, so the router would never run and position 0
+        # would look broken when it is not.
+        window.tabControl.select((position + 1) % len(order))
+        window.root.update()
+        called[:] = []
         window.tabControl.select(position)
         window.root.update()
         assert window.tabControl.index(window.tabControl.select()) == position
-        # The tab at this position is the one the router would act on.
-        assert tab is order[position]
+        assert called == [tab], (
+            "selecting position {0} ran {1} instead of {2}".format(
+                position,
+                [type(c).__name__ for c in called],
+                type(tab).__name__,
+            )
+        )

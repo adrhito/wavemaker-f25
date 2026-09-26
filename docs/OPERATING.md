@@ -277,6 +277,59 @@ per position, or mirrored about the centre. Staggering a timing or curve offset
 **front to back** is what makes a wave travel along the chamber rather than the
 whole array moving together. There is a preview before anything is applied.
 
+## Solitary waves
+
+The **Soliton** tab makes one wave, not a repeating one. Everything on the Wave
+tab runs continuously; a soliton is a single push, and the shape of that push in
+time is the whole result.
+
+Set the **water depth** and the **wave height** you want. The tab works out how
+fast the wave will travel, how wide it will be, how far the pistons have to
+push, the fastest they must move and how long the push lasts, and it staggers
+the columns so the bank pushes where the wave already is rather than all at
+once.
+
+### Press Start Curve, not Start
+
+This is the one place in the application where that matters. The stagger
+between columns lives in **Curve Offset**, and the controller reads Curve Offset
+during a curve run only — an ordinary **Start** ignores it completely and fires
+every column at the same moment. That does not make a smaller soliton; it makes
+a hump, and a hump breaks up into a train of smaller waves as it travels.
+
+If you press Start Curve and nothing moves, the likeliest reason is that no
+curve is loaded on the drives for Curve ID 1. The archived drive configuration
+from 2018 has one on drive 1 and none at all on drive 2, so it cannot be assumed
+they are all loaded. `python tools/live_curve_probe.py` reads what is actually
+there and moves nothing.
+
+### Which pistons it uses
+
+Columns 1 to 5 — **pistons 1 to 15** — because those are the ones always fully
+submerged. Columns 6 to 10 sit higher and ride clear of a low water level, where
+they report a perfectly healthy stroke while moving no water at all. You can ask
+for more columns with the slider if the tank is full enough to cover them.
+
+Piston 1 is the deepest, against the end wall the bank is bolted to, and it
+leads: the stagger runs from there down the tank.
+
+### The heights are targets, not measurements
+
+Nothing in this application has ever measured water height. There is no wave
+gauge and no camera tracker, so the tab tells you what it is asking the pistons
+to do and what wave that is *meant* to produce. Those are not the same number
+and it does not pretend they are.
+
+The **Calibration** box is how you close the gap. Run a wave, look at the tank,
+and if the result is consistently half what you asked for, put 2 in the box.
+It multiplies the push and changes nothing else about the design.
+
+### Column spacing
+
+The delays between columns are worked out from how far apart the columns are
+along the tank and how fast the wave travels. The default is 150 mm, which is a
+guess — measure it and put the real number in, because it sets the stagger.
+
 ## Stopping
 
 **Stop** is in the status bar at the bottom of every tab, and `Escape` does the

@@ -69,6 +69,20 @@ travelling disturbance, and a released hump fissions into a train of solitons
 instead of producing one. It also drove all thirty pistons, including the ten
 columns that ride clear of a low surface.
 
+## What the Soliton tab now does
+
+Built 26 September 2026. It takes a still-water depth and a desired crest rise,
+derives the celerity, width, push and per-column stagger from the KdV solitary
+wave, and writes them to the submerged pistons as a curve run. It answers the
+note above about not presenting piston stroke as water height: the tab shows
+both numbers separately, calls the height a target, and carries a Calibration
+multiplier for the operator to turn once a trial has been watched.
+
+It does **not** close the calibration question. No trial has been run and no
+water height has been measured, so the multiplier starts at 1.0 with nothing
+behind it. The first measured trial is still the thing that turns these numbers
+from a recipe into a prediction.
+
 ## Decisions still needed
 
 - Decide whether the requested target is crest rise, crest-to-trough height, or two separate targets. Mark a repeatable measurement location along the tank.
