@@ -21,6 +21,54 @@ Record desired and observed water heights as distinct values. The lab wants to r
 
 Until measured trials establish a usable range, a desired water height is a *target*, not a guarantee. The UI should not present a piston stroke as the resulting water-wave height or silently extrapolate beyond measured conditions. Solitary waves need their own calibration and control path rather than being treated as one of the existing periodic Wave-tab shapes.
 
+## What the stored PLC curves actually are
+
+Answers part of "confirm which stored PLC curves or trajectory commands are
+available for a one-off soliton pulse", below, without needing the machine.
+Read out of the archived drive configuration on 26 September 2026, from
+`wavemaker all files/LinMot Drive Config/c1250_Drive_1_Config.lmc` (dated
+August 2018). **Unverified against the drives as they stand today** --
+`tools/live_curve_probe.py` is what confirms it, and it has never been run.
+
+Drive 1's curve memory holds exactly two curves:
+
+| Curve ID | Name | What it is |
+|---|---|---|
+| 1 | `scurve out` | A smooth monotone position ramp, 30.0 mm to 100.0 mm, S-curve wizard, `XLength 100000` |
+| 2 | `scurve in` | The same reversed, 100.0 mm back to 30.0 mm |
+
+Two things follow, and both matter for a solitary wave.
+
+- **A monotone single push is exactly the right primitive.** A solitary wave
+  from a piston wavemaker wants one smooth one-way stroke whose velocity
+  history is a single bell -- not an oscillation. Curve 1 is that stroke. The
+  drive's own `Curve Offset` is a real per-piston delay in hundredths of a
+  second during a curve run, which is the **only** per-piston timing this
+  machine has; a continuous run ignores it entirely and the application fakes
+  phase with staged starting positions instead.
+- **The amplitude is fixed at 70 mm** before `Amplitude Scale` is applied,
+  against a 390 mm envelope. How `Amplitude Scale` maps onto that span, and
+  what it will accept, is not documented here and needs reading at the drive.
+
+`c1250_Drive_2_Config.lmc` from the same folder has **no curves at all**. Curve
+memory is per-drive, so there is no reason to assume all thirty drives are
+loaded, and every reason to check before a design depends on it. Loading a
+curve is a LinMot-Talk operation, drive by drive; this application cannot do it.
+
+### The lab already tried this once
+
+`wavemaker all files/WaveMaker Programs/Python for Wavemaker/Wavemaker_KdVSoliton.csv`
+sets, identically on all thirty pistons: `Curve ID 1`, `Time Scale 150`,
+`Amplitude Scale 100`, `Profile 1`, `Position 1 -20`, `Position 2 350`,
+`Speed 1 200`, `Speed 2 0`, and **`Curve Offset 0`**.
+
+So it played `scurve out` time-stretched to 150% on every piston at once. The
+shape was right and the sequencing was simply never done: with `Curve Offset 0`
+the whole bank fires simultaneously, which releases a hump rather than driving a
+travelling disturbance, and a released hump fissions into a train of solitons
+instead of producing one. It also drove all thirty pistons, including the ten
+columns that ride clear of a low surface.
+
 ## Decisions still needed
 
 - Decide whether the requested target is crest rise, crest-to-trough height, or two separate targets. Mark a repeatable measurement location along the tank.
