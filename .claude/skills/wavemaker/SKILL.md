@@ -253,6 +253,23 @@ the tool kills child processes when the call returns. There is a working
 capture script pattern in the session scratchpad approach: `Start-Process
 -PassThru`, sleep, `EnumWindows` filtered by that PID, `CopyFromScreen`.
 
+**Set `SetProcessDPIAware()` before you capture, or the screenshot lies.**
+This display runs at 150% scaling. Without it, `GetWindowRect` reports
+1518x864 while the real window is 2277x1296, and `CopyFromScreen` grabs the
+wrong region entirely: the image comes back offset by tens of pixels, showing
+desktop icons down one side and only seven of the ten piston columns. Several
+attempts at cropping a button out of that image found blank wall, because the
+button was 50 px from where the arithmetic said. Call
+`user32!SetProcessDPIAware()` in the capturing process first, then multiply Tk's
+logical coordinates by 1.5 to find anything in the bitmap.
+
+Better still, do not measure a widget from a bitmap at all. Ask Tk:
+`winfo_ismapped`, `winfo_rootx` and `winfo_width` on the widget, against
+`winfo_rootx` and `winfo_width` on the root, answer "is this button actually
+on screen" exactly and cost nothing. Schedule that with `root.after` inside a
+real `view.run()` so the startup worker and the callback queue behave normally;
+a `View` built in-process and refreshed by hand does not exercise the same path.
+
 To drive the UI without a mouse, import `View`, schedule the action with
 `root.after(...)`, and monkeypatch `messagebox.askyesno` to return True so the
 "home the pistons first?" confirmation does not block.
