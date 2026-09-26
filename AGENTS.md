@@ -9,7 +9,7 @@ For water-height or soliton work, read `docs/CALIBRATION_NOTES.md`; piston strok
 
 - `main.py` parses `--mock` / `--simulate`, `--ip`, `--slot`, and `--fresh-connection`, then builds `Model` and `View`.
 - `Model.py` owns application state, groups, worker commands, homing, running, stopping, resting, monitoring, and analytics. `Motor.py` owns one piston's parameter cache, validation, writes, and status reads.
-- `app/plc.py` supplies the locked real `PlcClient` and the in-memory `SimulatedPlc`; `app/simulator.py` adds moving mock pistons. `app/tags.py` owns PLC tag names and axis/display conversion. `app/params.py` owns the 18 parameter specs, limits, defaults, and write order. `app/patterns.py` and `app/waves.py` implement patterns and wave math.
+- `app/plc.py` supplies the locked real `PlcClient` and the in-memory `SimulatedPlc`; `app/network.py` diagnoses why the controller cannot be reached and can put this PC on its subnet, and `Model`'s watcher thread adopts the machine whenever it appears, so the application may be opened before the wavemaker is switched on; `app/simulator.py` adds moving mock pistons. `app/tags.py` owns PLC tag names and axis/display conversion. `app/params.py` owns the 18 parameter specs, limits, defaults, and write order. `app/patterns.py` and `app/waves.py` implement patterns and wave math.
 - `View.py` owns the Tk window and its callback queue. The current tabs are `operate/`, `wave/`, `preset_options/`, `diagnostics/`, and `feedback/`. Shared drawing and logging code lives in `modules/`.
 - `preset_options/PresetProcessor.py` reads and writes `Presets/*.csv`. `tests/` is the active suite. `archive/` contains superseded code and documentation. `tools/live_*.py` are hardware-facing experiments, not routine tests.
 

@@ -28,7 +28,7 @@ from logging import Logger, getLogger
 from tkinter import BooleanVar, DoubleVar, StringVar, messagebox, ttk
 from typing import Dict, List, Optional
 
-from app import params, tags
+from app import network, params, tags
 from Model import (
     REST_DOWN, REST_HOLD, REST_UP,
     MachineState, Model, MotorSet, RunMode,
@@ -156,6 +156,14 @@ class Operate:
         self.help_button = RoundedButton(
             actions, "Why won't it connect?", self.explain_connection,
             size="small", width=150
+        )
+        # Shown only when app/network.py says this PC's own address is the
+        # problem and it can be fixed. That is the fault that cost the lab a
+        # session, and it is the one case where the application can do more
+        # than tell the operator to go and look at something.
+        self.network_button = RoundedButton(
+            actions, "Set up network", self.fix_network, variant="primary",
+            size="small", width=116
         )
         self.reconnect_button.grid(row=0, column=0, padx=(0, theme.TIGHT))
         self.help_button.grid(row=0, column=1)
@@ -967,6 +975,15 @@ class Operate:
                 parent=self.tab,
             )
 
+    def fix_network(self) -> None:
+        """Give this PC an address on the controller's network.
+
+        Setting an adapter's address needs administrator rights, so Windows
+        puts up its standard prompt. Saying no is allowed and leaves everything
+        as it was; Model reports what to do by hand in that case.
+        """
+        self.model.fix_network()
+
     def reconnect(self) -> None:
         self.view.set_status_text("Looking for the PLC...")
         self.model.reconnect()
@@ -1156,9 +1173,29 @@ class Operate:
             return "Connected  ·  {0}".format(self.model.ip_address)
         if getattr(self.model, "_simulate", False):
             return "Mock wavemaker  ·  nothing physical will move"
-        return "Not connected  ·  the PLC at {0} did not answer".format(
-            self.model.ip_address
-        )
+        # "The PLC did not answer" was true of all three faults and useful for
+        # none of them: no cable, no address on this PC, or a machine that is
+        # simply switched off. Say which.
+        diagnosis = self._diagnosis()
+        if diagnosis is None:
+            return "Not connected  ·  the PLC at {0} did not answer".format(
+                self.model.ip_address
+            )
+        if diagnosis.reason == network.NO_LINK:
+            return "Not connected  ·  no network cable"
+        if diagnosis.repairable:
+            return "Not connected  ·  this PC has no address on {0}.x".format(
+                self.model.ip_address.rsplit(".", 1)[0]
+            )
+        return ("Waiting for the wavemaker  ·  this PC is on its network; "
+                "switch the machine on")
+
+    def _diagnosis(self):
+        """The model's cached network diagnosis, or None if it cannot say."""
+        try:
+            return self.model.network_diagnosis()
+        except AttributeError:
+            return None
 
     def _sync_group_box(self) -> None:
         labels = ["{0}  ({1} pistons)".format(s.name, len(s)) for s in self.model.sets]
@@ -1189,6 +1226,13 @@ class Operate:
                 button.canvas.grid()
             else:
                 button.canvas.grid_remove()
+
+        diagnosis = self._diagnosis()
+        repairable = diagnosis is not None and diagnosis.repairable
+        if offline and repairable and not busy:
+            self.network_button.grid(row=0, column=2, padx=(theme.TIGHT, 0))
+        else:
+            self.network_button.canvas.grid_remove()
 
         self.tank.show_sets(self.model.sets)
         self.tank.show_selection(self.model.selected_axes())

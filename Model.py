@@ -15,7 +15,7 @@ from enum import Enum
 from logging import Logger, getLogger
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
-from app import params, paths, plc as plc_module, tags, waves
+from app import network, params, paths, plc as plc_module, tags, waves
 from app.plc import PlcError, Transport
 from Motor import Motor
 from modules.logging.log_utils import LOGGER_NAME
@@ -145,6 +145,25 @@ MOVEMENT_WINDOW = 3.0
 STUCK_FRACTION = 0.35
 #: Strokes shorter than this are not judged; there is too little to measure.
 MIN_JUDGED_STROKE = 25
+
+# --- Noticing that the machine has been switched on ---------------------------
+# The application used to try the PLC exactly once, as the window opened. Start
+# it before the wavemaker and the only way to connect was to close it and start
+# it again -- which the lab was doing routinely. A watcher now looks for the
+# machine in the background, so the operator can open the application and power
+# the wavemaker up in whichever order suits them.
+#
+# A failed probe costs a full socket timeout, so the watcher does not probe
+# blindly: app/network.py can say for free that there is no address on the
+# controller's network, and in that state a probe cannot succeed and is not
+# attempted. Repeated failures back off, because a machine that is off stays
+# off for hours and there is nothing to be gained by asking every four seconds.
+
+#: Gap between checks while the machine has not been found.
+MACHINE_WATCH_SECONDS = 4.0
+#: The longest the watcher will wait between probes once they keep failing.
+MACHINE_WATCH_MAX_SECONDS = 60.0
+
 
 # --- Deselecting a piston while it runs ---------------------------------------
 # Unticking a piston mid-run used to take it out of the group and nothing else:
@@ -423,6 +442,16 @@ class Model:
         #: Live position monitoring, started with the first run.
         self._monitor_stop = threading.Event()
         self._monitor_thread: Optional[threading.Thread] = None
+        #: Watching for the machine to appear, so starting the application
+        #: before the wavemaker stops being a reason to restart it.
+        self._watch_stop = threading.Event()
+        self._watch_thread: Optional[threading.Thread] = None
+        #: The last network diagnosis, kept so the connection banner can be
+        #: drawn without enumerating adapters on every refresh.
+        self._network: Optional[network.Diagnosis] = None
+        #: The reason last reported, so an unchanged diagnosis stays silent
+        #: instead of repeating itself every few seconds.
+        self._network_reason: Optional[str] = None
         #: Axes whose position could not be read, so the display can flag them.
         self.unreadable_axes: List[int] = []
         #: Axes that are not keeping up with their demanded position -- a piston
@@ -2906,13 +2935,29 @@ class Model:
             self.motors_off()
             self.bridge.status("Ready. Choose pistons on the tank.")
         else:
-            self.bridge.status(
-                "Mock wavemaker. The pistons here are simulated - nothing "
-                "physical will move."
-                if self._simulate else
-                "No PLC at {0}. Nothing will move. Check the controller is "
-                "powered and in Run, then press Reconnect.".format(self.ip_address)
-            )
+            if self._simulate:
+                self.bridge.status(
+                    "Mock wavemaker. The pistons here are simulated - nothing "
+                    "physical will move."
+                )
+            else:
+                # Say which of the three faults it is straight away. Reporting
+                # a bare timeout is what sent the lab looking at the controller
+                # when the real problem was this PC's own address.
+                diagnosis = self.refresh_network_diagnosis()
+                self._network_reason = diagnosis.reason
+                if diagnosis.repairable:
+                    self.bridge.status(
+                        "{0} Press Set up network.".format(diagnosis.message)
+                    )
+                elif diagnosis.ok:
+                    self.bridge.status(
+                        "No answer from the wavemaker at {0}, but this PC is on "
+                        "its network. Switch the machine on and it will connect "
+                        "by itself.".format(self.ip_address)
+                    )
+                else:
+                    self.bridge.status(diagnosis.message)
         self._set_state(MachineState.IDLE)
 
     def _check_position_scale(self) -> None:
@@ -2938,6 +2983,182 @@ class Model:
                 "Positions read in drive counts; axis 0 at %.1f mm.",
                 params.to_mm(raw),
             )
+
+    # -- noticing the machine ------------------------------------------------
+
+    def start_watching_for_machine(self) -> None:
+        """Look for the wavemaker in the background until it is found.
+
+        The application used to probe the PLC exactly once, as the window
+        opened. Open it before switching the wavemaker on and the only way to
+        connect was to close it and open it again, which is what the lab was
+        doing. Order should not matter, so this keeps looking.
+        """
+        if self._watch_thread is not None or self._simulate:
+            return
+        self._watch_stop.clear()
+        self._watch_thread = threading.Thread(
+            target=self._watch_loop, name="MachineWatch", daemon=True
+        )
+        self._watch_thread.start()
+
+    def stop_watching_for_machine(self) -> None:
+        self._watch_stop.set()
+        self._watch_thread = None
+
+    def network_diagnosis(self):
+        """The last network diagnosis, for the connection banner.
+
+        Cached rather than measured on demand: the banner is redrawn from every
+        state change and enumerating adapters on each one would be wasteful on
+        the lab's slow machine.
+        """
+        if self._network is None:
+            self.refresh_network_diagnosis()
+        return self._network
+
+    def refresh_network_diagnosis(self):
+        """Ask app/network.py why the controller cannot be reached."""
+        self._network = network.diagnose(self.ip_address)
+        return self._network
+
+    def _watch_loop(self) -> None:
+        delay = MACHINE_WATCH_SECONDS
+        while not self._watch_stop.is_set():
+            self._watch_stop.wait(delay)
+            if self._watch_stop.is_set():
+                return
+            if self.is_live or self._simulate:
+                delay = MACHINE_WATCH_SECONDS
+                continue
+
+            diagnosis = self.refresh_network_diagnosis()
+            if diagnosis.reason != self._network_reason:
+                # Only on a change. Repeating an unchanged diagnosis every few
+                # seconds would bury the Feedback tab.
+                self._network_reason = diagnosis.reason
+                LOGGER.info("Network: %s", diagnosis.message)
+                self.bridge.state_changed(self._state)
+
+            if not diagnosis.ok:
+                # Without an address on the controller's network a probe cannot
+                # succeed, and finding that out costs a full socket timeout.
+                # Do not pay it; app/network.py already answered for free.
+                delay = MACHINE_WATCH_SECONDS
+                continue
+
+            if self._adopt_machine_if_present():
+                delay = MACHINE_WATCH_SECONDS
+            else:
+                delay = min(delay * 2.0, MACHINE_WATCH_MAX_SECONDS)
+
+    def _adopt_machine_if_present(self) -> bool:
+        """Probe the PLC and, if it answers, start using it. True when adopted.
+
+        Deliberately passive. `_startup_worker` follows a successful connection
+        with `motors_off`, which is right when a person has just launched the
+        application, and wrong here: the machine may have been powered up for
+        somebody else's session, and this software has no exclusive-ownership
+        check. Clearing another operator's run bits from a background thread
+        they do not know is running would be the worst thing in this file. So
+        this connects, says so, and commands nothing.
+        """
+        if not self._busy.acquire(blocking=False):
+            return False          # an operator command owns the machine
+        try:
+            return self._adopt_locked()
+        finally:
+            self._busy.release()
+
+    def _adopt_locked(self) -> bool:
+        """:meth:`_adopt_machine_if_present` with the busy lock already held.
+
+        Split out because ``_busy`` is not reentrant and fix_network runs as a
+        command, which means it already holds it. Calling the locking version
+        from there failed to acquire and returned False, so the address was set
+        correctly and the machine was then never picked up -- the operator saw
+        the network get fixed and nothing connect.
+        """
+        try:
+            transport, live = plc_module.connect(
+                self.ip_address,
+                self.processor_slot,
+                simulate=False,
+                persistent=self._persistent_connection,
+                quiet=True,
+            )
+            if not live:
+                return False
+            self.plc = transport
+            self.is_live = True
+            self._fell_back_to_mock = False
+            self._network_reason = network.OK
+            LOGGER.info(
+                "The wavemaker answered at %s. Connected without a restart.",
+                self.ip_address,
+            )
+            identity = self.plc.identity()
+            if identity:
+                LOGGER.info("Controller: %s", identity)
+            self._check_position_scale()
+        except PlcError as exc:
+            LOGGER.debug("Probe failed: %s", exc)
+            return False
+
+        self.bridge.status(
+            "The wavemaker is connected. Choose pistons and press Start."
+        )
+        self.bridge.state_changed(self._state)
+        return True
+
+    # -- putting this PC on the controller's network --------------------------
+
+    def fix_network(self) -> bool:
+        """Give this PC an address on the controller's network, then connect.
+
+        Offered because the fault it fixes cost the lab a session: the adapter
+        had lost its static address, so there was no route to the controller at
+        all, and the application could only report a timeout. See app/network.py.
+        """
+        return self._command("Network setup", self._fix_network_worker)
+
+    def _fix_network_worker(self) -> None:
+        diagnosis = self.refresh_network_diagnosis()
+        if diagnosis.ok:
+            self.bridge.status(
+                "This PC is already on the controller's network. "
+                "Looking for the wavemaker..."
+            )
+        elif not diagnosis.repairable:
+            self.bridge.problem("Cannot set the network up", diagnosis.message)
+            self.bridge.status(diagnosis.message)
+            return
+        else:
+            self.bridge.status("Setting this PC up on the controller's network...")
+            worked, message = network.repair(self.ip_address, diagnosis)
+            # Take the value back rather than reading the cache it also sets:
+            # one source of truth per statement, and nothing here depends on a
+            # side effect happening in the right order.
+            self._network_reason = self.refresh_network_diagnosis().reason
+            LOGGER.info("Network setup: %s", message)
+            if not worked:
+                self.bridge.problem("Could not set the network up", message)
+                self.bridge.status(message)
+                self.bridge.state_changed(self._state)
+                return
+            self.bridge.status(message)
+
+        # The address is right; the controller may still be switched off, which
+        # is not a failure of this command. The watcher keeps looking either way.
+        # _adopt_locked, not _adopt_machine_if_present: this runs as a command
+        # and already holds the busy lock.
+        if self._adopt_locked():
+            return
+        self.bridge.status(
+            "This PC is on the controller's network, but the wavemaker has not "
+            "answered yet. It will connect by itself once the machine is on."
+        )
+        self.bridge.state_changed(self._state)
 
     def reconnect(self) -> bool:
         """Try the PLC again without restarting the application.
@@ -2985,6 +3206,10 @@ class Model:
     def shutdown(self) -> None:
         """Stop the machine and close the connection. Called when the window closes."""
         self.stop_monitoring()
+        # Before anything else: a watcher left running can adopt the machine
+        # after motors_off has already cleared it, leaving a connection open
+        # behind a closed window.
+        self.stop_watching_for_machine()
         self._shutdown.set()
         self._cancel_park.set()
         self._stop_requested.set()

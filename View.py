@@ -86,6 +86,9 @@ class View:
     def run(self) -> None:
         self.model.startup()
         self.model.start_monitoring()
+        # Keeps looking for the wavemaker, so opening this before switching the
+        # machine on is no longer a reason to close it and open it again.
+        self.model.start_watching_for_machine()
         self.root.mainloop()
 
     # -- status bar -----------------------------------------------------------

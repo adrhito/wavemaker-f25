@@ -142,7 +142,8 @@ class TestStartupWithoutStudio5000:
         from app import plc as plc_module
         from Model import Model
 
-        monkeypatch.setattr(plc_module.PlcClient, "connect", lambda self: False)
+        monkeypatch.setattr(plc_module.PlcClient, "connect",
+                            lambda self, quiet=False: False)
         model = Model(ip_address="10.255.255.1")
         model._spawn = lambda name, work: work()
         model.startup()
@@ -161,7 +162,8 @@ class TestStartupWithoutStudio5000:
         from app import plc as plc_module
         from Model import Model
 
-        monkeypatch.setattr(plc_module.PlcClient, "connect", lambda self: False)
+        monkeypatch.setattr(plc_module.PlcClient, "connect",
+                            lambda self, quiet=False: False)
         model = Model(ip_address="10.255.255.1")
         model._spawn = lambda name, work: work()
         model.startup()
@@ -189,7 +191,7 @@ class TestStartupWithoutStudio5000:
 
         attempts = {"n": 0}
 
-        def flaky_connect(self):
+        def flaky_connect(self, quiet=False):
             attempts["n"] += 1
             return attempts["n"] > 1  # offline first, online on retry
 

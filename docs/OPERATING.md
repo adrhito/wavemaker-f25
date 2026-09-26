@@ -201,18 +201,53 @@ no database script to start first.
   until somebody changes it, so this is not a per-launch step. It only needs
   attention after somebody has put the controller into Program mode.
 
-If the controller is not reachable, the banner says so and two buttons appear:
-**Reconnect**, and **Open Studio 5000** for when you do need to go online and
-put it back in Run. You can close Studio 5000 again afterwards.
+### The order does not matter
 
-The banner at the top of the Operate tab says whether you are connected:
+You can open the application before switching the wavemaker on. It keeps
+looking for the machine in the background and connects by itself the moment the
+machine answers, so there is no need to close it and open it again.
 
-- `Connected  ·  192.168.1.1` — the real machine. Pistons will move.
-- `Mock wavemaker  ·  nothing physical will move` — you started the mock
-  deliberately (see below).
-- `Not connected  ·  the PLC did not answer` — press **Reconnect**; if that
-  fails, use **Open Studio 5000**, go online, confirm the controller is in
-  Rem Run, then Reconnect again.
+This used to be necessary. The application probed the controller exactly once,
+as the window opened, and if the machine was not on yet the only cure was a
+restart.
+
+### The banner at the top of the Operate tab
+
+It says which of four things is true, because "the PLC did not answer" was
+true of three different faults and useful for none of them:
+
+| Banner | What it means | What to do |
+|---|---|---|
+| `Connected  ·  192.168.1.1` | The real machine. Pistons will move. | Nothing. |
+| `Mock wavemaker  ·  nothing physical will move` | You started the mock deliberately. | Nothing. |
+| `Waiting for the wavemaker  ·  this PC is on its network; switch the machine on` | This PC is set up correctly and the controller is not answering. | Switch the wavemaker on. It will connect by itself. Check the controller is in Rem Run. |
+| `Not connected  ·  no network cable` | No wired link at all. | Plug this PC into the wavemaker's switch. |
+| `Not connected  ·  this PC has no address on 192.168.1.x` | **This PC** is the problem, not the machine. | Press **Set up network**. |
+
+### Set up network
+
+This appears only when this PC's own address is what is wrong, and it is worth
+knowing why it exists.
+
+On 26 September 2026 the lab could not run the wavemaker at all. Nothing was
+wrong with the cable, the controller, the ladder logic or this software. The
+PC's Ethernet adapter had lost its static address and fallen back to a
+169.254.x.x one, which cannot reach 192.168.1.1 from anywhere. The application
+could only report a timeout, so the search went to the machine. Windows clears
+an adapter's static configuration on some driver reinstalls and network resets,
+and a laptop that has never been used here has no such configuration at all.
+
+**Set up network** gives this PC an address on `192.168.1.x` -- normally
+`192.168.1.100` -- and then connects. Changing an adapter's address needs
+administrator rights, so Windows puts up its usual prompt; answer **Yes**. If
+you answer No, nothing is changed and the application tells you what to set by
+hand.
+
+It will not take away an address you are already using. If the Ethernet port
+already has a working address, a second one is added alongside it and DHCP is
+left alone, because on your own laptop that cable may be your internet. It
+never sets a default gateway, for the same reason.
+
 
 ## Running
 
@@ -372,7 +407,9 @@ tab puts the whole session log on the clipboard for pasting into an email.
 
 | Symptom | Likely cause |
 |---|---|
-| Banner says Not connected | The controller is unreachable or not in Run. Press Reconnect; if that fails use Open Studio 5000 and check for Rem Run. |
+| Banner says `no network cable` | No wired link. Plug this PC into the wavemaker's switch. |
+| Banner says `this PC has no address on 192.168.1.x` | This PC, not the machine. Press **Set up network** and answer Yes to the Windows prompt. |
+| Banner says `Waiting for the wavemaker` | This PC is set up; the machine is off or not in Run. Switch it on -- it connects by itself. |
 | "Motors did not home within 35 seconds" | A drive is faulted or not enabled. Check the drive, then press Off and Reset and prepare again. |
 | A parameter will not apply | It is outside the range in the table above; the reason is shown under the boxes. |
 | "Could not read preset" | The CSV is missing a column, or is not a preset file. The message names what is wrong. |

@@ -146,8 +146,14 @@ class PlcClient:
                     except Exception:  # pragma: no cover
                         pass
 
-    def connect(self) -> bool:
+    def connect(self, quiet: bool = False) -> bool:
         """Open the connection. Returns True if the PLC answered.
+
+        ``quiet`` drops the failure from INFO to DEBUG. The background watcher
+        that notices the machine being switched on calls this repeatedly, and
+        one "No PLC" line per attempt would bury the Feedback tab -- which is
+        the operator's own window onto what the application has done -- under
+        an unbounded number of identical lines saying nothing new.
 
         This is the probe used at startup to decide between live and simulated
         operation, so it reports failure by returning False rather than raising.
@@ -166,7 +172,10 @@ class PlcClient:
                 if value is None:
                     raise PlcError("Read " + PROBE_TAG + " returned no value")
             except Exception as exc:
-                LOGGER.info("No PLC at %s: %s", self.ip_address, exc)
+                LOGGER.log(
+                    logging.DEBUG if quiet else logging.INFO,
+                    "No PLC at %s: %s", self.ip_address, exc,
+                )
                 self._discard()
                 return False
             self.connected = True
@@ -326,6 +335,7 @@ def connect(
     processor_slot: int,
     simulate: bool = False,
     persistent: bool = True,
+    quiet: bool = False,
 ):
     """Return (transport, is_live) for the machine.
 
@@ -343,7 +353,7 @@ def connect(
         return SimulatedMachine(), False
 
     client = PlcClient(ip_address, processor_slot, persistent=persistent)
-    if client.connect():
+    if client.connect(quiet=quiet):
         LOGGER.info(
             "Connected to PLC at %s slot %s (%s connection).",
             ip_address,
@@ -354,7 +364,8 @@ def connect(
 
     from app.simulator import SimulatedMachine
 
-    LOGGER.warning(
+    LOGGER.log(
+        logging.DEBUG if quiet else logging.WARNING,
         "No PLC at %s: falling back to the mock. Nothing physical will move.",
         ip_address,
     )
