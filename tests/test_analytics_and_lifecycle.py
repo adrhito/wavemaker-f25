@@ -151,6 +151,38 @@ class TestStartupWithoutStudio5000:
         assert model.state is MachineState.IDLE
         assert isinstance(model.plc, plc_module.SimulatedPlc)
 
+    def test_motion_is_refused_when_the_plc_did_not_answer(self, monkeypatch):
+        """The fallback mock is for the screens, not for pretending to run.
+
+        With the Ethernet port on a 169.254 address the PLC never answered,
+        yet Prepare and Start went on to boot, home and run the *simulator*,
+        logging SUCCESS at every step while the real tank sat still.
+        """
+        from app import plc as plc_module
+        from Model import Model
+
+        monkeypatch.setattr(plc_module.PlcClient, "connect", lambda self: False)
+        model = Model(ip_address="10.255.255.1")
+        model._spawn = lambda name, work: work()
+        model.startup()
+        model.toggle(0, True)
+        model.create_set()
+
+        assert model.prepare() is False
+        assert model.start(RunMode.CONTINUOUS) is False
+        assert model.state is MachineState.READY
+        assert any("Not connected" in str(p) for p in model.bridge.problems)
+
+    def test_a_deliberate_mock_still_runs(self):
+        from Model import Model
+
+        model = Model(simulate=True)
+        model._spawn = lambda name, work: work()
+        model.startup()
+        model.toggle(0, True)
+        model.create_set()
+        assert model.prepare() is True
+
     def test_reconnect_picks_the_machine_up_without_a_restart(self, monkeypatch):
         from app import plc as plc_module
         from Model import Model

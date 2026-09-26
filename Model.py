@@ -354,6 +354,9 @@ class Model:
         self._persistent_connection = persistent_connection
         #: False until :meth:`startup` has tried to reach the PLC.
         self._connection_attempted = transport is not None
+        #: True when startup looked for the real PLC, got no answer, and was
+        #: handed the mock instead. Motion commands are refused while it is.
+        self._fell_back_to_mock = False
 
         if transport is not None:
             self.plc: Transport = transport
@@ -789,6 +792,13 @@ class Model:
 
     # -- running commands -----------------------------------------------------
 
+    #: Commands that move pistons, and so mean nothing without a controller.
+    _MOTION_COMMANDS = ("Prepare", "Calibrate", "Run", "Start")
+
+    def _offline(self) -> bool:
+        """True when a real machine was wanted but the PLC never answered."""
+        return self._fell_back_to_mock
+
     def _spawn_thread(self, name: str, work: Callable[[], None]) -> None:
         threading.Thread(target=work, name=name, daemon=True).start()
 
@@ -810,6 +820,26 @@ class Model:
                 self._state is MachineState.RUNNING
                 or self._stopping.is_set() or self._parking.is_set()):
             LOGGER.warning("Ignored %s: a stop or resting move is still running.", name)
+            return False
+        # When the PLC did not answer, connect() hands back the animated mock so
+        # the screens still have something to read. Letting motion commands
+        # through to it was the fault: boot, home and run all "succeeded"
+        # against the simulator, the log filled with SUCCESS lines, and the
+        # operator stood watching a tank in which nothing moved. Only a
+        # session deliberately started with --mock may drive the simulator.
+        if name in self._MOTION_COMMANDS and self._offline():
+            LOGGER.warning("Refused %s: not connected to the PLC.", name)
+            self.bridge.problem(
+                "Not connected to the wavemaker",
+                "The PLC at {0} did not answer, so nothing would move.\n\n"
+                "Check the Ethernet cable is in and this PC has an address on "
+                "the 192.168.1.x network (for example 192.168.1.100, mask "
+                "255.255.255.0), then press Reconnect.".format(self.ip_address),
+            )
+            self.bridge.status(
+                "{0} refused: not connected to the PLC at {1}.".format(
+                    name, self.ip_address)
+            )
             return False
         if not self._busy.acquire(blocking=False):
             LOGGER.warning(
@@ -2863,6 +2893,7 @@ class Model:
                 simulate=self._simulate,
                 persistent=self._persistent_connection,
             )
+            self._fell_back_to_mock = not self.is_live and not self._simulate
             # Tell the screens, so the connection banner stops saying "looking".
             self.bridge.state_changed(self._state)
 
