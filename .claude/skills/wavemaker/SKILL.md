@@ -98,6 +98,57 @@ axis_from_display(n) = (9 - (n-1)//3) * 3 + (2 - (n-1)%3)
 - Always show the operator `tags.display_number` / `tags.display_list`, never a
   raw axis.
 
+## The tank, physically -- and what it means for which pistons to use
+
+Confirmed with the lab owner on 26 September 2026. The control software says
+nothing about this anywhere else, and it decides which pistons are worth
+driving at all.
+
+The thirty pistons sit **above** the water in a bank at **one end** of the
+tank, and they push **downwards** to move the water. They are not a paddle wall
+and they are not in the floor. The tank is only **three pistons wide**, so the
+3 x 10 grid is ten columns running *into* the tank from that end, three across
+its width. Water driven by the bank travels away down the length of the tank to
+the far end.
+
+The bank is **not level**. Each column is mounted higher than the one before it
+as you move away from the end wall, so:
+
+```
+   column      1    2    3    4    5    6    7    8    9   10
+   pistons   1-3  4-6  7-9 10-12 13-15 16-18 19-21 22-24 25-27 28-30
+   height    lowest ------------------------------------> highest
+             |<---- always fully submerged ---->|<-- only if the water is high -->
+```
+
+- **Pistons 1-15 (columns 1-5) are always fully submerged.** They are the ones
+  to use, and **pistons 1, 2 and 3 are the best of them** -- lowest, deepest,
+  most water moved per millimetre of stroke.
+- **Pistons 16-30 (columns 6-10) ride higher.** When the tank is low they are
+  clear of the surface, so commanding them does nothing to the water at all
+  while still reporting a perfectly healthy stroke. A run that "did not make a
+  wave" with a high-numbered selection is the first thing to check.
+- So piston number is not interchangeable here. Thirty pistons all stroking
+  350 mm do **not** contribute equally, and defaulting a new feature to "all
+  thirty" quietly wastes more than half of them.
+
+### The word "front" means opposite things to the code and to the operator
+
+This is a live trap. The lab owner calls column 1 **"the back"** -- the end
+wall the bank is bolted to -- and calls the far end of the tank, where the
+waves go, **"the front"**. The code says the exact opposite: `AGENTS.md` and
+this file both state *"the chamber's front starts at display column 1"*,
+settled by commit `c87654a`.
+
+They agree about the pistons and disagree about the English. Column 1 is the
+same physical place in both: **the end wall, deepest, always submerged, piston
+1.** Column 10 is the far side of the bank, highest, nearest the open water.
+
+When talking to an operator, say **"nearest the end wall"** or **"deepest"**
+rather than front or back, and never let the two vocabularies meet inside a
+piece of code. A cascade that marches the wrong way down the tank is the
+failure this causes, and it has already happened once here.
+
 ## Making the array move as a pattern
 
 Three modes, on the Wave tab under MOVES, and all three are also reachable from
