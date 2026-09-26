@@ -17,11 +17,11 @@ import pytest
 
 from modules.wave_preview import (
     WavePreview,
-    amplitude_for,
     cycle_sample,
     invert_leg_position,
     leg_fractions,
     leg_position,
+    wave_amplitude_px,
 )
 
 
@@ -166,24 +166,30 @@ def test_back_leg_occupies_its_full_share_of_the_cycle_in_cycle_sample():
     assert just_before_home == pytest.approx(-1.0, abs=1e-3)
 
 
-# -- amplitude_for --------------------------------------------------------
+# -- wave_amplitude_px ----------------------------------------------------
+#
+# This took a piston stroke and was called amplitude_for. Modelling the water
+# split the two apart: the strip is now drawn from a modelled wave HEIGHT, which
+# wave_height() derives from the stroke and the period, because a given stroke
+# makes a different wave at a different period. The tests below are the same
+# three properties, stated about the height the strip is actually drawn from.
 
-def test_amplitude_grows_with_stroke():
-    small = amplitude_for(50.0, 74.0)
-    large = amplitude_for(200.0, 74.0)
+def test_amplitude_grows_with_wave_height():
+    small = wave_amplitude_px(50.0, 74.0)
+    large = wave_amplitude_px(200.0, 74.0)
     assert 0.0 < small < large
 
 
-def test_amplitude_is_capped_at_full_stroke():
-    from modules.wave_preview import FULL_STROKE_MM
+def test_amplitude_is_capped_at_a_full_wave():
+    from modules.wave_preview import FULL_WAVE_MM
 
-    at_cap = amplitude_for(FULL_STROKE_MM, 74.0)
-    past_cap = amplitude_for(FULL_STROKE_MM * 2.0, 74.0)
+    at_cap = wave_amplitude_px(FULL_WAVE_MM, 74.0)
+    past_cap = wave_amplitude_px(FULL_WAVE_MM * 2.0, 74.0)
     assert at_cap == pytest.approx(past_cap)
 
 
-def test_zero_stroke_has_no_amplitude():
-    assert amplitude_for(0.0, 74.0) == 0.0
+def test_zero_wave_height_has_no_amplitude():
+    assert wave_amplitude_px(0.0, 74.0) == 0.0
 
 
 # -- WavePreview._column_phase -------------------------------------------
