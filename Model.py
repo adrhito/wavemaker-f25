@@ -2191,13 +2191,18 @@ class Model:
         sample()
         began = False
         try:
-            for leg, out in enumerate((True, False)):
-                targets = {axis: (high if out else low)
-                           for axis, (low, high) in wanted.items()}
+            # Up first, then down, by height rather than by name: smaller
+            # millimetres are higher, and an operator may set Position 1 above
+            # or below Position 2. A stroke that set off "towards Position 2"
+            # went down first on one preset and up first on another.
+            tops = dict((axis, min(pair)) for axis, pair in wanted.items())
+            bottoms = dict((axis, max(pair)) for axis, pair in wanted.items())
+            # Until each leg is timed from its own speed, allow the slower way.
+            seconds = max(self._leg_seconds(True), self._leg_seconds(False))
+            for way, targets in (("up", tops), ("down", bottoms)):
                 if not self._stroke_leg(
-                        targets, self._leg_seconds(out), sample,
-                        "Running one stroke: {0}...".format(
-                            "out" if out else "back")):
+                        targets, seconds, sample,
+                        "Running one stroke: {0}...".format(way)):
                     break
                 began = True
                 if self._stop_requested.is_set():
