@@ -13,9 +13,21 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from app import params
+
 
 GRAVITY_MM_S2 = 9810.0
 _HALF_HEIGHT_ARGUMENT = math.acosh(math.sqrt(2.0))
+
+# Until the lab establishes a safe stopping limit, this trial uses no more
+# than the speed and acceleration of the shipped gentle piston preset.  These
+# are conservative software bounds, not a certification of mechanical safety.
+MAX_TRIAL_LIFT_MM = 120
+MAX_TRIAL_SPEED_MM_S = 200
+TRIAL_ACCEL_MM_S2 = 4000
+TRIAL_DECEL_MM_S2 = 4000
+TRIAL_JERK_MM_S3 = 2000
+BOTTOM_MM = params.BY_NAME["Position 2"].maximum
 
 
 @dataclass(frozen=True)
@@ -67,3 +79,73 @@ class SolitaryTarget:
         # Avoid overflow in cosh for distant preview samples.
         argument = min(abs(k * x_mm), 350.0)
         return self.crest_height_mm / math.cosh(argument) ** 2
+
+
+@dataclass(frozen=True)
+class SolitonTrial:
+    """A bounded one-way floor lift to try against a solitary-wave target.
+
+    The independent ``floor_lift_mm`` is deliberate: no measured transfer
+    function maps a requested water crest to floor travel yet.  Width is used
+    only to estimate a traversal speed from shallow-water phase speed.  A
+    point-to-point S-curve cannot reproduce the ideal sech² velocity pulse.
+    """
+
+    target: SolitaryTarget
+    floor_lift_mm: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.floor_lift_mm, bool) or not isinstance(self.floor_lift_mm, int):
+            raise ValueError("floor lift must be a whole number of millimetres")
+        if not 1 <= self.floor_lift_mm <= MAX_TRIAL_LIFT_MM:
+            raise ValueError("floor lift must be between 1 and {0} mm".format(
+                MAX_TRIAL_LIFT_MM))
+
+    @property
+    def top_mm(self) -> int:
+        return BOTTOM_MM - self.floor_lift_mm
+
+    @property
+    def requested_speed_mm_s(self) -> float:
+        return self.floor_lift_mm / self.target.half_height_seconds
+
+    @property
+    def speed_mm_s(self) -> int:
+        return max(1, min(int(round(self.requested_speed_mm_s)),
+                          MAX_TRIAL_SPEED_MM_S))
+
+    @property
+    def speed_limited(self) -> bool:
+        return self.requested_speed_mm_s > MAX_TRIAL_SPEED_MM_S
+
+    @property
+    def nominal_travel_seconds(self) -> float:
+        # Actual travel is longer when acceleration and jerk are active.
+        return self.floor_lift_mm / float(self.speed_mm_s)
+
+    @staticmethod
+    def _motion_values(destination_mm: int, speed_mm_s: int):
+        values = params.defaults()
+        values.update({
+            "Position 1": destination_mm,
+            "Position 2": destination_mm,
+            "Speed 1": speed_mm_s,
+            "Speed 2": speed_mm_s,
+            "Accel 1": TRIAL_ACCEL_MM_S2,
+            "Accel 2": TRIAL_ACCEL_MM_S2,
+            "Decel 1": TRIAL_DECEL_MM_S2,
+            "Decel 2": TRIAL_DECEL_MM_S2,
+            "Jerk 1": TRIAL_JERK_MM_S3,
+            "Jerk 2": TRIAL_JERK_MM_S3,
+            "Profile": 2,  # S-curve: controlled deceleration into the endpoint.
+            "Move Type": 0,
+        })
+        return values
+
+    def stage_parameters(self):
+        """Slowly lower the selected floor sections before a separate fire."""
+        return self._motion_values(BOTTOM_MM, MAX_TRIAL_SPEED_MM_S)
+
+    def pulse_parameters(self):
+        """One controlled upward move; no immediate return wave."""
+        return self._motion_values(self.top_mm, self.speed_mm_s)

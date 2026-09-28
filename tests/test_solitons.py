@@ -4,7 +4,9 @@ import math
 
 import pytest
 
-from app.solitons import SolitaryTarget
+from app.solitons import (
+    BOTTOM_MM, MAX_TRIAL_SPEED_MM_S, SolitaryTarget, SolitonTrial,
+)
 
 
 def test_first_order_width_and_half_height():
@@ -37,3 +39,29 @@ def test_height_and_depth_change_the_solitary_width():
 def test_invalid_target_is_rejected(values):
     with pytest.raises(ValueError):
         SolitaryTarget(*values)
+
+
+def test_trial_keeps_water_target_separate_from_motor_lift():
+    target = SolitaryTarget(60, 2000, 150)
+    trial = SolitonTrial(target, 40)
+    assert trial.top_mm == BOTTOM_MM - 40
+    assert trial.pulse_parameters()["Position 1"] == BOTTOM_MM - 40
+    assert trial.stage_parameters()["Position 1"] == BOTTOM_MM
+    assert trial.pulse_parameters()["Position 2"] == trial.top_mm
+    assert trial.pulse_parameters()["Move Type"] == 0
+    assert trial.pulse_parameters()["Profile"] == 2
+
+
+def test_narrow_target_is_speed_limited_without_silent_overspeed():
+    trial = SolitonTrial(SolitaryTarget(100, 100, 100), 120)
+    assert trial.speed_limited
+    assert trial.speed_mm_s == MAX_TRIAL_SPEED_MM_S
+    assert trial.pulse_parameters()["Speed 1"] == MAX_TRIAL_SPEED_MM_S
+    assert trial.pulse_parameters()["Decel 1"] == 4000
+    assert trial.pulse_parameters()["Jerk 1"] == 2000
+
+
+@pytest.mark.parametrize("lift", [0, 121, 1.5, True])
+def test_trial_rejects_invalid_lift(lift):
+    with pytest.raises(ValueError):
+        SolitonTrial(SolitaryTarget(30, 600, 150), lift)
