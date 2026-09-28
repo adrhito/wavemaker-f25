@@ -1047,7 +1047,11 @@ class Model:
             #: can still mark them and the operator can see what went.
             self.dropped_axes = list(dropped or stuck)
             if self.state is not MachineState.HOMED:
-                self._set_state(MachineState.READY)
+                # drop_unhomed cannot settle this itself while the state is
+                # still PREPARING. If every piston went, there is nothing left
+                # to be ready: IDLE, so Start asks for a selection instead.
+                self._set_state(
+                    MachineState.READY if self.sets else MachineState.IDLE)
         else:
             self._set_state(MachineState.READY)
 
