@@ -13,7 +13,7 @@ import threading
 import time
 from enum import Enum
 from logging import Logger, getLogger
-from typing import Callable, Dict, Iterable, Iterator, List, Optional
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from app import params, paths, plc as plc_module, tags, waves
 from app.plc import PlcError, Transport
@@ -2171,15 +2171,7 @@ class Model:
         Returns travel per axis, or None if a stop landed before anything was
         commanded, so the caller can tell a cancelled stroke from a dead one.
         """
-        wanted = {}
-        for motor in self.all_motors:
-            try:
-                wanted[motor.axis] = (
-                    int(motor.write_params["Position 1"]),
-                    int(motor.write_params["Position 2"]),
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
+        wanted = self._stroke_positions()
         if not wanted:
             return None
 
@@ -2256,6 +2248,24 @@ class Model:
             (axis, highest[axis] - lowest.get(axis, highest[axis]))
             for axis in highest
         )
+
+    def _stroke_positions(self) -> Dict[int, Tuple[int, int]]:
+        """Each piston's Position 1 and Position 2, as the operator set them.
+
+        A piston whose parameters cannot be read as whole millimetres is left
+        out rather than guessed at: commanding it somewhere invented is worse
+        than leaving it still.
+        """
+        wanted: Dict[int, Tuple[int, int]] = {}
+        for motor in self.all_motors:
+            try:
+                wanted[motor.axis] = (
+                    int(motor.write_params["Position 1"]),
+                    int(motor.write_params["Position 2"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return wanted
 
     def _leg_seconds(self, outbound: bool) -> float:
         """How long one leg of a stroke should need, with headroom."""
