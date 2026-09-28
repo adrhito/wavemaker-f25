@@ -2211,7 +2211,13 @@ class Model:
                 (bottoms, "Running one stroke: down...", True),
             )
             for targets, status, counts in legs:
-                speeds = self._leg_speeds(targets, wanted) if counts else None
+                if counts:
+                    speeds = self._leg_speeds(targets, wanted)
+                else:
+                    # Getting onto the stroke can be most of the machine's
+                    # travel. It is positioning, so it goes at the gentle
+                    # staging pace, not at whatever the wave itself is set to.
+                    speeds = dict((axis, STAGE_SPEED) for axis in targets)
                 if not self._stroke_leg(
                         targets, seconds, sample, status, speeds):
                     break

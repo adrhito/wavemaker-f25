@@ -18,6 +18,7 @@ import pytest
 
 from app import params, tags
 from app.plc import SimulatedPlc
+import Model as model_module
 from Model import RunMode
 
 #: Smaller millimetres are higher: -20 is the top of travel, 370 the bottom.
@@ -141,3 +142,17 @@ def test_up_is_up_even_when_position_one_is_the_bottom(homed_model, plc):
     _approach, up, down = [legs[axis] for legs in plc.pulses]
     assert up[1:] == (300, 300)
     assert down[1:] == (600, 600)
+
+
+def test_getting_onto_the_stroke_is_gentle(homed_model, plc):
+    """From rest to the stroke can be most of the travel; it is positioning,
+    so it goes at the staging pace, not at the wave's 900 mm/s."""
+    stroke(homed_model, speed=900)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+
+    axis = homed_model.all_motors[0].axis
+    approach = plc.pulses[0][axis]
+    gentle = model_module.STAGE_SPEED
+    assert approach == (BOTTOM, gentle, gentle)
