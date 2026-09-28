@@ -1522,6 +1522,9 @@ class Model:
         for axis in dropped:
             self.selection[axis] = False
         self.unhomed_axes = []
+        # The controller was told to include these axes before homing. Remove
+        # failed axes there too before any later motion can be commanded.
+        self._mark_live_motors()
         LOGGER.info("Dropped piston(s) %s from the run.", tags.display_list(dropped))
 
         # The pistons that are left homed perfectly well. Going back to READY

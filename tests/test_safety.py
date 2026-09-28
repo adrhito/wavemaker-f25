@@ -327,9 +327,13 @@ class TestHomingFailureIsActionable:
         assert model.live_axes == [0, 1, 3]
         assert model.unhomed_axes == []
         assert model.state is MachineState.HOMED
+        assert plc.read(tags.live_motor(2)) == 0
+        assert all(plc.read(tags.live_motor(axis)) == 1 for axis in (0, 1, 3))
 
+        plc.clear_history()
         assert model.prepare()
         assert model.state is MachineState.HOMED
+        assert plc.writes_to(tags.HOME_BUTTON) == []
 
     def test_a_clean_home_leaves_nothing_flagged(self, model, plc):
         model.set_selection([0, 1, 2])
@@ -346,6 +350,7 @@ class TestHomingFailureIsActionable:
         assert model.dropped_axes == [5]
         assert model.sets == []
         assert model.state is MachineState.IDLE
+        assert plc.read(tags.live_motor(5)) == 0
 
 
 class TestHomingIsNotRepeatedNeedlessly:
