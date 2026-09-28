@@ -95,7 +95,8 @@ motion equation is **not** used for this vertical-floor machine.
 3. Press **Stage floor**. This prepares/homes if needed and lowers the selected
    sections to 370 mm. Let the water become still before the next step.
 4. Press **Fire one pulse**. The controller makes one absolute upward move and
-   decelerates into its endpoint. The software waits for position arrival
+   decelerates into its endpoint. Fire first checks every selected floor
+   section is within 2 mm of its staged start. The software waits for arrival
    before clearing the command. The floor stays raised; there is no automatic
    return pulse. To lower it for another trial, press **Stage floor** again.
 5. Measure the resulting wave at a marked station and press **Record observed
@@ -103,7 +104,8 @@ motion equation is **not** used for this vertical-floor machine.
    longitudinal half-height width if measured, station distance, and a photo
    or note reference. Records are saved locally in
    `analytics/soliton-trials/` as JSON files with target, command, pulse
-   outcome, depth, final motor positions, and observation in separate fields.
+   outcome, depth, actual start and final motor positions, the exact stage and
+   pulse parameter values, and observation in separate fields.
    A trial file is created before motion, so a stopped or faulted pulse is
    retained too. Transfer those files from the offline lab computer with the
    code and any photos when analyzing calibration.

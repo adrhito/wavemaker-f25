@@ -31,7 +31,7 @@ software limits certifies the fastest mechanically safe stop.
 
 Attempted pulses create local JSON records in `analytics/soliton-trials/`
 before motion. Their completed, interrupted, or failed outcome is recorded
-with final readable motor positions.
+with actual start and final readable motor positions and exact PLC parameters.
 Requested crest and width, water depth, commanded lift and speed, selected
 pistons, read-back endpoint positions, observed crest rise,
 observed crest-to-trough height, observed longitudinal full width at half
@@ -42,8 +42,9 @@ blank until an operator records a measurement.
 The tab can suggest a floor lift after enough physical observations exist.
 `app/soliton_calibration.py` requires at least three consistent completed
 hardware trials at each of two lifts, with matching water depth, target width,
-piston selection, station, command profile, observed width, and endpoint
-readback. It interpolates inside observed crest heights only. The operator
+piston selection, station, command profile, observed width, and start/end
+readbacks within 2 mm of their commands. It interpolates inside observed crest
+heights only. The operator
 explicitly applies the suggestion, then stages again. This is a local
 empirical aid, not a validated fluid model or a guarantee of wave height.
 

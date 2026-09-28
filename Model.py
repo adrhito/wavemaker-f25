@@ -1670,7 +1670,7 @@ class Model:
         try:
             staged = self._soliton_move(
                 axes, trial.stage_parameters(), solitons.BOTTOM_MM,
-                PARK_SECONDS, PARK_TOLERANCE)
+                PARK_SECONDS, solitons.TRIAL_POSITION_TOLERANCE_MM)
         finally:
             # Stop reads this flag to distinguish staging from interrupted
             # homing.  Let the Stop worker clear it when it owns the stop.
@@ -1708,9 +1708,15 @@ class Model:
         if staged != (trial, tuple(self.live_axes)) or not self._already_homed():
             raise ValueError("Piston selection or homing changed; stage again.")
         axes = staged[1]
-        if not self._all_within(dict((axis, solitons.BOTTOM_MM) for axis in axes),
-                                PARK_TOLERANCE):
-            raise ValueError("The floor moved from its staged position; stage again.")
+        actual_start_positions = self._soliton_positions(axes)
+        if len(actual_start_positions) != len(axes) or any(
+               actual is None or abs(actual - solitons.BOTTOM_MM) >
+               solitons.TRIAL_POSITION_TOLERANCE_MM
+               for actual in actual_start_positions.values()):
+            raise ValueError(
+                "The floor is not confirmed within {0:g} mm of its staged "
+                "position; inspect it and stage again.".format(
+                    solitons.TRIAL_POSITION_TOLERANCE_MM))
         faults = self.check_drives(axes)
         if faults:
             raise ValueError("Check the selected drives before firing: {0}".format(
@@ -1729,7 +1735,8 @@ class Model:
                 trial, axes, source=(
                     "hardware" if self.is_live and not isinstance(
                         self.plc, plc_module.SimulatedPlc) else "simulator"),
-                planned_station_mm=planned_station_mm)
+                planned_station_mm=planned_station_mm,
+                actual_start_positions_mm=actual_start_positions)
         except OSError as exc:
             raise ValueError("Cannot save the soliton trial before motion: {0}".format(
                 exc)) from exc
@@ -1744,7 +1751,7 @@ class Model:
                            MAX_STROKE_SECONDS)
             arrived = self._soliton_move(
                 axes, trial.pulse_parameters(), trial.top_mm,
-                deadline, 2.0)
+                deadline, solitons.TRIAL_POSITION_TOLERANCE_MM)
             if self._stop_requested.is_set():
                 outcome = "interrupted"
                 return
@@ -1756,15 +1763,7 @@ class Model:
             raise
         finally:
             try:
-                actual_end_positions = {}
-                for motor in self.all_motors:
-                    if motor.axis not in axes:
-                        continue
-                    try:
-                        actual_end_positions[str(tags.display_number(motor.axis))] = (
-                            motor.read_position(self.plc))
-                    except (PlcError, TypeError, ValueError):
-                        actual_end_positions[str(tags.display_number(motor.axis))] = None
+                actual_end_positions = self._soliton_positions(axes)
                 try:
                     soliton_records.finish_trial(
                         self.last_soliton_record, outcome, actual_end_positions, error)
@@ -1787,6 +1786,20 @@ class Model:
             trial.target.crest_height_mm, trial.target.width_mm,
             trial.target.water_depth_mm, trial.floor_lift_mm,
             trial.speed_mm_s)
+
+    def _soliton_positions(self, axes) -> Dict[str, Optional[float]]:
+        """Read selected floor positions in display numbering for trial records."""
+        positions = {}
+        for motor in self.all_motors:
+            if motor.axis not in axes:
+                continue
+            key = str(tags.display_number(motor.axis))
+            try:
+                actual = motor.read_position(self.plc)
+                positions[key] = actual if math.isfinite(actual) else None
+            except (PlcError, TypeError, ValueError):
+                positions[key] = None
+        return positions
 
     def _soliton_move(self, axes, values, target, timeout, tolerance) -> bool:
         """One absolute Run_1 move with bounded, controller-side deceleration.

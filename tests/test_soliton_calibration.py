@@ -15,10 +15,14 @@ def target():
 
 def add_sample(folder, target, lift, observed_crest, *, source="hardware",
                station=2000, observed_width=None, actual_offset=0.0,
+               start_offset=0.0,
                outcome="completed"):
     trial = SolitonTrial(target, lift)
     path = save_trial(trial, (29, 28, 27), directory=folder,
-                      source=source, planned_station_mm=station)
+                      source=source, planned_station_mm=station,
+                      actual_start_positions_mm={
+                          str(piston): BOTTOM_MM + start_offset
+                          for piston in (1, 2, 3)})
     finish_trial(path, outcome, dict((str(piston), BOTTOM_MM - lift + actual_offset)
                                      for piston in (1, 2, 3)))
     record_observation(path, str(observed_crest), "", str(station),
@@ -76,6 +80,7 @@ def test_requires_repeats_at_both_lifts(tmp_path, target):
     {"station": 2100},
     {"observed_width": 2000},
     {"actual_offset": 8},
+    {"start_offset": 8},
     {"outcome": "interrupted"},
 ])
 def test_rejects_ineligible_trials(tmp_path, target, variant):

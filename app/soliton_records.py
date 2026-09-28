@@ -34,7 +34,8 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
                directory: Optional[Path] = None,
                actual_end_positions_mm: Optional[dict] = None,
                source: str = "unknown",
-               planned_station_mm: Optional[float] = None) -> Path:
+               planned_station_mm: Optional[float] = None,
+               actual_start_positions_mm: Optional[dict] = None) -> Path:
     """Save the planned pulse before motion, including if the pulse later fails."""
     if source not in ("hardware", "simulator", "unknown"):
         raise ValueError("Unknown soliton trial source.")
@@ -64,6 +65,9 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "floor_start_mm": trial.stage_parameters()["Position 1"],
         "floor_end_mm": trial.top_mm,
         "floor_lift_mm": trial.floor_lift_mm,
+        "stage_command_parameters": trial.stage_parameters(),
+        "pulse_command_parameters": trial.pulse_parameters(),
+        "actual_start_positions_mm": actual_start_positions_mm or {},
         "actual_end_positions_mm": actual_end_positions_mm or {},
         "command_speed_mm_s": trial.speed_mm_s,
         "command_accel_mm_s2": TRIAL_ACCEL_MM_S2,

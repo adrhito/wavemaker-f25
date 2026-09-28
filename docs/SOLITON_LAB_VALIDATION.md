@@ -28,7 +28,8 @@ mechanical review before making either claim.
 1. Select the approved floor sections. Enter target crest rise, target width,
    measured depth, and the chosen floor lift.
 2. Stage the floor. Confirm the selected sections have reached 370 mm and let
-   the water settle before firing.
+   the water settle before firing. Fire refuses a section that reads more than
+   2 mm from its staged start.
 3. Start video before firing. The controller makes one upward move, slows into
    its endpoint, and holds the floor raised. Use **Stop** or the physical stop
    if motion is abnormal. Do not increase limits to work around an abnormality.
@@ -38,7 +39,8 @@ mechanical review before making either claim.
    least three times to assess repeatability.
 5. Transfer `analytics/soliton-trials/*.json`, relevant logs, and original
    videos or images from the offline computer. Each JSON record separates the
-   requested wave, motor command, pulse outcome, final motor readback, and
+   requested wave, exact motor parameters, pulse outcome, start and final
+   motor readback, and
    manually observed heights, including interrupted runs. It contains no
    water-height sensor trace.
 

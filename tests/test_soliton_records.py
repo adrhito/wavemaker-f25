@@ -20,6 +20,8 @@ def test_trial_record_preserves_request_and_actual_observation(tmp_path):
     assert before["observed_crest_rise_mm"] is None
     assert before["observed_fwhm_width_mm"] is None
     assert before["pulse_status"] == "pending"
+    assert before["stage_command_parameters"] == trial.stage_parameters()
+    assert before["pulse_command_parameters"] == trial.pulse_parameters()
 
     finish_trial(path, "completed", {"1": 325.0})
 
@@ -66,10 +68,12 @@ def test_failed_trial_keeps_command_and_reason(tmp_path):
 def test_trial_records_planned_station_and_source(tmp_path):
     path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
                       (29,), directory=tmp_path, source="hardware",
-                      planned_station_mm="2500")
+                      planned_station_mm="2500",
+                      actual_start_positions_mm={"1": 369.8})
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["source"] == "hardware"
     assert data["planned_measurement_station_mm"] == 2500.0
+    assert data["actual_start_positions_mm"] == {"1": 369.8}
 
 
 def test_outcome_written_after_observation_preserves_both(tmp_path):

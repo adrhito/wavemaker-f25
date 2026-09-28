@@ -28,6 +28,7 @@ TRIAL_ACCEL_MM_S2 = 4000
 TRIAL_DECEL_MM_S2 = 4000
 TRIAL_JERK_MM_S3 = 2000
 BOTTOM_MM = params.BY_NAME["Position 2"].maximum
+TRIAL_POSITION_TOLERANCE_MM = 2.0
 
 
 @dataclass(frozen=True)

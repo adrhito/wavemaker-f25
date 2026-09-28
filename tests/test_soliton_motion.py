@@ -54,6 +54,9 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert record["planned_measurement_station_mm"] == 2000.0
     assert record["pulse_finished_utc"]
     assert record["actual_end_positions_mm"]["30"] == trial.top_mm
+    assert record["actual_start_positions_mm"]["30"] == BOTTOM_MM
+    assert record["pulse_command_parameters"] == trial.pulse_parameters()
+    assert record["stage_command_parameters"] == trial.stage_parameters()
     assert homed_model._soliton_floor_raised
 
 
@@ -89,6 +92,18 @@ def test_fire_without_same_staged_plan_writes_nothing(homed_model, plc, trial):
     assert not homed_model.fire_soliton(trial)
     assert plc.history == []
     assert homed_model.bridge.problems
+
+
+def test_fire_rejects_floor_outside_two_mm_of_staged_start(
+        homed_model, moving_plc, trial):
+    assert homed_model.stage_soliton(trial)
+    moving_plc.write(tags.axis_field(0, tags.ACTUAL_POSITION),
+                     params.to_counts(BOTTOM_MM - 2.5))
+    moving_plc.clear_history()
+    assert homed_model.fire_soliton(trial)
+    assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
+    assert homed_model.last_soliton_record is None
+    assert "within 2 mm" in homed_model.bridge.problems[-1][1]
 
 
 def test_changed_target_requires_restaging(homed_model, moving_plc, trial):

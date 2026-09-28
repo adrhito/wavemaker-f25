@@ -19,7 +19,7 @@ from app import paths
 from app.solitons import (
     BOTTOM_MM, MAX_TRIAL_LIFT_MM, MAX_TRIAL_SPEED_MM_S,
     TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2, TRIAL_JERK_MM_S3,
-    SolitaryTarget,
+    TRIAL_POSITION_TOLERANCE_MM, SolitaryTarget,
 )
 
 
@@ -28,7 +28,6 @@ MAX_WIDTH_ERROR_FRACTION = 0.15
 MAX_PULSE_TIME_ERROR_FRACTION = 0.10
 MAX_HEIGHT_SPREAD_FRACTION = 0.15
 MAX_HEIGHT_SPREAD_MM = 5.0
-POSITION_TOLERANCE_MM = 2.0
 
 
 @dataclass(frozen=True)
@@ -105,6 +104,15 @@ def _matching_observation(record: dict, target: SolitaryTarget,
         return None
     if not _same(record.get("floor_end_mm"), BOTTOM_MM - lift):
         return None
+    command = record.get("pulse_command_parameters")
+    if (not isinstance(command, dict) or
+            not _same(command.get("Position 1"), BOTTOM_MM - lift) or
+            not _same(command.get("Position 2"), BOTTOM_MM - lift) or
+            not _same(command.get("Speed 1"), speed) or
+            not _same(command.get("Speed 2"), speed) or
+            not _same(command.get("Profile"), 2) or
+            not _same(command.get("Move Type"), 0)):
+        return None
     if abs(width / target.width_mm - 1.0) > MAX_WIDTH_ERROR_FRACTION:
         return None
     pulse_time = lift / speed
@@ -112,12 +120,17 @@ def _matching_observation(record: dict, target: SolitaryTarget,
             MAX_PULSE_TIME_ERROR_FRACTION):
         return None
 
+    starts = record.get("actual_start_positions_mm")
     positions = record.get("actual_end_positions_mm")
-    if not isinstance(positions, dict):
+    if not isinstance(starts, dict) or not isinstance(positions, dict):
         return None
     for piston in pistons:
+        start = _number(starts.get(str(piston)))
         actual = _number(positions.get(str(piston)))
-        if actual is None or abs(actual - (BOTTOM_MM - lift)) > POSITION_TOLERANCE_MM:
+        if (start is None or
+                abs(start - BOTTOM_MM) > TRIAL_POSITION_TOLERANCE_MM or
+                actual is None or
+                abs(actual - (BOTTOM_MM - lift)) > TRIAL_POSITION_TOLERANCE_MM):
             return None
     return int(lift), crest
 
@@ -181,7 +194,8 @@ def assess_lift(target: SolitaryTarget, display_pistons: Sequence[int],
     if eligible_runs == 0:
         return CalibrationAssessment(
             None, "Matching trials need a positive observed crest, a measured "
-                  "width near the target, and complete motor endpoint readbacks.",
+                  "width near the target, and complete motor start and endpoint "
+                  "readbacks.",
             matching_runs, eligible_runs)
 
     levels = []

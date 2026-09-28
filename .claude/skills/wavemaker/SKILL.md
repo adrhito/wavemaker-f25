@@ -216,7 +216,9 @@ station, depth, target width, piston selection and motion settings. It rejects
 mock runs and extrapolation. The operator applies a suggestion explicitly and
 stages again before firing; it is still an experimental trial, not a certified
 water-height controller. Preserve the recorded source and station fields when
-changing trial JSON.
+changing trial JSON. The trial record also captures actual start and end
+positions and the exact stage/pulse parameter dictionaries; Fire rejects any
+selected floor section more than 2 mm from the staged start.
 
 ## Screenshotting the GUI
 
