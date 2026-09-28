@@ -1815,6 +1815,29 @@ class Model:
         if any(self.plc.read(tag) for tag in
                (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE)):
             raise ValueError("A run bit is already active. Stop the other run first.")
+        # Run_1 acts on the PLC's global Live_Motors selection. Another
+        # application could have changed that selection since Prepare, and
+        # asserting Run_1 then could move a floor section outside this trial.
+        selected = set(axes)
+        unexpected = []
+        missing = []
+        for axis in range(tags.MOTOR_COUNT):
+            active = bool(self.plc.read(tags.live_motor(axis)))
+            if active and axis not in selected:
+                unexpected.append(axis)
+            elif not active and axis in selected:
+                missing.append(axis)
+        if unexpected or missing:
+            details = []
+            if unexpected:
+                details.append("unexpected piston(s) {0}".format(
+                    tags.display_list(unexpected)))
+            if missing:
+                details.append("missing piston(s) {0}".format(
+                    tags.display_list(missing)))
+            raise ValueError(
+                "PLC selection changed ({0}). Stop the other session and "
+                "stage this trial again.".format("; ".join(details)))
         try:
             for axis in axes:
                 for spec in params.WRITE_ORDER:

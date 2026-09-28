@@ -29,7 +29,10 @@ mechanical review before making either claim.
    measured depth, and the chosen floor lift.
 2. Stage the floor. Confirm the selected sections have reached 370 mm and let
    the water settle before firing. Fire refuses a section that reads more than
-   2 mm from its staged start.
+   2 mm from its staged start. Before each stage or pulse, the app also checks
+   that the PLC's selected pistons match the trial. A mismatch means another
+   session may have changed the shared selection; stop that session and stage
+   again. This preflight does not provide exclusive control of the PLC.
 3. Start video before firing. The controller makes one upward move, slows into
    its endpoint, and holds the floor raised. Use **Stop** or the physical stop
    if motion is abnormal. Do not increase limits to work around an abnormality.

@@ -219,6 +219,9 @@ water-height controller. Preserve the recorded source and station fields when
 changing trial JSON. The trial record also captures actual start and end
 positions and the exact stage/pulse parameter dictionaries; Fire rejects any
 selected floor section more than 2 mm from the staged start.
+Each one-way move also checks the PLC's global Live_Motors selection before
+asserting Run_1; a mismatch rejects the move, but this is not an ownership
+lock against another live controller session.
 
 ## Screenshotting the GUI
 

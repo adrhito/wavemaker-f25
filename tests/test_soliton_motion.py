@@ -127,6 +127,25 @@ def test_existing_run_bit_rejects_pulse_before_moving(homed_model, moving_plc, t
     assert "run bit" in record["pulse_error"].lower()
 
 
+@pytest.mark.parametrize("changed_axis,selected,description", [
+    (3, True, "unexpected piston(s) 27"),
+    (0, False, "missing piston(s) 30"),
+])
+def test_external_selection_change_rejects_pulse_before_moving(
+        homed_model, moving_plc, trial, changed_axis, selected, description):
+    assert homed_model.stage_soliton(trial)
+    moving_plc.write(tags.live_motor(changed_axis), int(selected))
+    moving_plc.clear_history()
+
+    assert homed_model.fire_soliton(trial)
+    assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
+    assert not any(tag.startswith("Program:Wave_Control.Motor_")
+                   for tag, _value in moving_plc.history)
+    record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
+    assert record["pulse_status"] == "failed"
+    assert description in record["pulse_error"]
+
+
 def test_no_pulse_when_trial_cannot_be_saved(
         homed_model, moving_plc, trial, monkeypatch):
     assert homed_model.stage_soliton(trial)
