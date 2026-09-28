@@ -16,6 +16,10 @@ from app.solitons import SolitonTrial, TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2, TRI
 
 
 _RECORD_LOCK = threading.RLock()
+MOTION_TIMING_FIELDS = (
+    "run_asserted_utc", "endpoint_confirmed_elapsed_s",
+    "run_clear_confirmed_utc", "run_worker_window_s",
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -67,6 +71,7 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "floor_lift_mm": trial.floor_lift_mm,
         "stage_command_parameters": trial.stage_parameters(),
         "pulse_command_parameters": trial.pulse_parameters(),
+        "motion_timing": dict.fromkeys(MOTION_TIMING_FIELDS),
         "actual_start_positions_mm": actual_start_positions_mm or {},
         "actual_end_positions_mm": actual_end_positions_mm or {},
         "command_speed_mm_s": trial.speed_mm_s,
@@ -90,7 +95,8 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
 
 
 def finish_trial(path: Path, outcome: str, actual_end_positions_mm: dict,
-                 error: Optional[str] = None) -> None:
+                 error: Optional[str] = None,
+                 motion_timing: Optional[dict] = None) -> None:
     """Record how a planned pulse ended, even when it did not reach its target."""
     if outcome not in ("completed", "interrupted", "failed"):
         raise ValueError("Unknown soliton pulse outcome: {0}".format(outcome))
@@ -109,6 +115,9 @@ def finish_trial(path: Path, outcome: str, actual_end_positions_mm: dict,
             "pulse_error": str(error) if error is not None else None,
             "actual_end_positions_mm": actual_end_positions_mm,
         })
+        if motion_timing is not None:
+            data["motion_timing"] = dict((name, motion_timing.get(name))
+                                         for name in MOTION_TIMING_FIELDS)
         _write_json(path, data)
 
 

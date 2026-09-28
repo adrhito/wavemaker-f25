@@ -52,9 +52,13 @@ mechanical review before making either claim.
 5. Transfer `analytics/soliton-trials/*.json`, relevant logs, and original
    videos or images from the offline computer. Each JSON record separates the
    requested wave, exact motor parameters, pulse outcome, start and final
-   motor readback, and
+   motor readback, application-side Run_1 assertion, endpoint confirmation and
+   run-bit cleanup times, and
    manually observed heights, including interrupted runs. It contains no
-   water-height sensor trace.
+   water-height sensor or motor-velocity trace. The timing window is measured
+   by the app, not the PLC; a separate Stop may clear the run bit sooner than
+   the pulse worker's final cleanup. Align video with a visible event or a
+   synchronized clock before comparing times.
 
 ## Review before changing the motion
 

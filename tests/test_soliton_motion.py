@@ -57,6 +57,10 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert record["actual_start_positions_mm"]["30"] == BOTTOM_MM
     assert record["pulse_command_parameters"] == trial.pulse_parameters()
     assert record["stage_command_parameters"] == trial.stage_parameters()
+    timing = record["motion_timing"]
+    assert timing["run_asserted_utc"]
+    assert timing["run_clear_confirmed_utc"]
+    assert 0 <= timing["endpoint_confirmed_elapsed_s"] <= timing["run_worker_window_s"]
     assert homed_model._soliton_floor_raised
 
 
@@ -125,6 +129,7 @@ def test_existing_run_bit_rejects_pulse_before_moving(homed_model, moving_plc, t
     record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
     assert record["pulse_status"] == "failed"
     assert "run bit" in record["pulse_error"].lower()
+    assert all(value is None for value in record["motion_timing"].values())
 
 
 @pytest.mark.parametrize("changed_axis,selected,description", [
@@ -182,12 +187,15 @@ def test_failed_run_bit_clear_reports_physical_stop(homed_model, plc, trial,
         original(tag, value)
 
     monkeypatch.setattr(plc, "write", fail_clear)
+    timing = {}
     with pytest.raises(PlcError):
         homed_model._soliton_move(
             tuple(homed_model.live_axes), trial.pulse_parameters(),
-            trial.top_mm, 0.0, 2.0)
+            trial.top_mm, 0.0, 2.0, motion_timing=timing)
     assert homed_model.bridge.problems
     assert "physical stop" in homed_model.bridge.problems[-1][1].lower()
+    assert timing["run_asserted_utc"]
+    assert "run_clear_confirmed_utc" not in timing
 
 
 def test_stop_during_pulse_does_not_park_or_wait_for_stroke(
@@ -209,6 +217,9 @@ def test_stop_during_pulse_does_not_park_or_wait_for_stroke(
     assert not homed_model.soliton_staged
     record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
     assert record["pulse_status"] == "interrupted"
+    assert record["motion_timing"]["run_asserted_utc"]
+    assert record["motion_timing"]["run_clear_confirmed_utc"]
+    assert record["motion_timing"]["endpoint_confirmed_elapsed_s"] is None
 
 
 def test_trial_parameters_do_not_exceed_existing_gentle_preset(trial):

@@ -32,6 +32,9 @@ software limits certifies the fastest mechanically safe stop.
 Attempted pulses create local JSON records in `analytics/soliton-trials/`
 before motion. Their completed, interrupted, or failed outcome is recorded
 with actual start and final readable motor positions and exact PLC parameters.
+Application-side Run_1 assertion, confirmed endpoint and cleanup timing is
+also retained. It helps align trials with video but is not a drive motion or
+deceleration trace, especially when Stop clears the bit before worker cleanup.
 Requested crest and width, water depth, commanded lift and speed, selected
 pistons, read-back endpoint positions, observed crest rise,
 observed crest-to-trough height, observed longitudinal full width at half

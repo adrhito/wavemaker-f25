@@ -226,6 +226,9 @@ The observation dialog accepts a directly measured width or manual video
 timing: station spacing times half-height duration divided by crest transit
 time. The JSON retains the raw timing inputs and method. This estimate is
 only useful when the same crest travels cleanly between marked stations.
+Trial JSON includes application-side Run_1 assertion, endpoint and cleanup
+timing. The interval is not a measured drive deceleration; a separate Stop
+may clear the run bit before the pulse worker finishes its cleanup.
 
 ## Screenshotting the GUI
 

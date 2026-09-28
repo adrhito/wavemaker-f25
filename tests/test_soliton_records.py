@@ -21,6 +21,7 @@ def test_trial_record_preserves_request_and_actual_observation(tmp_path):
     assert before["observed_fwhm_width_mm"] is None
     assert before["observed_width_method"] is None
     assert before["pulse_status"] == "pending"
+    assert all(value is None for value in before["motion_timing"].values())
     assert before["stage_command_parameters"] == trial.stage_parameters()
     assert before["pulse_command_parameters"] == trial.pulse_parameters()
 

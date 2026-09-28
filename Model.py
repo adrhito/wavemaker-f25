@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from logging import Logger, getLogger
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
@@ -1746,12 +1747,14 @@ class Model:
         self.bridge.status("Firing one upward trial pulse...")
         outcome = "failed"
         error = None
+        motion_timing = {}
         try:
             deadline = min(max(trial.nominal_travel_seconds * 3.0 + 3.0, 5.0),
                            MAX_STROKE_SECONDS)
             arrived = self._soliton_move(
                 axes, trial.pulse_parameters(), trial.top_mm,
-                deadline, solitons.TRIAL_POSITION_TOLERANCE_MM)
+                deadline, solitons.TRIAL_POSITION_TOLERANCE_MM,
+                motion_timing=motion_timing)
             if self._stop_requested.is_set():
                 outcome = "interrupted"
                 return
@@ -1766,7 +1769,8 @@ class Model:
                 actual_end_positions = self._soliton_positions(axes)
                 try:
                     soliton_records.finish_trial(
-                        self.last_soliton_record, outcome, actual_end_positions, error)
+                        self.last_soliton_record, outcome, actual_end_positions,
+                        error, motion_timing=motion_timing)
                 except (OSError, ValueError) as exc:
                     LOGGER.error("Could not finish soliton trial record: %s", exc)
                     self.bridge.problem(
@@ -1801,7 +1805,8 @@ class Model:
                 positions[key] = None
         return positions
 
-    def _soliton_move(self, axes, values, target, timeout, tolerance) -> bool:
+    def _soliton_move(self, axes, values, target, timeout, tolerance,
+                      motion_timing=None) -> bool:
         """One absolute Run_1 move with bounded, controller-side deceleration.
 
         The run bit stays high until the drives report arrival twice; dropping
@@ -1838,6 +1843,7 @@ class Model:
             raise ValueError(
                 "PLC selection changed ({0}). Stop the other session and "
                 "stage this trial again.".format("; ".join(details)))
+        started_at = None
         try:
             for axis in axes:
                 for spec in params.WRITE_ORDER:
@@ -1846,6 +1852,10 @@ class Model:
                     self.plc.write(spec.tag(axis), values[spec.name])
             if not self._begin_motion(tags.RUN_SINGLE):
                 return False
+            started_at = time.monotonic()
+            if motion_timing is not None:
+                motion_timing["run_asserted_utc"] = datetime.now(
+                    timezone.utc).isoformat()
             targets = dict((axis, target) for axis in axes)
             until = time.monotonic() + timeout
             while not self._stop_requested.is_set() and time.monotonic() < until:
@@ -1853,6 +1863,9 @@ class Model:
                     self._sleep(STOP_POLL_INTERVAL)
                     if not self._stop_requested.is_set() and self._all_within(
                             targets, tolerance):
+                        if motion_timing is not None:
+                            motion_timing["endpoint_confirmed_elapsed_s"] = max(
+                                0.0, time.monotonic() - started_at)
                         return True
                 self._sleep(STOP_POLL_INTERVAL)
             if self._stop_requested.is_set():
@@ -1863,6 +1876,11 @@ class Model:
         finally:
             try:
                 self.plc.write(tags.RUN_SINGLE, 0)
+                if motion_timing is not None and started_at is not None:
+                    motion_timing["run_clear_confirmed_utc"] = datetime.now(
+                        timezone.utc).isoformat()
+                    motion_timing["run_worker_window_s"] = max(
+                        0.0, time.monotonic() - started_at)
             except PlcError as exc:
                 LOGGER.critical("SOLITON STOP FAILED: %s", exc)
                 self.bridge.problem(
