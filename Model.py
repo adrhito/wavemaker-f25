@@ -2202,13 +2202,7 @@ class Model:
                 began = True
                 if self._stop_requested.is_set():
                     break
-                dwell = 0.0
-                for motor in self.all_motors:
-                    try:
-                        dwell = max(dwell, float(motor.write_params.get(
-                            "Time 2" if out else "Time 1", 0)) / 1000.0)
-                    except (TypeError, ValueError):
-                        continue
+                dwell = self._dwell_seconds(targets, wanted)
                 if dwell:
                     self._sleep(dwell)
         finally:
@@ -2266,6 +2260,27 @@ class Model:
             self.plc.write(tags.RUN_SINGLE, 0)
         sample()
         return True
+
+    def _dwell_seconds(self, reached: Dict[int, int],
+                       wanted: Dict[int, Tuple[int, int]]) -> float:
+        """The longest pause any piston is due at the end it has just reached.
+
+        Time 1 is the dwell at Position 1 and Time 2 the dwell at Position 2,
+        in milliseconds. Which one applies depends on the end each piston
+        arrived at, not on which leg this was: an operator can set Position 1
+        above or below Position 2, so "the first leg" names no fixed end.
+        """
+        dwell = 0.0
+        for motor in self.all_motors:
+            axis = motor.axis
+            if axis not in reached or axis not in wanted:
+                continue
+            name = "Time 1" if reached[axis] == wanted[axis][0] else "Time 2"
+            try:
+                dwell = max(dwell, float(motor.write_params.get(name, 0)) / 1000.0)
+            except (TypeError, ValueError):
+                continue
+        return dwell
 
     def _stroke_positions(self) -> Dict[int, Tuple[int, int]]:
         """Each piston's Position 1 and Position 2, as the operator set them.
