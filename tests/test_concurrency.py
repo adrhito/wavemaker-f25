@@ -671,20 +671,20 @@ def test_keepalive_retries_a_dropped_session_but_not_a_bad_tag(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 9. Staging that does not complete now cancels the whole continuous run
+# 9. Staging that does not complete refuses the run and names the piston
 # --------------------------------------------------------------------------
 
-def test_one_unreadable_piston_runs_unstaggered_instead_of_cancelling(
+def test_one_unreadable_piston_refuses_the_run_and_is_named(
     model, plc, monkeypatch
 ):
-    """`_stage_cascade` used to return False on a staging timeout and cancel
-    the whole continuous run -- and `_all_within` gives up if a *single*
-    position read fails, so one flaky axis used to cost the whole run after a
-    STAGE_SECONDS wait, contradicting a deleted comment's intent: "an
-    unstaggered wave is worth more than no wave". "Could not stage" (a
-    timeout, possibly caused by one bad read) is now told apart from "was
-    stopped": the former runs anyway, unstaggered, and says so; only the
-    latter still cancels the run.
+    """A staging timeout refuses the run and names the piston that caused it.
+
+    This once ran anyway, unstaggered, on the reasoning that an unstaggered
+    wave beats no wave. At the machine that was the most confusing thing it
+    did: "Rows out of step" produced a wave that was not, on drives that had
+    just failed to move. "Could not stage" is still told apart from "was
+    stopped", but now both leave the run bit low, and a timeout says which
+    piston did not get there -- here one whose position cannot be read.
     """
     monkeypatch.setattr(model_module, "STAGE_SECONDS", 0.2)
     for axis in (0, 3):
@@ -708,16 +708,16 @@ def test_one_unreadable_piston_runs_unstaggered_instead_of_cancelling(
 
     model.start(RunMode.CONTINUOUS)
 
-    # [1, 0, 1]: staging raises continuous motion briefly as a parity
-    # pulse, putting every drive on the same leg of its cycle, before the
-    # run proper. What matters is that the run bit finishes HIGH -- the run
-    # went ahead -- not the exact sequence of writes getting there.
-    assert plc.writes_to(tags.RUN_CONTINUOUS)[-1] == 1, (
-        "the run must go ahead unstaggered rather than being cancelled"
+    # The staging parity pulse may raise continuous motion briefly; what
+    # matters is that the run bit finishes LOW -- nothing was left running.
+    assert plc.writes_to(tags.RUN_CONTINUOUS)[-1:] in ([], [0]), (
+        "a run that could not be staggered must not be left running"
     )
-    assert model.state is MachineState.RUNNING
-    assert not model.bridge.problems, "a staging timeout is not a problem dialog"
-    assert model.bridge.messages, "the operator must be told it is running unstaggered"
+    assert model.state is not MachineState.RUNNING
+    titles = [title for title, _message in model.bridge.problems]
+    assert "Could not stagger the pistons" in titles
+    _title, message = model.bridge.problems[-1]
+    assert str(tags.display_number(3)) in message, "the piston is named"
 
 
 # --------------------------------------------------------------------------
