@@ -107,3 +107,37 @@ def test_the_operators_stroke_is_given_back_afterwards(homed_model, plc):
         for name, value in (("Position 1", TOP), ("Speed 1", 300),
                             ("Speed 2", 300)):
             assert plc.read(params.BY_NAME[name].tag(motor.axis)) == value, name
+
+
+def test_each_leg_runs_at_the_speed_set_for_its_direction(homed_model, plc):
+    """Speed 1 heads for Position 2 and Speed 2 comes back to Position 1, as in
+    a continuous run. Here Position 1 is the top, so up is Speed 2."""
+    stroke(homed_model)
+    for motor in homed_model.all_motors:
+        motor.set_param("Speed 1", 300)
+        motor.set_param("Speed 2", 600)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+
+    axis = homed_model.all_motors[0].axis
+    _approach, up, down = [legs[axis] for legs in plc.pulses]
+    assert up == (TOP, 600, 600)
+    assert down == (BOTTOM, 300, 300)
+
+
+def test_up_is_up_even_when_position_one_is_the_bottom(homed_model, plc):
+    """An inverted stroke still rises first, now heading for Position 2."""
+    stroke(homed_model, top=BOTTOM, bottom=TOP)   # Position 1 = 150, 2 = 0
+    for motor in homed_model.all_motors:
+        motor.set_param("Speed 1", 300)
+        motor.set_param("Speed 2", 600)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+
+    axis = homed_model.all_motors[0].axis
+    assert plc.path(axis) == [BOTTOM, TOP, BOTTOM]
+    _approach, up, down = [legs[axis] for legs in plc.pulses]
+    assert up[1:] == (300, 300)
+    assert down[1:] == (600, 600)

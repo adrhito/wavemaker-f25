@@ -2211,7 +2211,9 @@ class Model:
                 (bottoms, "Running one stroke: down...", True),
             )
             for targets, status, counts in legs:
-                if not self._stroke_leg(targets, seconds, sample, status):
+                speeds = self._leg_speeds(targets, wanted) if counts else None
+                if not self._stroke_leg(
+                        targets, seconds, sample, status, speeds):
                     break
                 began = began or counts
                 if self._stop_requested.is_set():
@@ -2235,12 +2237,18 @@ class Model:
         )
 
     def _stroke_leg(self, targets: Dict[int, int], seconds: float,
-                    sample: Callable[[], None], status: str) -> bool:
+                    sample: Callable[[], None], status: str,
+                    speeds: Optional[Dict[int, int]] = None) -> bool:
         """Send every piston to its target with Run_1 and wait for arrival.
 
         Run_1 is an absolute move to Position 1, so the target is written
         there first. Arrival is judged by position; ``seconds`` only caps the
         wait, so a stuck piston cannot hold the bit for ever.
+
+        ``speeds`` sets each piston's pace for this leg. Both Speed 1 and
+        Speed 2 are written, the way the resting move and staging do it: which
+        of the two the controller's Run_1 reads has never been established, and
+        writing both makes the answer not matter.
 
         Returns False if a stop landed before the bit could be raised, so the
         caller knows this leg commanded nothing.
@@ -2249,6 +2257,9 @@ class Model:
             # Absolute, or the target is taken as a relative lurch.
             self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
             self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+            if speeds and axis in speeds:
+                for name in ("Speed 1", "Speed 2"):
+                    self.plc.write(params.BY_NAME[name].tag(axis), speeds[axis])
         if self._stop_requested.is_set():
             return False
         if not self._begin_motion(tags.RUN_SINGLE):
@@ -2266,6 +2277,29 @@ class Model:
             self.plc.write(tags.RUN_SINGLE, 0)
         sample()
         return True
+
+    def _leg_speeds(self, targets: Dict[int, int],
+                    wanted: Dict[int, Tuple[int, int]]) -> Dict[int, int]:
+        """The speed each piston should use heading for ``targets``.
+
+        The same pairing as a continuous run: Speed 1 on the way to
+        Position 2, Speed 2 on the way back to Position 1. Taken per piston,
+        because whether "up" means towards Position 1 or Position 2 depends
+        on which of the two the operator set higher.
+        """
+        speeds: Dict[int, int] = {}
+        for motor in self.all_motors:
+            axis = motor.axis
+            if axis not in targets or axis not in wanted:
+                continue
+            first, second = wanted[axis]
+            name = ("Speed 1" if targets[axis] == second and first != second
+                    else "Speed 2")
+            try:
+                speeds[axis] = int(motor.write_params[name])
+            except (KeyError, TypeError, ValueError):
+                continue
+        return speeds
 
     def _restore_stroke(self, wanted: Dict[int, Tuple[int, int]]) -> None:
         """Give back what one stroke borrowed from the operator's parameters.
