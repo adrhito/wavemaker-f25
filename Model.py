@@ -1718,10 +1718,20 @@ class Model:
                 "Reduce the width or increase floor lift.")
         self._soliton_staged = None  # one fire per stage, even on failure
         self.last_soliton_record = None
+        try:
+            # An interrupted or faulted pulse is still an experiment. Save
+            # its requested command before asserting Run_1 so it cannot vanish
+            # when the PLC or connection fails mid-motion.
+            self.last_soliton_record = soliton_records.save_trial(trial, axes)
+        except OSError as exc:
+            raise ValueError("Cannot save the soliton trial before motion: {0}".format(
+                exc)) from exc
         self._soliton_floor_raised = True
         self._soliton_running.set()
         self._set_state(MachineState.RUNNING)
         self.bridge.status("Firing one upward trial pulse...")
+        outcome = "failed"
+        error = None
         try:
             deadline = min(max(trial.nominal_travel_seconds * 3.0 + 3.0, 5.0),
                            MAX_STROKE_SECONDS)
@@ -1729,40 +1739,47 @@ class Model:
                 axes, trial.pulse_parameters(), trial.top_mm,
                 deadline, 2.0)
             if self._stop_requested.is_set():
+                outcome = "interrupted"
                 return
             if not arrived:
                 raise ValueError("Pulse did not reach its endpoint. Check the floor.")
-            actual_end_positions = {}
-            for motor in self.all_motors:
-                if motor.axis not in axes:
-                    continue
-                try:
-                    actual_end_positions[str(tags.display_number(motor.axis))] = (
-                        motor.read_position(self.plc))
-                except (PlcError, TypeError, ValueError):
-                    actual_end_positions[str(tags.display_number(motor.axis))] = None
-            try:
-                self.last_soliton_record = soliton_records.save_trial(
-                    trial, axes, actual_end_positions_mm=actual_end_positions)
-            except OSError as exc:
-                LOGGER.error("Could not save soliton trial: %s", exc)
-                self.bridge.problem(
-                    "Trial record not saved",
-                    "The floor reached its endpoint, but the trial could not "
-                    "be saved: {0}".format(exc))
-            self._set_state(MachineState.HOMED)
-            self.bridge.status(
-                "Trial pulse complete. Floor held raised; record observed water height. "
-                "Stage again to lower it.")
-            LOGGER.log(
-                15, "Soliton trial: target crest %.1f mm, target width %.1f mm, "
-                "depth %.1f mm, floor lift %d mm, speed %d mm/s; no water "
-                "height was measured.",
-                trial.target.crest_height_mm, trial.target.width_mm,
-                trial.target.water_depth_mm, trial.floor_lift_mm,
-                trial.speed_mm_s)
+            outcome = "completed"
+        except Exception as exc:
+            error = str(exc)
+            raise
         finally:
-            self._soliton_running.clear()
+            try:
+                actual_end_positions = {}
+                for motor in self.all_motors:
+                    if motor.axis not in axes:
+                        continue
+                    try:
+                        actual_end_positions[str(tags.display_number(motor.axis))] = (
+                            motor.read_position(self.plc))
+                    except (PlcError, TypeError, ValueError):
+                        actual_end_positions[str(tags.display_number(motor.axis))] = None
+                try:
+                    soliton_records.finish_trial(
+                        self.last_soliton_record, outcome, actual_end_positions, error)
+                except (OSError, ValueError) as exc:
+                    LOGGER.error("Could not finish soliton trial record: %s", exc)
+                    self.bridge.problem(
+                        "Trial outcome not saved",
+                        "The pulse ended, but its outcome could not be saved: {0}".format(
+                            exc))
+            finally:
+                self._soliton_running.clear()
+        self._set_state(MachineState.HOMED)
+        self.bridge.status(
+            "Trial pulse complete. Floor held raised; record observed water height. "
+            "Stage again to lower it.")
+        LOGGER.log(
+            15, "Soliton trial: target crest %.1f mm, target width %.1f mm, "
+            "depth %.1f mm, floor lift %d mm, speed %d mm/s; no water "
+            "height was measured.",
+            trial.target.crest_height_mm, trial.target.width_mm,
+            trial.target.water_depth_mm, trial.floor_lift_mm,
+            trial.speed_mm_s)
 
     def _soliton_move(self, axes, values, target, timeout, tolerance) -> bool:
         """One absolute Run_1 move with bounded, controller-side deceleration.

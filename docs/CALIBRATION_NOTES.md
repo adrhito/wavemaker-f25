@@ -29,7 +29,9 @@ then clears without an automatic return. A manual Stop during the pulse clears
 the run command immediately and leaves the floor where it is. None of these
 software limits certifies the fastest mechanically safe stop.
 
-Completed trials create local JSON records in `analytics/soliton-trials/`.
+Attempted pulses create local JSON records in `analytics/soliton-trials/`
+before motion. Their completed, interrupted, or failed outcome is recorded
+with final readable motor positions.
 Requested crest and width, water depth, commanded lift and speed, selected
 pistons, read-back endpoint positions, observed crest rise,
 observed crest-to-trough height, observed longitudinal full width at half

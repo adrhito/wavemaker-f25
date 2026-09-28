@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,9 +15,12 @@ from app import paths, tags
 from app.solitons import SolitonTrial, TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2, TRIAL_JERK_MM_S3
 
 
+_RECORD_LOCK = threading.RLock()
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n",
                              encoding="utf-8")
@@ -29,7 +33,7 @@ def _write_json(path: Path, data: dict) -> None:
 def save_trial(trial: SolitonTrial, axes: Iterable[int],
                directory: Optional[Path] = None,
                actual_end_positions_mm: Optional[dict] = None) -> Path:
-    """Save the requested shape and sent motion once the floor has arrived."""
+    """Save the planned pulse before motion, including if the pulse later fails."""
     folder = directory or paths.ANALYTICS_DIR / "soliton-trials"
     now = datetime.now(timezone.utc)
     filename = "trial-{0}-{1}.json".format(
@@ -38,7 +42,10 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
     data = {
         "schema_version": 1,
         "timestamp_utc": now.isoformat(),
-        "status": "floor_raised_no_water_measurement_yet",
+        "status": "pulse_pending",
+        "pulse_status": "pending",
+        "pulse_finished_utc": None,
+        "pulse_error": None,
         "display_pistons": [tags.display_number(axis) for axis in axes],
         "target_crest_rise_mm": trial.target.crest_height_mm,
         "target_fwhm_width_mm": trial.target.width_mm,
@@ -61,6 +68,29 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
     }
     _write_json(path, data)
     return path
+
+
+def finish_trial(path: Path, outcome: str, actual_end_positions_mm: dict,
+                 error: Optional[str] = None) -> None:
+    """Record how a planned pulse ended, even when it did not reach its target."""
+    if outcome not in ("completed", "interrupted", "failed"):
+        raise ValueError("Unknown soliton pulse outcome: {0}".format(outcome))
+    with _RECORD_LOCK:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != 1:
+            raise ValueError("Unknown soliton trial record format.")
+        observed = (data.get("observed_crest_rise_mm") is not None or
+                    data.get("observed_crest_to_trough_mm") is not None)
+        data.update({
+            "status": "water_observation_recorded" if observed else (
+                "floor_raised_no_water_measurement_yet" if outcome == "completed"
+                else "pulse_{0}_no_water_measurement_yet".format(outcome)),
+            "pulse_status": outcome,
+            "pulse_finished_utc": datetime.now(timezone.utc).isoformat(),
+            "pulse_error": str(error) if error is not None else None,
+            "actual_end_positions_mm": actual_end_positions_mm,
+        })
+        _write_json(path, data)
 
 
 def _optional_measurement(value, label: str):
@@ -86,16 +116,17 @@ def record_observation(path: Path, crest_rise_mm, crest_to_trough_mm,
     station = _optional_measurement(station_mm, "Measurement station")
     if crest is None and total is None:
         raise ValueError("Enter at least one observed water height.")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schema_version") != 1:
-        raise ValueError("Unknown soliton trial record format.")
-    data.update({
-        "status": "water_observation_recorded",
-        "observed_crest_rise_mm": crest,
-        "observed_crest_to_trough_mm": total,
-        "observed_fwhm_width_mm": width,
-        "measurement_station_mm": station,
-        "measurement_notes": str(notes).strip(),
-        "observation_recorded_utc": datetime.now(timezone.utc).isoformat(),
-    })
-    _write_json(path, data)
+    with _RECORD_LOCK:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != 1:
+            raise ValueError("Unknown soliton trial record format.")
+        data.update({
+            "status": "water_observation_recorded",
+            "observed_crest_rise_mm": crest,
+            "observed_crest_to_trough_mm": total,
+            "observed_fwhm_width_mm": width,
+            "measurement_station_mm": station,
+            "measurement_notes": str(notes).strip(),
+            "observation_recorded_utc": datetime.now(timezone.utc).isoformat(),
+        })
+        _write_json(path, data)

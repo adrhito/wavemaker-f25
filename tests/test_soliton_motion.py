@@ -1,5 +1,7 @@
 """The soliton trial makes one bounded move and leaves the floor raised."""
 
+import json
+
 import pytest
 
 from Model import MachineState, RunMode
@@ -46,6 +48,10 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert all(not motor.write_success for motor in homed_model.all_motors)
     assert homed_model.last_soliton_record is not None
     assert homed_model.last_soliton_record.exists()
+    record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
+    assert record["pulse_status"] == "completed"
+    assert record["pulse_finished_utc"]
+    assert record["actual_end_positions_mm"]["30"] == trial.top_mm
     assert homed_model._soliton_floor_raised
 
 
@@ -99,6 +105,25 @@ def test_existing_run_bit_rejects_pulse_before_moving(homed_model, moving_plc, t
     assert homed_model.bridge.problems
     assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
     assert moving_plc.read(tags.RUN_CONTINUOUS) == 1
+    record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
+    assert record["pulse_status"] == "failed"
+    assert "run bit" in record["pulse_error"].lower()
+
+
+def test_no_pulse_when_trial_cannot_be_saved(
+        homed_model, moving_plc, trial, monkeypatch):
+    assert homed_model.stage_soliton(trial)
+    moving_plc.clear_history()
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.soliton_records.save_trial", fail_save)
+    assert homed_model.fire_soliton(trial)
+    assert homed_model.last_soliton_record is None
+    assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
+    assert homed_model.state is MachineState.HOMED
+    assert "disk full" in homed_model.bridge.problems[-1][1]
 
 
 def test_move_timeout_clears_run_bit_and_forgets_temporary_parameters(
@@ -146,6 +171,8 @@ def test_stop_during_pulse_does_not_park_or_wait_for_stroke(
     assert moving_plc.writes_to(tags.RUN_SINGLE)[before:] == [1, 0, 0]
     assert not homed_model._parking.is_set()
     assert not homed_model.soliton_staged
+    record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
+    assert record["pulse_status"] == "interrupted"
 
 
 def test_trial_parameters_do_not_exceed_existing_gentle_preset(trial):

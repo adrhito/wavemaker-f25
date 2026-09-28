@@ -100,9 +100,11 @@ motion equation is **not** used for this vertical-floor machine.
    wave**. Enter crest rise and/or crest-to-trough height, the observed
    longitudinal half-height width if measured, station distance, and a photo
    or note reference. Records are saved locally in
-   `analytics/soliton-trials/` as JSON files with target, command, depth and
-   observation in separate fields. Transfer those files from the offline lab
-   computer with the code and any photos when analyzing calibration.
+   `analytics/soliton-trials/` as JSON files with target, command, pulse
+   outcome, depth, final motor positions, and observation in separate fields.
+   A trial file is created before motion, so a stopped or faulted pulse is
+   retained too. Transfer those files from the offline lab computer with the
+   code and any photos when analyzing calibration.
 
 During a soliton pulse, **Stop** and Escape clear the run command immediately
 and do not automatically lower the floor. A commanded pulse is an experimental

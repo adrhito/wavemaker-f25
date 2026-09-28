@@ -36,8 +36,9 @@ mechanical review before making either claim.
    least three times to assess repeatability.
 5. Transfer `analytics/soliton-trials/*.json`, relevant logs, and original
    videos or images from the offline computer. Each JSON record separates the
-   requested wave, motor command, actual endpoint readback, and manually
-   observed heights. It contains no water-height sensor trace.
+   requested wave, motor command, pulse outcome, final motor readback, and
+   manually observed heights, including interrupted runs. It contains no
+   water-height sensor trace.
 
 ## Review before changing the motion
 
