@@ -156,3 +156,26 @@ def test_getting_onto_the_stroke_is_gentle(homed_model, plc):
     approach = plc.pulses[0][axis]
     gentle = model_module.STAGE_SPEED
     assert approach == (BOTTOM, gentle, gentle)
+
+
+class TestLegWindow:
+    """Each leg is timed from the real distance to go, at that leg's pace."""
+
+    def test_the_long_way_onto_the_stroke_gets_the_time_it_needs(
+            self, homed_model, plc):
+        rest_at(plc, homed_model, 370)
+        axis = homed_model.all_motors[0].axis
+        # 370 mm at 200 mm/s is 1.85 s of travel before any headroom.
+        assert homed_model._travel_seconds({axis: 0}, {axis: 200}) > 1.85 * 2
+
+    def test_a_piston_already_there_gets_only_the_floor(self, homed_model, plc):
+        rest_at(plc, homed_model, BOTTOM)
+        axis = homed_model.all_motors[0].axis
+        assert homed_model._travel_seconds(
+            {axis: BOTTOM}, {axis: 200}) == pytest.approx(3.0)
+
+    def test_a_zero_speed_is_capped_not_endless(self, homed_model, plc):
+        rest_at(plc, homed_model, 370)
+        axis = homed_model.all_motors[0].axis
+        assert homed_model._travel_seconds({axis: 0}, {axis: 0}) == \
+            model_module.MAX_STROKE_SECONDS

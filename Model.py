@@ -36,7 +36,7 @@ CLEAR_FAULT_SECONDS = 5.0
 #: Floor for how long a run bit is held, unless the configured motion needs
 #: longer -- see :meth:`Model._stroke_seconds`. One stroke no longer uses it:
 #: Run_1 is a move to Position 1, so a stroke is built from two of them and
-#: timed by :meth:`Model._leg_seconds` instead. This is left serving the curve
+#: timed by :meth:`Model._travel_seconds` instead. This is left serving the curve
 #: path, which holds a bit and waits.
 SINGLE_STROKE_SECONDS = 5.0
 #: Never hold a run bit longer than this, however slow the parameters are.
@@ -2197,8 +2197,6 @@ class Model:
             # went down first on one preset and up first on another.
             tops = dict((axis, min(pair)) for axis, pair in wanted.items())
             bottoms = dict((axis, max(pair)) for axis, pair in wanted.items())
-            # Until each leg is timed from its own speed, allow the slower way.
-            seconds = max(self._leg_seconds(True), self._leg_seconds(False))
             # The pistons rest at the bottom of travel, not on the stroke, so
             # they are first brought onto it at its bottom end. Without this
             # the first leg was spent getting there: from rest at 350 on a
@@ -2218,6 +2216,7 @@ class Model:
                     # travel. It is positioning, so it goes at the gentle
                     # staging pace, not at whatever the wave itself is set to.
                     speeds = dict((axis, STAGE_SPEED) for axis in targets)
+                seconds = self._travel_seconds(targets, speeds)
                 if not self._stroke_leg(
                         targets, seconds, sample, status, speeds):
                     break
@@ -2372,19 +2371,29 @@ class Model:
                 continue
         return wanted
 
-    def _leg_seconds(self, outbound: bool) -> float:
-        """How long one leg of a stroke should need, with headroom."""
+    def _travel_seconds(self, targets: Dict[int, int],
+                        speeds: Dict[int, int]) -> float:
+        """How long one leg should need, from where each piston actually is.
+
+        Judged from the real distance to go at the pace this leg sets. Getting
+        onto the stroke from rest can be far longer than the stroke itself,
+        and a window sized from the stroke alone gave up on it part-way.
+        A piston whose position cannot be read is allowed the whole travel.
+        """
+        whole = float(params.BY_NAME["Position 1"].maximum
+                      - params.BY_NAME["Position 1"].minimum)
         longest = 0.0
-        for motor in self.all_motors:
-            wanted = motor.write_params
+        for axis, target in targets.items():
             try:
-                stroke = abs(float(wanted["Position 2"])
-                             - float(wanted["Position 1"]))
-                speed = max(float(
-                    wanted["Speed 1" if outbound else "Speed 2"]), 1.0)
-            except (KeyError, TypeError, ValueError):
-                continue
-            longest = max(longest, stroke / speed)
+                actual = params.to_mm(self.plc.read(
+                    tags.axis_field(axis, tags.ACTUAL_POSITION)))
+                distance = abs(float(target) - actual)
+            except (PlcError, TypeError, ValueError):
+                distance = whole
+            if not math.isfinite(distance):
+                distance = whole
+            speed = max(float(speeds.get(axis, 0) or 0), 1.0)
+            longest = max(longest, distance / speed)
         # Generous: arrival is detected by position, so this is only a cap.
         return min(max(longest * 2.0 + 2.0, 3.0), MAX_STROKE_SECONDS)
 
