@@ -2194,27 +2194,12 @@ class Model:
             for leg, out in enumerate((True, False)):
                 targets = {axis: (high if out else low)
                            for axis, (low, high) in wanted.items()}
-                for axis, target in targets.items():
-                    # Absolute, or the target is taken as a relative lurch.
-                    self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
-                    self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
-                if self._stop_requested.is_set():
-                    break
-                if not self._begin_motion(tags.RUN_SINGLE):
+                if not self._stroke_leg(
+                        targets, self._leg_seconds(out), sample,
+                        "Running one stroke: {0}...".format(
+                            "out" if out else "back")):
                     break
                 began = True
-                self.bridge.status(
-                    "Running one stroke: {0}...".format("out" if out else "back")
-                )
-                deadline = time.time() + self._leg_seconds(out)
-                while (time.time() < deadline
-                       and not self._stop_requested.is_set()):
-                    sample()
-                    if self._all_within(targets, PARK_TOLERANCE):
-                        break
-                    time.sleep(STOP_POLL_INTERVAL)
-                self.plc.write(tags.RUN_SINGLE, 0)
-                sample()
                 if self._stop_requested.is_set():
                     break
                 dwell = 0.0
@@ -2248,6 +2233,39 @@ class Model:
             (axis, highest[axis] - lowest.get(axis, highest[axis]))
             for axis in highest
         )
+
+    def _stroke_leg(self, targets: Dict[int, int], seconds: float,
+                    sample: Callable[[], None], status: str) -> bool:
+        """Send every piston to its target with Run_1 and wait for arrival.
+
+        Run_1 is an absolute move to Position 1, so the target is written
+        there first. Arrival is judged by position; ``seconds`` only caps the
+        wait, so a stuck piston cannot hold the bit for ever.
+
+        Returns False if a stop landed before the bit could be raised, so the
+        caller knows this leg commanded nothing.
+        """
+        for axis, target in targets.items():
+            # Absolute, or the target is taken as a relative lurch.
+            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+        if self._stop_requested.is_set():
+            return False
+        if not self._begin_motion(tags.RUN_SINGLE):
+            return False
+        try:
+            self.bridge.status(status)
+            deadline = time.time() + seconds
+            while (time.time() < deadline
+                   and not self._stop_requested.is_set()):
+                sample()
+                if self._all_within(targets, PARK_TOLERANCE):
+                    break
+                time.sleep(STOP_POLL_INTERVAL)
+        finally:
+            self.plc.write(tags.RUN_SINGLE, 0)
+        sample()
+        return True
 
     def _stroke_positions(self) -> Dict[int, Tuple[int, int]]:
         """Each piston's Position 1 and Position 2, as the operator set them.
