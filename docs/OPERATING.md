@@ -109,18 +109,25 @@ forcing, not proof that a solitary wave was formed. Increase aggressiveness
 only after physical inspection and measured trials establish safe limits and a
 height/width calibration.
 
+Follow [the offline lab validation procedure](SOLITON_LAB_VALIDATION.md) for
+the first water trials and the measurements to bring back for calibration.
+
 ## Stopping
 
-**Stop** is in the status bar at the bottom of every tab, and `Escape` does the
-same. It drops all three run bits immediately; nothing delays the halt.
+**Stop** is in the status bar at the bottom of every tab. On an ordinary run,
+the first press can wait briefly for the current stroke to finish; a second
+press halts immediately. `Escape` halts immediately. During a soliton pulse,
+either Stop or Escape halts immediately.
 
-**After a stop the pistons return to the bottom of their stroke** (368 mm) at a
-gentle 200 mm/s, so the array is left in a known resting state. Pressing Stop
-again while they are travelling there leaves them where they are.
+For ordinary runs, the selected resting position controls what happens after
+the run bits drop. The bottom resting position is 370 mm. A soliton trial is
+different: Stop clears its run command promptly and leaves the floor where it
+stopped. The floor also stays raised after a completed pulse until the operator
+stages another trial.
 
-The machine stays homed through this, so the next run does not have to home
-again — but the parameters are re-sent, because the PLC is holding the parking
-values by then.
+After an ordinary parked stop, the machine stays homed and the next run sends
+its own parameters again. Inspect floor position before changing modes after a
+soliton trial.
 
 If a stop cannot be delivered — a network fault, the PLC offline — the
 application says so in a dialog rather than reporting success. Use the physical
@@ -145,7 +152,7 @@ It does **not** predict how the real machine behaves. It moves rectangles.
 
 | Parameter | Accepted range | Notes |
 |---|---|---|
-| Position 1, Position 2 | -20 to 368 mm | -20 is the top of the stroke, 368 the bottom. After homing. |
+| Position 1, Position 2 | -20 to 370 mm | -20 is the top of the stroke, 370 the bottom. After homing. |
 | Speed 1, Speed 2 | 0 to 900 mm/s | The top speed actually reached depends on available current. |
 | Accel 1/2, Decel 1/2 | 0 to 20,000 mm/s² | |
 | Jerk 1, Jerk 2 | 0 or more | Normally larger than the acceleration and deceleration. |
@@ -157,18 +164,12 @@ It does **not** predict how the real machine behaves. It moves rectangles.
 A value outside these ranges is refused when you type it, with a message under
 the boxes saying why. Nothing is sent to the machine until it is valid.
 
-### Two open questions about the limits
+### Notes on limits
 
-**Position: 368 or 370?** The application enforces 368. The GUI manual, the old
-tooltips, and `Presets/massive.csv` all say 370. The drive's own configuration
-(`LinMot Drive Config`) puts its hard position limits at -57 and 453 mm with the
-home position at 390 mm, so 370 is well inside what the drive itself allows.
-
-368 is kept because loosening a limit on this machine is not a documentation
-decision. If 370 is correct, change the two `Position` lines in `app/params.py`
-— it is a one-line change each and the tooltips and validation follow
-automatically. Until then `Presets/massive.csv` will be refused with
-`Position 2 must be at most 368 (got 370)`.
+**Position limit:** The application accepts positions from -20 through 370 mm.
+The drive's own configured envelope (`LinMot Drive Config`) is -57 through
+453 mm, with home at 390 mm. The application limit is narrower than the drive
+envelope; do not infer clearance for the assembled floor from either value.
 
 **Acceleration: 20,000 or 50,000?** The application enforces 20,000. The old
 tooltips said 50,000 while the old code rejected anything above 20,000, so the

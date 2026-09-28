@@ -50,7 +50,7 @@ Until measured trials establish a usable range, a desired water height is a *tar
 
 ## Decisions still needed
 
-- Decide whether the requested target is crest rise, crest-to-trough height, or two separate targets. Mark a repeatable measurement location along the tank.
+- Mark a repeatable measurement location along the tank and capture both observed crest rise and crest-to-trough height there. The requested target is crest rise above still water.
 - Obtain and inspect the old soliton spreadsheet, including units and how its acceleration values were measured.
 - Confirm which stored PLC curves or trajectory commands are available for a
   closer-to-ideal, time-varying floor trajectory. The current one-way S-curve
