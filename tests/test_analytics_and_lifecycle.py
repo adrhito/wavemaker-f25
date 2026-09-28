@@ -78,9 +78,11 @@ class TestLifecycle:
     def test_reset_restores_default_parameters(self, homed_model):
         homed_model.set_pending_param("Speed 1", 800)
         homed_model.reset()
-        from app import params
+        from preset_options.PresetProcessor import default_parameters
 
-        assert homed_model.pending_params == params.defaults()
+        # "Just launched" means the lab's default preset, not the factory
+        # values, which have no stroke and no speed and so never move.
+        assert homed_model.pending_params == default_parameters()
 
     def test_state_follows_the_set_list(self, model):
         assert model.state is MachineState.IDLE

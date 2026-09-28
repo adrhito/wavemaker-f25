@@ -821,7 +821,10 @@ class TestRapidOperatorAbuse:
         assert model.state is MachineState.IDLE
         assert model.sets == []
         assert model.selected_axes() == []
-        assert model.pending_params == params.defaults()
+        # The lab's default preset, which is what launching gives you.
+        from preset_options.PresetProcessor import default_parameters
+
+        assert model.pending_params == default_parameters()
         for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE,
                     tags.HOME_BUTTON):
             assert plc.read(tag) == 0
