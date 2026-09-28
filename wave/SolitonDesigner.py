@@ -206,26 +206,14 @@ class SolitonDesigner:
         target, pistons, station = key
         self._suggestion_key = key
         try:
-            suggestion = soliton_calibration.suggest_lift(
+            assessment = soliton_calibration.assess_lift(
                 target, pistons, station)
         except OSError as exc:
             self.calibration.configure(text="Cannot read soliton trial records: {0}".format(exc))
             self.suggest_button.set_state("disabled")
             return
-        self._suggestion = suggestion
-        if suggestion is None:
-            self.calibration.configure(
-                text="No lift suggestion from matching measured hardware trials. "
-                     "Use a manual floor lift and record repeated water heights "
-                     "and widths at this station.")
-        else:
-            self.calibration.configure(
-                text="Measured trials suggest {0} mm floor lift for the requested "
-                     "crest. Interpolated between {1} and {2} mm lifts using {3} "
-                     "matching runs. This is an experimental suggestion, not a "
-                     "guaranteed wave height.".format(
-                         suggestion.floor_lift_mm, suggestion.lower_lift_mm,
-                         suggestion.upper_lift_mm, suggestion.trials_used))
+        self._suggestion = assessment.suggestion
+        self.calibration.configure(text=assessment.message)
         self.refresh(self.model.state)
 
     def apply_suggestion(self):

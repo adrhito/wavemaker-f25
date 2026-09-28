@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.soliton_calibration import suggest_lift
+from app.soliton_calibration import assess_lift, suggest_lift
 from app.soliton_records import finish_trial, record_observation, save_trial
 from app.solitons import BOTTOM_MM, SolitaryTarget, SolitonTrial
 
@@ -56,11 +56,16 @@ def test_does_not_extrapolate_beyond_observed_heights(tmp_path, target):
     outside = SolitaryTarget(26, target.width_mm, target.water_depth_mm)
     assert outside.width_matches_depth
     assert suggest_lift(outside, (1, 2, 3), 2000, directory=tmp_path) is None
+    assessment = assess_lift(outside, (1, 2, 3), 2000, directory=tmp_path)
+    assert "outside the measured" in assessment.message
 
 
 def test_requires_repeats_at_both_lifts(tmp_path, target):
     add_two_levels(tmp_path, target, low=(18, 18.5), high=(42, 42.5))
     assert suggest_lift(target, (1, 2, 3), 2000, directory=tmp_path) is None
+    assessment = assess_lift(target, (1, 2, 3), 2000, directory=tmp_path)
+    assert "20 mm: 2 run(s)" in assessment.message
+    assert assessment.eligible_runs == 4
     add_sample(tmp_path, target, 20, 17.5)
     add_sample(tmp_path, target, 80, 41.5)
     assert suggest_lift(target, (1, 2, 3), 2000, directory=tmp_path) is not None
@@ -82,7 +87,21 @@ def test_rejects_nonmonotone_or_unstable_height_response(tmp_path, target):
     add_two_levels(tmp_path, target, low=(42, 42.5, 41.5),
                    high=(18, 18.5, 17.5))
     assert suggest_lift(target, (1, 2, 3), 2000, directory=tmp_path) is None
+    assert "did not increase" in assess_lift(
+        target, (1, 2, 3), 2000, directory=tmp_path).message
 
     other = tmp_path / "unstable"
     add_two_levels(other, target, low=(10, 20, 30))
     assert suggest_lift(target, (1, 2, 3), 2000, directory=other) is None
+    assert "vary too much" in assess_lift(
+        target, (1, 2, 3), 2000, directory=other).message
+
+
+def test_assessment_distinguishes_missing_width_from_missing_setup(tmp_path, target):
+    add_sample(tmp_path, target, 20, 18, observed_width=2000)
+    assessment = assess_lift(target, (1, 2, 3), 2000, directory=tmp_path)
+    assert assessment.matching_runs == 1
+    assert assessment.eligible_runs == 0
+    assert "measured width" in assessment.message
+    assert "No completed hardware trials" in assess_lift(
+        target, (1, 2, 3), 2100, directory=tmp_path).message

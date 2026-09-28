@@ -41,6 +41,14 @@ class LiftSuggestion:
     trials_used: int
 
 
+@dataclass(frozen=True)
+class CalibrationAssessment:
+    suggestion: Optional[LiftSuggestion]
+    message: str
+    matching_runs: int
+    eligible_runs: int
+
+
 def _number(value):
     if isinstance(value, bool):
         return None
@@ -56,15 +64,15 @@ def _same(value, wanted: float) -> bool:
     return parsed is not None and abs(parsed - wanted) < 1e-6
 
 
-def _matching_observation(record: dict, target: SolitaryTarget,
-                          pistons: Sequence[int], station_mm: float):
-    """Return (lift, crest) only for a comparable, completed physical pulse."""
+def _core_matches(record: dict, target: SolitaryTarget,
+                  pistons: Sequence[int], station_mm: float) -> bool:
+    """Match the requested setup before judging a run's measured quality."""
     if (record.get("schema_version") != 1 or
             record.get("source") != "hardware" or
             record.get("pulse_status") != "completed"):
-        return None
+        return False
     if record.get("command_profile") != "S-curve":
-        return None
+        return False
     if any(not _same(record.get(name), value) for name, value in (
             ("command_accel_mm_s2", TRIAL_ACCEL_MM_S2),
             ("command_decel_mm_s2", TRIAL_DECEL_MM_S2),
@@ -72,11 +80,19 @@ def _matching_observation(record: dict, target: SolitaryTarget,
             ("target_fwhm_width_mm", target.width_mm),
             ("still_water_depth_mm", target.water_depth_mm),
             ("measurement_station_mm", station_mm))):
-        return None
+        return False
     saved_pistons = record.get("display_pistons")
     if (not isinstance(saved_pistons, list) or
             any(type(piston) is not int for piston in saved_pistons) or
             sorted(saved_pistons) != sorted(pistons)):
+        return False
+    return True
+
+
+def _matching_observation(record: dict, target: SolitaryTarget,
+                          pistons: Sequence[int], station_mm: float):
+    """Return (lift, crest) only for a comparable, measured physical pulse."""
+    if not _core_matches(record, target, pistons, station_mm):
         return None
 
     lift = _number(record.get("floor_lift_mm"))
@@ -109,6 +125,13 @@ def _matching_observation(record: dict, target: SolitaryTarget,
 def suggest_lift(target: SolitaryTarget, display_pistons: Sequence[int],
                  station_mm: float, directory: Optional[Path] = None
                  ) -> Optional[LiftSuggestion]:
+    """Return a matched suggestion, or None when the data cannot support one."""
+    return assess_lift(target, display_pistons, station_mm, directory).suggestion
+
+
+def assess_lift(target: SolitaryTarget, display_pistons: Sequence[int],
+                station_mm: float, directory: Optional[Path] = None
+                ) -> CalibrationAssessment:
     """Interpolate only inside a repeatable, matched physical data range.
 
     At least three observations are required at each of two distinct lifts.
@@ -119,14 +142,22 @@ def suggest_lift(target: SolitaryTarget, display_pistons: Sequence[int],
     """
     station = _number(station_mm)
     if station is None or station < 0 or not display_pistons:
-        return None
+        return CalibrationAssessment(
+            None, "Enter a fixed measurement station and select floor sections.",
+            0, 0)
     if not target.width_matches_depth:
-        return None
+        return CalibrationAssessment(
+            None, "The chosen height and width differ from first-order solitary-wave "
+                  "theory at this depth. Adjust the target or use a manual trial.",
+            0, 0)
     folder = directory if directory is not None else paths.ANALYTICS_DIR / "soliton-trials"
     if not folder.is_dir():
-        return None
+        return CalibrationAssessment(
+            None, "No measured soliton trial files are available yet.", 0, 0)
 
     by_lift = {}
+    matching_runs = 0
+    eligible_runs = 0
     for path in folder.glob("trial-*.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -134,36 +165,85 @@ def suggest_lift(target: SolitaryTarget, display_pistons: Sequence[int],
             continue  # One damaged record cannot hide valid measured runs.
         if not isinstance(record, dict):
             continue
+        if _core_matches(record, target, display_pistons, station):
+            matching_runs += 1
         sample = _matching_observation(record, target, display_pistons, station)
         if sample is not None:
+            eligible_runs += 1
             lift, crest = sample
             by_lift.setdefault(lift, []).append(crest)
 
+    if matching_runs == 0:
+        return CalibrationAssessment(
+            None, "No completed hardware trials match this piston selection, "
+                  "water depth, target width, motion profile, and station.",
+            matching_runs, eligible_runs)
+    if eligible_runs == 0:
+        return CalibrationAssessment(
+            None, "Matching trials need a positive observed crest, a measured "
+                  "width near the target, and complete motor endpoint readbacks.",
+            matching_runs, eligible_runs)
+
     levels = []
+    unstable_lifts = []
     for lift, crests in sorted(by_lift.items()):
         if len(crests) < MIN_REPEATS_PER_LIFT:
             continue
         middle = float(median(crests))
         if (max(crests) - min(crests) >
                 max(MAX_HEIGHT_SPREAD_MM, MAX_HEIGHT_SPREAD_FRACTION * middle)):
+            unstable_lifts.append(lift)
             continue
         levels.append((lift, middle, len(crests)))
+    if unstable_lifts:
+        return CalibrationAssessment(
+            None, "Crest measurements vary too much at floor lift(s) {0} mm. "
+                  "Review the videos and repeat those settings.".format(
+                      ", ".join(str(lift) for lift in unstable_lifts)),
+            matching_runs, eligible_runs)
     if len(levels) < 2:
-        return None
+        counts = ", ".join("{0} mm: {1} run(s)".format(lift, len(crests))
+                           for lift, crests in sorted(by_lift.items()))
+        return CalibrationAssessment(
+            None, "Need at least three consistent measured runs at each of two "
+                  "floor lifts. Eligible runs: {0}.".format(counts),
+            matching_runs, eligible_runs)
     if any(right[1] <= left[1] for left, right in zip(levels, levels[1:])):
-        return None
+        return CalibrationAssessment(
+            None, "Observed crest height did not increase with floor lift. "
+                  "Review the runs before using a lift suggestion.",
+            matching_runs, eligible_runs)
 
     desired = target.crest_height_mm
     if desired < levels[0][1] or desired > levels[-1][1]:
-        return None  # Never extrapolate beyond observed water heights.
+        return CalibrationAssessment(
+            None, "Requested crest is outside the measured {0:.1f}–{1:.1f} mm "
+                  "range. Choose a manual trial; lift is never extrapolated.".format(
+                      levels[0][1], levels[-1][1]),
+            matching_runs, eligible_runs)
     for lift, crest, count in levels:
         if desired == crest:
-            return LiftSuggestion(lift, lift, lift, crest, crest, count)
+            suggestion = LiftSuggestion(lift, lift, lift, crest, crest, count)
+            return _ready(suggestion, matching_runs, eligible_runs)
     for lower, upper in zip(levels, levels[1:]):
         if lower[1] < desired < upper[1]:
             fraction = (desired - lower[1]) / (upper[1] - lower[1])
             estimate = int(round(lower[0] + fraction * (upper[0] - lower[0])))
-            return LiftSuggestion(
+            suggestion = LiftSuggestion(
                 estimate, lower[0], upper[0], lower[1], upper[1],
                 lower[2] + upper[2])
-    return None
+            return _ready(suggestion, matching_runs, eligible_runs)
+    return CalibrationAssessment(None, "No matching lift bracket was found.",
+                                 matching_runs, eligible_runs)
+
+
+def _ready(suggestion: LiftSuggestion, matching_runs: int,
+           eligible_runs: int) -> CalibrationAssessment:
+    return CalibrationAssessment(
+        suggestion,
+        "Measured trials suggest {0} mm floor lift for the requested crest. "
+        "Interpolated between {1} and {2} mm lifts using {3} matching runs. "
+        "This is experimental, not a guaranteed wave height.".format(
+            suggestion.floor_lift_mm, suggestion.lower_lift_mm,
+            suggestion.upper_lift_mm, suggestion.trials_used),
+        matching_runs, eligible_runs)

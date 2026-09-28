@@ -116,7 +116,9 @@ motion settings, and a measured width near the target. It ignores mock runs,
 faulted runs, inconsistent repeats, and targets outside the measured height
 range. Review the suggested floor lift before applying it. Applying a lift
 changes the trial settings, so stage again before firing. A suggestion is
-still experimental and does not guarantee the requested water height.
+still experimental and does not guarantee the requested water height. When no
+suggestion is available, the tab names the missing evidence, such as repeats,
+observed width, or a target outside the measured range.
 
 During a soliton pulse, **Stop** and Escape clear the run command immediately
 and do not automatically lower the floor. A commanded pulse is an experimental
