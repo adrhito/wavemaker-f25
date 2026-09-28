@@ -16,12 +16,14 @@ import math
 import pytest
 
 from modules.wave_preview import (
+    FULL_WAVE_MM,
     WavePreview,
-    amplitude_for,
     cycle_sample,
     invert_leg_position,
     leg_fractions,
     leg_position,
+    wave_amplitude_px,
+    wave_height,
 )
 
 
@@ -166,24 +168,26 @@ def test_back_leg_occupies_its_full_share_of_the_cycle_in_cycle_sample():
     assert just_before_home == pytest.approx(-1.0, abs=1e-3)
 
 
-# -- amplitude_for --------------------------------------------------------
+# -- wave_amplitude_px ----------------------------------------------------
+#
+# The strip draws the estimated wave height, not the stroke, so the amplitude
+# is checked through wave_height rather than straight from millimetres of
+# piston travel.
 
 def test_amplitude_grows_with_stroke():
-    small = amplitude_for(50.0, 74.0)
-    large = amplitude_for(200.0, 74.0)
+    small = wave_amplitude_px(wave_height(50.0, 2.0), 74.0)
+    large = wave_amplitude_px(wave_height(200.0, 2.0), 74.0)
     assert 0.0 < small < large
 
 
-def test_amplitude_is_capped_at_full_stroke():
-    from modules.wave_preview import FULL_STROKE_MM
-
-    at_cap = amplitude_for(FULL_STROKE_MM, 74.0)
-    past_cap = amplitude_for(FULL_STROKE_MM * 2.0, 74.0)
+def test_amplitude_is_capped_at_the_tallest_drawn_wave():
+    at_cap = wave_amplitude_px(FULL_WAVE_MM, 74.0)
+    past_cap = wave_amplitude_px(FULL_WAVE_MM * 2.0, 74.0)
     assert at_cap == pytest.approx(past_cap)
 
 
 def test_zero_stroke_has_no_amplitude():
-    assert amplitude_for(0.0, 74.0) == 0.0
+    assert wave_amplitude_px(wave_height(0.0, 2.0), 74.0) == 0.0
 
 
 # -- WavePreview._column_phase -------------------------------------------
