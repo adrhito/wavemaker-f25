@@ -7,9 +7,11 @@ bounded upward move.  No image or simulation is presented as a measured wave.
 
 from __future__ import annotations
 
+import json
+import math
 from tkinter import Canvas, IntVar, StringVar, TclError, Toplevel, messagebox, ttk
 
-from app import soliton_records
+from app import soliton_calibration, soliton_records, tags
 from app.solitons import SolitaryTarget, SolitonTrial
 from Model import MachineState, Model
 from modules.widgets import RoundedButton
@@ -32,6 +34,10 @@ class SolitonDesigner:
             SolitaryTarget(30, 1, 150).theoretical_width_mm)))
         self.depth = IntVar(value=150)
         self.lift = IntVar(value=60)
+        self.station = StringVar(value="")
+        self._suggestion = None
+        self._suggestion_key = None
+        self._calibration_after_id = None
 
         header = ttk.Frame(self.tab, padding=(theme.GUTTER, 16, theme.GUTTER, 8))
         header.grid(row=0, column=0, sticky="ew")
@@ -62,6 +68,15 @@ class SolitonDesigner:
                       "mm; measure for each trial")
         self._control(controls, 3, "FLOOR LIFT", self.lift, 1, 120,
                       "mm of motor travel; uncalibrated")
+        ttk.Label(controls, text="MEASUREMENT STATION",
+                  style="CardDim.TLabel").grid(
+                      row=4, column=0, sticky="w", pady=(theme.TIGHT, 0))
+        ttk.Entry(controls, textvariable=self.station, width=8).grid(
+            row=4, column=2, sticky="w", pady=(theme.TIGHT, 0))
+        ttk.Label(controls, text="mm along tank from floor array; same mark each run",
+                  style="CardDim.TLabel").grid(
+                      row=4, column=3, sticky="w", padx=(theme.GAP, 0),
+                      pady=(theme.TIGHT, 0))
 
         self.preview = Canvas(body, height=150, highlightthickness=0, bd=0,
                               background="#0d2030")
@@ -74,9 +89,12 @@ class SolitonDesigner:
         self.warning = ttk.Label(body, text="", style="Dim.TLabel",
                                  wraplength=1050, justify="left")
         self.warning.grid(row=3, column=0, sticky="w", pady=(theme.TIGHT, 0))
+        self.calibration = ttk.Label(body, text="", style="Dim.TLabel",
+                                     wraplength=1050, justify="left")
+        self.calibration.grid(row=4, column=0, sticky="w", pady=(theme.TIGHT, 0))
 
         actions = ttk.Frame(body)
-        actions.grid(row=4, column=0, sticky="ew", pady=(theme.GAP, 0))
+        actions.grid(row=5, column=0, sticky="ew", pady=(theme.GAP, 0))
         self.stage_button = RoundedButton(
             actions, "1. Stage floor", self.stage, variant="secondary",
             size="large", width=185)
@@ -89,19 +107,24 @@ class SolitonDesigner:
             actions, "Record observed wave", self.record_observed,
             variant="secondary", size="large", width=220)
         self.observe_button.grid(row=0, column=2, padx=(theme.GAP, 0))
+        self.suggest_button = RoundedButton(
+            actions, "Apply measured lift", self.apply_suggestion,
+            variant="secondary", size="large", width=205)
+        self.suggest_button.grid(row=0, column=3, padx=(theme.GAP, 0))
 
         self.result = ttk.Label(body, text="", style="Dim.TLabel",
                                 wraplength=1050, justify="left")
-        self.result.grid(row=5, column=0, sticky="w", pady=(theme.GAP, 0))
+        self.result.grid(row=6, column=0, sticky="w", pady=(theme.GAP, 0))
         self.caveat = ttk.Label(
             body, style="Dim.TLabel", wraplength=1050, justify="left",
             text="Experimental floor pulse: requested water height and width are "
                  "targets, not measured outcomes. The drive uses a bounded "
                  "S-curve; its safe fastest stop is not yet known. The floor "
                  "stays raised after firing. Stage again to lower it.")
-        self.caveat.grid(row=6, column=0, sticky="w", pady=(theme.GAP, 0))
+        self.caveat.grid(row=7, column=0, sticky="w", pady=(theme.GAP, 0))
 
-        for variable in (self.crest, self.width, self.depth, self.lift):
+        for variable in (self.crest, self.width, self.depth, self.lift,
+                         self.station):
             variable.trace_add("write", lambda *_args: self._changed())
         self._changed()
         root.add(self.tab, text="  Soliton  ")
@@ -119,6 +142,7 @@ class SolitonDesigner:
             pady=(theme.TIGHT, 0))
 
     def _trial(self) -> SolitonTrial:
+        self._station_mm()  # Reject a malformed optional station before staging.
         try:
             crest = float(self.crest.get())
             width = float(self.width.get())
@@ -129,6 +153,90 @@ class SolitonDesigner:
             # editing.  Keep the controls inactive until it is valid again.
             raise ValueError("Enter positive numbers for all four settings.") from exc
         return SolitonTrial(SolitaryTarget(crest, width, depth), lift)
+
+    def _station_mm(self):
+        value = self.station.get().strip()
+        if not value:
+            return None
+        try:
+            station = float(value)
+        except (ValueError, TclError) as exc:
+            raise ValueError("Measurement station must be millimetres from the floor array.") from exc
+        if not math.isfinite(station) or station < 0:
+            raise ValueError("Measurement station must be a finite nonnegative distance.")
+        return station
+
+    def _calibration_key(self):
+        try:
+            trial = self._trial()
+        except ValueError:
+            return None
+        station = self._station_mm()
+        if station is None or not self.model.sets:
+            return None
+        pistons = tuple(sorted(tags.display_number(axis)
+                               for axis in self.model.live_axes))
+        return trial.target, pistons, station
+
+    def _schedule_calibration(self, force=False):
+        key = self._calibration_key()
+        if not force and key == self._suggestion_key:
+            return
+        if self._calibration_after_id is not None:
+            self.tab.after_cancel(self._calibration_after_id)
+            self._calibration_after_id = None
+        self._suggestion = None
+        self._suggestion_key = None
+        if key is None:
+            self.calibration.configure(
+                text="Enter a fixed measurement station and select floor sections "
+                     "to check recorded calibration trials.")
+            self.suggest_button.set_state("disabled")
+            return
+        self.calibration.configure(text="Checking measured trials for this setup...")
+        self.suggest_button.set_state("disabled")
+        self._calibration_after_id = self.tab.after(180, self._update_calibration)
+
+    def _update_calibration(self):
+        self._calibration_after_id = None
+        key = self._calibration_key()
+        if key is None:
+            self._schedule_calibration(force=True)
+            return
+        target, pistons, station = key
+        self._suggestion_key = key
+        try:
+            suggestion = soliton_calibration.suggest_lift(
+                target, pistons, station)
+        except OSError as exc:
+            self.calibration.configure(text="Cannot read soliton trial records: {0}".format(exc))
+            self.suggest_button.set_state("disabled")
+            return
+        self._suggestion = suggestion
+        if suggestion is None:
+            self.calibration.configure(
+                text="No lift suggestion from matching measured hardware trials. "
+                     "Use a manual floor lift and record repeated water heights "
+                     "and widths at this station.")
+        else:
+            self.calibration.configure(
+                text="Measured trials suggest {0} mm floor lift for the requested "
+                     "crest. Interpolated between {1} and {2} mm lifts using {3} "
+                     "matching runs. This is an experimental suggestion, not a "
+                     "guaranteed wave height.".format(
+                         suggestion.floor_lift_mm, suggestion.lower_lift_mm,
+                         suggestion.upper_lift_mm, suggestion.trials_used))
+        self.refresh(self.model.state)
+
+    def apply_suggestion(self):
+        if (self._suggestion is None or
+                self._calibration_key() != self._suggestion_key):
+            self.result.configure(text="Recheck measured trials before applying a lift.")
+            return
+        self.lift.set(self._suggestion.floor_lift_mm)
+        self.result.configure(
+            text="Measured lift suggestion applied. Stage the floor again with "
+                 "these settings before firing.")
 
     def _changed(self) -> None:
         try:
@@ -210,7 +318,7 @@ class SolitonDesigner:
         except ValueError as exc:
             self.result.configure(text=str(exc))
             return
-        if self.model.fire_soliton(trial):
+        if self.model.fire_soliton(trial, planned_station_mm=self._station_mm()):
             self.result.configure(
                 text="One pulse requested. Measure the resulting crest and "
                      "width; the floor will remain raised.")
@@ -229,13 +337,19 @@ class SolitonDesigner:
         content = ttk.Frame(dialog, padding=theme.GUTTER)
         content.grid(sticky="nsew")
         fields = []
+        try:
+            planned_station = json.loads(record.read_text(encoding="utf-8")).get(
+                "planned_measurement_station_mm")
+        except (OSError, ValueError):
+            planned_station = None
         for row, label in enumerate((
                 "Crest rise above still water (mm)",
                 "Crest-to-trough height (mm)",
                 "Observed width at half crest rise (mm)",
                 "Measurement station from floor array (mm)",
                 "Notes / photo filename")):
-            variable = StringVar()
+            variable = StringVar(value=(str(planned_station) if row == 3 and
+                                        planned_station is not None else ""))
             ttk.Label(content, text=label).grid(row=row, column=0, sticky="w",
                                                   pady=(0, theme.GAP))
             ttk.Entry(content, textvariable=variable, width=38).grid(
@@ -255,6 +369,7 @@ class SolitonDesigner:
             self.result.configure(text="Observed water height saved to {0}.".format(
                 record.name))
             self.view.status("Soliton observation saved.")
+            self._schedule_calibration(force=True)
             dialog.destroy()
 
         ttk.Button(content, text="Save observation", command=save).grid(
@@ -274,6 +389,18 @@ class SolitonDesigner:
         self.observe_button.set_state(
             "normal" if self.model.last_soliton_record is not None and not busy
             else "disabled")
+        key = self._calibration_key()
+        if key != self._suggestion_key and self._calibration_after_id is None:
+            self._schedule_calibration()
+        try:
+            current_lift = self.lift.get()
+        except TclError:
+            current_lift = None
+        self.suggest_button.set_state(
+            "normal" if self._suggestion is not None and not busy and
+            key == self._suggestion_key and
+            current_lift != self._suggestion.floor_lift_mm else "disabled")
 
     def onSelect(self) -> None:
         self.refresh(self.model.state)
+        self._schedule_calibration(force=True)

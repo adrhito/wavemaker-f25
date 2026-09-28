@@ -20,6 +20,8 @@ mechanical review before making either claim.
 4. Begin with a small lift and low speed. The current caps are 120 mm lift,
    200 mm/s speed, and 4,000 mm/s² acceleration/deceleration. These software
    limits are starting bounds, not certified mechanical ratings.
+5. Choose one marked longitudinal station and enter its distance from the
+   floor array in the Soliton tab. Use that same mark for every repeated run.
 
 ## At the tank
 
@@ -47,6 +49,10 @@ mechanical review before making either claim.
 - Compare observed height and width across repeats at the same depth and
   station. First-order solitary-wave theory ties crest rise to width at a
   fixed depth; an arbitrary pair is a target, not an exact theoretical wave.
+- The **Apply measured lift** suggestion appears only after three consistent
+  measured runs at each of two lifts with the same setup and a width near the
+  target. It interpolates between their observed heights. Review the source
+  trial files and test any suggested lift as a new experimental run.
 - Agree on a machine-specific deceleration and jerk limit with the lab
   operator before editing `app/solitons.py`. A drive software limit is not a
   structural rating for the floor assembly.

@@ -85,7 +85,9 @@ motion equation is **not** used for this vertical-floor machine.
 
 1. Select the floor sections on **Operate**. Check that the tank is clear, the
    water depth is measured, and no other controller session is running.
-2. Set crest target, width target, depth, and an initial floor lift. The trial
+2. Set crest target, width target, depth, and an initial floor lift. Enter the
+   fixed measurement station in millimetres along the tank to check prior
+   observations. The station is optional for an uncalibrated trial. The trial
    restricts lift to 120 mm and command speed to 200 mm/s. It uses 4,000
    mm/s² acceleration/deceleration and an S-curve profile, all within the
    shipped gentle preset. These are conservative starting bounds; the lab has
@@ -105,6 +107,16 @@ motion equation is **not** used for this vertical-floor machine.
    A trial file is created before motion, so a stopped or faulted pulse is
    retained too. Transfer those files from the offline lab computer with the
    code and any photos when analyzing calibration.
+
+When enough matching physical trials have been recorded, the tab offers an
+**Apply measured lift** button. It interpolates only between measured crest
+heights from at least three completed runs at each of two floor lifts, using
+the same piston selection, water depth, target width, measurement station,
+motion settings, and a measured width near the target. It ignores mock runs,
+faulted runs, inconsistent repeats, and targets outside the measured height
+range. Review the suggested floor lift before applying it. Applying a lift
+changes the trial settings, so stage again before firing. A suggestion is
+still experimental and does not guarantee the requested water height.
 
 During a soliton pulse, **Stop** and Escape clear the run command immediately
 and do not automatically lower the floor. A commanded pulse is an experimental

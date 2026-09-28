@@ -36,7 +36,7 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert homed_model.stage_soliton(trial)
     assert homed_model.soliton_staged
     assert homed_model.state is MachineState.HOMED
-    assert homed_model.fire_soliton(trial)
+    assert homed_model.fire_soliton(trial, planned_station_mm=2000)
     assert homed_model.state is MachineState.HOMED
     assert not homed_model.soliton_staged
     assert moving_plc.writes_to(tags.RUN_SINGLE) == [1, 0, 1, 0]
@@ -51,6 +51,7 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
     assert record["pulse_status"] == "completed"
     assert record["source"] == "simulator"
+    assert record["planned_measurement_station_mm"] == 2000.0
     assert record["pulse_finished_utc"]
     assert record["actual_end_positions_mm"]["30"] == trial.top_mm
     assert homed_model._soliton_floor_raised

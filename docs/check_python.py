@@ -62,6 +62,7 @@ def main():
         "app.waves",
         "app.solitons",
         "app.soliton_records",
+        "app.soliton_calibration",
         "app.diagnostics",
         "app.patterns",
         "app.external",

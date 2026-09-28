@@ -210,6 +210,14 @@ come from the lab, since the mock has no fluid model. No safe maximum stopping
 deceleration has been measured. Read `docs/CALIBRATION_NOTES.md` before
 changing this path.
 
+`app/soliton_calibration.py` can suggest a floor lift only from completed
+hardware trials with repeated crest and width measurements at the same tank
+station, depth, target width, piston selection and motion settings. It rejects
+mock runs and extrapolation. The operator applies a suggestion explicitly and
+stages again before firing; it is still an experimental trial, not a certified
+water-height controller. Preserve the recorded source and station fields when
+changing trial JSON.
+
 ## Screenshotting the GUI
 
 Tk windows will not be found by `FindWindow` reliably here; enumerate by PID

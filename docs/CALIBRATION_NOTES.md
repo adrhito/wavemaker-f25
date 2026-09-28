@@ -39,6 +39,14 @@ crest rise, measurement
 station and note/photo reference are separate fields. The water fields remain
 blank until an operator records a measurement.
 
+The tab can suggest a floor lift after enough physical observations exist.
+`app/soliton_calibration.py` requires at least three consistent completed
+hardware trials at each of two lifts, with matching water depth, target width,
+piston selection, station, command profile, observed width, and endpoint
+readback. It interpolates inside observed crest heights only. The operator
+explicitly applies the suggestion, then stages again. This is a local
+empirical aid, not a validated fluid model or a guarantee of wave height.
+
 ## Historical-data search
 
 The current repository and all its reachable Git history contain no Excel workbook (`.xls`, `.xlsx`, `.xlsm`, or `.ods`) and no soliton-labelled file. Two older repositories linked by its archived material, [PavanAkkineni/wavemaker](https://github.com/PavanAkkineni/wavemaker) and [ggabbylopez/WaveMakerFA23](https://github.com/ggabbylopez/WaveMakerFA23), likewise contain no such workbook in their reachable histories.
