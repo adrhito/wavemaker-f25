@@ -221,7 +221,15 @@ def test_live_speed_change_no_longer_delays_emergency_stop(homed_model, plc, mon
         real_write(tag, value)
 
     plc.write = slow_write
-    worker = threading.Thread(target=homed_model.change_speed_live, args=(250,))
+    rejected = []
+
+    def change_speed():
+        try:
+            homed_model.change_speed_live(250)
+        except ValueError as exc:
+            rejected.append(str(exc))
+
+    worker = threading.Thread(target=change_speed)
     worker.start()
     assert started.wait(2.0)
 
@@ -235,6 +243,9 @@ def test_live_speed_change_no_longer_delays_emergency_stop(homed_model, plc, mon
         "Stop was blocked for {0:.3f}s behind the live speed change".format(
             blocked_for
         )
+    )
+    assert rejected and "stopping" in rejected[0].lower(), (
+        "The speed worker must reject further writes after Stop."
     )
 
 
