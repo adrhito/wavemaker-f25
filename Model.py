@@ -15,7 +15,7 @@ from enum import Enum
 from logging import Logger, getLogger
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
-from app import params, paths, plc as plc_module, solitons, tags, waves
+from app import params, paths, plc as plc_module, soliton_records, solitons, tags, waves
 from app.plc import PlcError, Transport
 from Motor import Motor
 from modules.logging.log_utils import LOGGER_NAME
@@ -423,6 +423,8 @@ class Model:
         #: wait for the water to settle before firing it.
         self._soliton_staged = None
         self._soliton_running = threading.Event()
+        self._soliton_floor_raised = False
+        self.last_soliton_record = None
         #: A stroke edit requested during motion, waiting for a common end.
         self._pending_live_stroke: Optional[int] = None
         self._pending_live_stroke_axes: List[int] = []
@@ -1630,6 +1632,10 @@ class Model:
     def soliton_staged(self) -> bool:
         return self._soliton_staged is not None
 
+    def soliton_ready_for(self, trial: solitons.SolitonTrial) -> bool:
+        return (self._state is MachineState.HOMED and
+                self._soliton_staged == (trial, tuple(self.live_axes)))
+
     def stage_soliton(self, trial: solitons.SolitonTrial) -> bool:
         """Home if needed, then lower the selected floor sections gently.
 
@@ -1674,6 +1680,7 @@ class Model:
             return
         if not staged:
             raise ValueError("The floor did not reach its starting position.")
+        self._soliton_floor_raised = False
         self._soliton_staged = (trial, axes)
         self._set_state(MachineState.HOMED)
         self.bridge.status(
@@ -1705,7 +1712,13 @@ class Model:
         if faults:
             raise ValueError("Check the selected drives before firing: {0}".format(
                 tags.display_list(faults)))
+        if trial.nominal_travel_seconds * 3.0 + 3.0 > MAX_STROKE_SECONDS:
+            raise ValueError(
+                "Requested pulse is too slow for the one-shot timeout. "
+                "Reduce the width or increase floor lift.")
         self._soliton_staged = None  # one fire per stage, even on failure
+        self.last_soliton_record = None
+        self._soliton_floor_raised = True
         self._soliton_running.set()
         self._set_state(MachineState.RUNNING)
         self.bridge.status("Firing one upward trial pulse...")
@@ -1719,6 +1732,24 @@ class Model:
                 return
             if not arrived:
                 raise ValueError("Pulse did not reach its endpoint. Check the floor.")
+            actual_end_positions = {}
+            for motor in self.all_motors:
+                if motor.axis not in axes:
+                    continue
+                try:
+                    actual_end_positions[str(tags.display_number(motor.axis))] = (
+                        motor.read_position(self.plc))
+                except (PlcError, TypeError, ValueError):
+                    actual_end_positions[str(tags.display_number(motor.axis))] = None
+            try:
+                self.last_soliton_record = soliton_records.save_trial(
+                    trial, axes, actual_end_positions_mm=actual_end_positions)
+            except OSError as exc:
+                LOGGER.error("Could not save soliton trial: %s", exc)
+                self.bridge.problem(
+                    "Trial record not saved",
+                    "The floor reached its endpoint, but the trial could not "
+                    "be saved: {0}".format(exc))
             self._set_state(MachineState.HOMED)
             self.bridge.status(
                 "Trial pulse complete. Floor held raised; record observed water height. "
@@ -1772,6 +1803,13 @@ class Model:
         finally:
             try:
                 self.plc.write(tags.RUN_SINGLE, 0)
+            except PlcError as exc:
+                LOGGER.critical("SOLITON STOP FAILED: %s", exc)
+                self.bridge.problem(
+                    "Pulse stop failed",
+                    "The run bit could not be cleared. Use the physical stop "
+                    "and inspect the controller connection: {0}".format(exc))
+                raise
             finally:
                 # These temporary values must not leak into a later Wave or
                 # Operate run, which uses each Motor's saved parameters.
@@ -1780,6 +1818,7 @@ class Model:
     def _start_worker(self, mode: RunMode) -> None:
         if self._stop_requested.is_set():
             return
+        self._soliton_floor_raised = False
         self._run_mode = mode
 
         # Parameters may have been edited since homing. Push the differences
@@ -2320,6 +2359,10 @@ class Model:
         command holds the worker, which is exactly when it is needed.
         """
         self._soliton_staged = None
+        if self._soliton_floor_raised and park is None:
+            # A completed pulse remains raised too. Escape after the pulse
+            # must not quietly launch the return wave.
+            park = False
         if self._soliton_running.is_set():
             # This is a single upward pulse, not a cyclic stroke to finish.
             # A stop must drop the bit promptly and must not automatically

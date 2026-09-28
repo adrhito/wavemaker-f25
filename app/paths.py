@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 #: Directory containing ``main.py``.
 APP_DIR: Path = Path(__file__).resolve().parent.parent
@@ -30,12 +31,12 @@ def ensure_directories() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
-def log_file(day: date | None = None) -> Path:
+def log_file(day: Optional[date] = None) -> Path:
     """Path of the log file for ``day`` (today by default)."""
     return LOG_DIR / f"{day or date.today()}.log"
 
 
-def error_log_file(day: date | None = None) -> Path:
+def error_log_file(day: Optional[date] = None) -> Path:
     """Path of the WARNING-and-up log for ``day`` (today by default).
 
     Kept apart from ``log_file`` so a failure can be spotted without wading
@@ -44,6 +45,6 @@ def error_log_file(day: date | None = None) -> Path:
     return ERROR_LOG_DIR / f"{day or date.today()}-errors.log"
 
 
-def analytics_file(day: date | None = None) -> Path:
+def analytics_file(day: Optional[date] = None) -> Path:
     """Path of the analytics file for ``day`` (today by default)."""
     return ANALYTICS_DIR / f"{day or date.today()}.txt"

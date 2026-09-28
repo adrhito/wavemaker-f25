@@ -194,6 +194,22 @@ piston 1 wants looking at mechanically before anything else.
 Prefer `--dry-run` first on anything new. Write evidence to
 `logs/verification/` as JSON; print a summary, not the raw samples.
 
+## Soliton trial path
+
+The array raises floor/plate sections vertically. `wave/SolitonDesigner.py`
+shows a requested water crest and longitudinal width, while the separate
+floor-lift control commands an uncalibrated one-way move. Do not apply a
+horizontal-paddle stroke formula here. `Model.stage_soliton` homes if needed
+and lowers the selected floor sections; the operator then waits for still
+water before `Model.fire_soliton`. Fire uses the existing `Run_1` absolute move
+with a bounded S-curve and waits for confirmed arrival before clearing the
+run bit. It leaves the floor raised instead of making an immediate return wave.
+Stop during a pulse is immediate and does not park the floor. Trial records
+are written to `analytics/soliton-trials/`; both observed water heights must
+come from the lab, since the mock has no fluid model. No safe maximum stopping
+deceleration has been measured. Read `docs/CALIBRATION_NOTES.md` before
+changing this path.
+
 ## Screenshotting the GUI
 
 Tk windows will not be found by `FindWindow` reliably here; enumerate by PID

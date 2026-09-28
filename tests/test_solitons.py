@@ -61,6 +61,13 @@ def test_narrow_target_is_speed_limited_without_silent_overspeed():
     assert trial.pulse_parameters()["Jerk 1"] == 2000
 
 
+def test_width_slider_changes_the_commanded_floor_speed():
+    narrow = SolitonTrial(SolitaryTarget(30, 600, 150), 60)
+    broad = SolitonTrial(SolitaryTarget(30, 1800, 150), 60)
+    assert narrow.speed_mm_s > broad.speed_mm_s
+    assert narrow.pulse_parameters()["Speed 1"] > broad.pulse_parameters()["Speed 1"]
+
+
 @pytest.mark.parametrize("lift", [0, 121, 1.5, True])
 def test_trial_rejects_invalid_lift(lift):
     with pytest.raises(ValueError):

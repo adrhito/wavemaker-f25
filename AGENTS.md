@@ -12,6 +12,7 @@ For water-height or soliton work, read `docs/CALIBRATION_NOTES.md`; piston strok
 - `app/plc.py` supplies the locked real `PlcClient` and the in-memory `SimulatedPlc`; `app/simulator.py` adds moving mock pistons. `app/tags.py` owns PLC tag names and axis/display conversion. `app/params.py` owns the 18 parameter specs, limits, defaults, and write order. `app/patterns.py` and `app/waves.py` implement patterns and wave math.
 - `View.py` owns the Tk window and its callback queue. The current tabs are `operate/`, `wave/`, `preset_options/`, `diagnostics/`, and `feedback/`. Shared drawing and logging code lives in `modules/`.
 - `preset_options/PresetProcessor.py` reads and writes `Presets/*.csv`. `tests/` is the active suite. `archive/` contains superseded code and documentation. `tools/live_*.py` are hardware-facing experiments, not routine tests.
+- `app/solitons.py` describes the requested water profile and bounded one-way floor command; `wave/SolitonDesigner.py` provides the Soliton tab. `app/soliton_records.py` saves local trial/observation JSON. A requested water height is never inferred from motor stroke without calibration.
 
 ## Run and verify
 
@@ -33,6 +34,7 @@ For water-height or soliton work, read `docs/CALIBRATION_NOTES.md`; piston strok
 - Use `app/tags.py` for every tag and displayed piston number. Internal axes are `0..29`; the pictured pistons are `1..30`, with display piston 1 on axis 29. The chamber's front starts at display column 1. Use `tags.display_number` / `axis_from_display` instead of assuming `axis + 1` is the operator's number.
 - Position parameters are written in millimetres, but actual and demanded positions read back in counts of 10,000 per millimetre. Use `params.to_mm` / `to_counts`. The current accepted position range is `-20..370` mm, speed is `0..900` mm/s, and acceleration/deceleration are `0..20,000` mm/s²; read `PARAMS` for the complete current limits.
 - `PARAMS` order is the preset CSV column order; do not reorder it. `WRITE_ORDER` separately puts Move Type and Profile first for PLC writes. Preserve the preset convention that a zero placeholder row falls back to the `All` row.
+- Soliton trials stage the vertically moving floor separately, wait for the operator to fire, and hold raised after one pulse. Stop during a pulse clears the run bit promptly without automatically lowering the floor. The conservative speed, lift, acceleration and deceleration bounds in `app/solitons.py` are starting limits, not verified safe maxima; do not raise them or claim a calibrated soliton without physical measurements and lab review.
 - Vendored pylogix lives in `modules/eip.py` and `modules/lgxDevice.py`; avoid editing it for application behavior.
 
 ## When work explicitly involves the real array

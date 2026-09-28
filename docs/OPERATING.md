@@ -66,6 +66,49 @@ per position, or mirrored about the centre. Staggering a timing or curve offset
 **front to back** is what makes a wave travel along the chamber rather than the
 whole array moving together. There is a preview before anything is applied.
 
+### Soliton trials
+
+The **Soliton** tab is for a single experimental pulse of the vertically
+moving floor sections. Its requested **crest rise** is above the still-water
+line. **Width** is the desired longitudinal full width of that crest at half
+its height. Enter the still-water depth for this run. These are water-wave
+targets, not measured outcomes or guaranteed results.
+
+**Floor lift** is a separate motor command in millimetres. There is no measured
+conversion from floor travel to water height yet, so the software does not
+calculate floor lift from crest rise. The preview shows the requested water
+shape. At fixed depth, a true first-order solitary wave has a specific width
+for each height; the tab shows the theoretical width when the chosen values
+disagree. The theory is from [this numerical and experimental solitary-wave
+study](https://www.mdpi.com/2077-1312/11/1/35), but its horizontal-paddle
+motion equation is **not** used for this vertical-floor machine.
+
+1. Select the floor sections on **Operate**. Check that the tank is clear, the
+   water depth is measured, and no other controller session is running.
+2. Set crest target, width target, depth, and an initial floor lift. The trial
+   restricts lift to 120 mm and command speed to 200 mm/s. It uses 4,000
+   mm/s² acceleration/deceleration and an S-curve profile, all within the
+   shipped gentle preset. These are conservative starting bounds; the lab has
+   not established the fastest safe stop for the assembly.
+3. Press **Stage floor**. This prepares/homes if needed and lowers the selected
+   sections to 370 mm. Let the water become still before the next step.
+4. Press **Fire one pulse**. The controller makes one absolute upward move and
+   decelerates into its endpoint. The software waits for position arrival
+   before clearing the command. The floor stays raised; there is no automatic
+   return pulse. To lower it for another trial, press **Stage floor** again.
+5. Measure the resulting wave at a marked station and press **Record observed
+   wave**. Enter crest rise and/or crest-to-trough height, station distance,
+   and a photo or note reference. Records are saved locally in
+   `analytics/soliton-trials/` as JSON files with target, command, depth and
+   observation in separate fields. Transfer those files from the offline lab
+   computer with the code and any photos when analyzing calibration.
+
+During a soliton pulse, **Stop** and Escape clear the run command immediately
+and do not automatically lower the floor. A commanded pulse is an experimental
+forcing, not proof that a solitary wave was formed. Increase aggressiveness
+only after physical inspection and measured trials establish safe limits and a
+height/width calibration.
+
 ## Stopping
 
 **Stop** is in the status bar at the bottom of every tab, and `Escape` does the

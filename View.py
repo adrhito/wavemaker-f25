@@ -24,6 +24,7 @@ from diagnostics.Diagnostics import Diagnostics
 from feedback.Feedback import Feedback
 from operate.Operate import Operate
 from wave.WaveDesigner import WaveDesigner
+from wave.SolitonDesigner import SolitonDesigner
 from preset_options.PresetOptions import PresetOptions
 from style import STATE_COLOURS, style_GUI, theme
 
@@ -60,6 +61,7 @@ class View:
 
         self.operate = Operate(self.tabControl, model, self)
         self.wave = WaveDesigner(self.tabControl, model, self)
+        self.soliton = SolitonDesigner(self.tabControl, model, self)
         self.preset_options = PresetOptions(self.tabControl, model, self)
         self.diagnostics = Diagnostics(self.tabControl, model)
         self.feedback = Feedback(self.tabControl, model)
@@ -186,6 +188,7 @@ class View:
             self._refresh_status_bar(state)
             self.operate.refresh(state)
             self.wave.refresh(state)
+            self.soliton.refresh(state)
             self.preset_options.refresh(state)
 
         self.post(apply)
@@ -209,7 +212,7 @@ class View:
         # In notebook order. Diagnostics was missing, which shifted Feedback
         # up a place: selecting Diagnostics ran Feedback's onSelect, and
         # selecting Feedback ran nothing at all.
-        tabs = (self.operate, self.wave, self.preset_options,
+        tabs = (self.operate, self.wave, self.soliton, self.preset_options,
                 self.diagnostics, self.feedback)
         for position, tab in enumerate(tabs):
             if position != index and hasattr(tab, "onLeave"):

@@ -4,6 +4,7 @@ import pytest
 
 from Model import MachineState
 from app import params, tags
+from app.plc import PlcError
 from app.solitons import BOTTOM_MM, SolitaryTarget, SolitonTrial
 
 
@@ -43,6 +44,21 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert moving_plc.read(tags.axis_field(0, tags.ACTUAL_POSITION)) == (
         params.to_counts(trial.top_mm))
     assert all(not motor.write_success for motor in homed_model.all_motors)
+    assert homed_model.last_soliton_record is not None
+    assert homed_model.last_soliton_record.exists()
+    assert homed_model._soliton_floor_raised
+
+
+def test_escape_after_completed_pulse_does_not_lower_floor(
+        homed_model, moving_plc, trial):
+    assert homed_model.stage_soliton(trial)
+    assert homed_model.fire_soliton(trial)
+    moving_plc.clear_history()
+    assert homed_model.emergency_stop()
+    assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
+    assert moving_plc.read(tags.axis_field(0, tags.ACTUAL_POSITION)) == (
+        params.to_counts(trial.top_mm))
+    assert not homed_model._parking.is_set()
 
 
 def test_fire_without_same_staged_plan_writes_nothing(homed_model, plc, trial):
@@ -77,6 +93,24 @@ def test_move_timeout_clears_run_bit_and_forgets_temporary_parameters(
             trial.top_mm, 0.0, 2.0)
     assert plc.writes_to(tags.RUN_SINGLE) == [1, 0]
     assert all(not motor.write_success for motor in homed_model.all_motors)
+
+
+def test_failed_run_bit_clear_reports_physical_stop(homed_model, plc, trial,
+                                                     monkeypatch):
+    original = plc.write
+
+    def fail_clear(tag, value):
+        if tag == tags.RUN_SINGLE and value == 0:
+            raise PlcError("connection lost")
+        original(tag, value)
+
+    monkeypatch.setattr(plc, "write", fail_clear)
+    with pytest.raises(PlcError):
+        homed_model._soliton_move(
+            tuple(homed_model.live_axes), trial.pulse_parameters(),
+            trial.top_mm, 0.0, 2.0)
+    assert homed_model.bridge.problems
+    assert "physical stop" in homed_model.bridge.problems[-1][1].lower()
 
 
 def test_stop_during_pulse_does_not_park_or_wait_for_stroke(
