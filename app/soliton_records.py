@@ -55,6 +55,7 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "command_profile": "S-curve",
         "observed_crest_rise_mm": None,
         "observed_crest_to_trough_mm": None,
+        "observed_fwhm_width_mm": None,
         "measurement_station_mm": None,
         "measurement_notes": "",
     }
@@ -75,10 +76,13 @@ def _optional_measurement(value, label: str):
 
 
 def record_observation(path: Path, crest_rise_mm, crest_to_trough_mm,
-                       station_mm, notes: str = "") -> None:
-    """Add measured heights without changing the commanded trial fields."""
+                       station_mm, notes: str = "", fwhm_width_mm=None) -> None:
+    """Add measured wave dimensions without changing commanded trial fields."""
     crest = _optional_measurement(crest_rise_mm, "Crest rise")
     total = _optional_measurement(crest_to_trough_mm, "Crest-to-trough height")
+    width = _optional_measurement(fwhm_width_mm, "Observed half-height width")
+    if width == 0:
+        raise ValueError("Observed half-height width must be positive.")
     station = _optional_measurement(station_mm, "Measurement station")
     if crest is None and total is None:
         raise ValueError("Enter at least one observed water height.")
@@ -89,6 +93,7 @@ def record_observation(path: Path, crest_rise_mm, crest_to_trough_mm,
         "status": "water_observation_recorded",
         "observed_crest_rise_mm": crest,
         "observed_crest_to_trough_mm": total,
+        "observed_fwhm_width_mm": width,
         "measurement_station_mm": station,
         "measurement_notes": str(notes).strip(),
         "observation_recorded_utc": datetime.now(timezone.utc).isoformat(),

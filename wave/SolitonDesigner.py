@@ -232,6 +232,7 @@ class SolitonDesigner:
         for row, label in enumerate((
                 "Crest rise above still water (mm)",
                 "Crest-to-trough height (mm)",
+                "Observed width at half crest rise (mm)",
                 "Measurement station from floor array (mm)",
                 "Notes / photo filename")):
             variable = StringVar()
@@ -246,7 +247,8 @@ class SolitonDesigner:
             try:
                 soliton_records.record_observation(
                     record, fields[0].get(), fields[1].get(),
-                    fields[2].get(), fields[3].get())
+                    fields[3].get(), fields[4].get(),
+                    fwhm_width_mm=fields[2].get())
             except (ValueError, OSError) as exc:
                 messagebox.showerror("Check the observation", str(exc), parent=dialog)
                 return

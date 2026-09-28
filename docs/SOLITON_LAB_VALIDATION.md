@@ -32,9 +32,8 @@ mechanical review before making either claim.
    if motion is abnormal. Do not increase limits to work around an abnormality.
 4. At the marked station, measure crest rise above still water, crest-to-trough
    height, and longitudinal full width at half the crest rise if visible.
-   Record the observed heights in the app and put the width and its units in
-   the notes. Repeat the same settings at least three times to assess
-   repeatability.
+   Record all observed dimensions in the app. Repeat the same settings at
+   least three times to assess repeatability.
 5. Transfer `analytics/soliton-trials/*.json`, relevant logs, and original
    videos or images from the offline computer. Each JSON record separates the
    requested wave, motor command, actual endpoint readback, and manually

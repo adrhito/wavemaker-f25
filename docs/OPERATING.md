@@ -97,8 +97,9 @@ motion equation is **not** used for this vertical-floor machine.
    before clearing the command. The floor stays raised; there is no automatic
    return pulse. To lower it for another trial, press **Stage floor** again.
 5. Measure the resulting wave at a marked station and press **Record observed
-   wave**. Enter crest rise and/or crest-to-trough height, station distance,
-   and a photo or note reference. Records are saved locally in
+   wave**. Enter crest rise and/or crest-to-trough height, the observed
+   longitudinal half-height width if measured, station distance, and a photo
+   or note reference. Records are saved locally in
    `analytics/soliton-trials/` as JSON files with target, command, depth and
    observation in separate fields. Transfer those files from the offline lab
    computer with the code and any photos when analyzing calibration.

@@ -32,7 +32,8 @@ software limits certifies the fastest mechanically safe stop.
 Completed trials create local JSON records in `analytics/soliton-trials/`.
 Requested crest and width, water depth, commanded lift and speed, selected
 pistons, read-back endpoint positions, observed crest rise,
-observed crest-to-trough height, measurement
+observed crest-to-trough height, observed longitudinal full width at half
+crest rise, measurement
 station and note/photo reference are separate fields. The water fields remain
 blank until an operator records a measurement.
 
