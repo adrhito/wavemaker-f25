@@ -94,7 +94,10 @@ def test_wave_designer_travels_the_same_way_as_the_pattern_tool():
     designer.shape = waves.SHAPES[0]
     designer.height = SimpleNamespace(get=lambda: 200)
     designer.period = SimpleNamespace(get=lambda: 2.0)
-    designer.direction = SimpleNamespace(get=lambda: waves.TRAVELLING)
+    # Front to back is a cascade keyed on columns now; the separate
+    # "Travelling" design, which needed Start Curve, left the Wave tab.
+    designer.direction = SimpleNamespace(get=lambda: waves.CASCADING)
+    designer.cascade_axis = SimpleNamespace(get=lambda: waves.BY_COLUMN)
     designer.result = SimpleNamespace(configure=lambda **kw: None)
     designer.view = SimpleNamespace(status=lambda m: None, refresh_all=lambda: None)
     designer.logger = SimpleNamespace(info=lambda *a: None)

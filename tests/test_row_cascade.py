@@ -127,7 +127,7 @@ class TestThePatternToolCanExpressIt:
 class TestTheWaveTabCanSendIt:
     """The other operator-facing route: Wave -> MOVES -> Rows out of step."""
 
-    def _designer(self, motors, direction):
+    def _designer(self, motors, direction, across=waves.BY_ROW):
         from types import SimpleNamespace
 
         from wave import WaveDesigner as designer_module
@@ -144,6 +144,8 @@ class TestTheWaveTabCanSendIt:
         designer.height = SimpleNamespace(get=lambda: 200)
         designer.period = SimpleNamespace(get=lambda: 2.0)
         designer.direction = SimpleNamespace(get=lambda: direction)
+        # Rows by default, as the Wave tab itself starts.
+        designer.cascade_axis = SimpleNamespace(get=lambda: across)
         designer.result = SimpleNamespace(configure=lambda **kw: None)
         designer.view = SimpleNamespace(status=lambda m: None,
                                         refresh_all=lambda: None)
@@ -185,17 +187,25 @@ class TestTheWaveTabCanSendIt:
                    for m in motors)
 
     def test_a_travelling_wave_still_staggers_by_column(self):
-        """The mode that already worked must not have been disturbed."""
+        """Front to back is now a cascade keyed on columns, run from Start.
+
+        The Wave tab's separate "Travelling front to back" design was the one
+        that needed Start Curve, so it went; the same motion is reached by
+        keying the cascade on Columns, and Curve ID is left alone.
+        """
         from Motor import Motor
 
         motors = [Motor(a) for a in range(tags.MOTOR_COUNT)]
-        self._designer(motors, waves.TRAVELLING)
+        before = {m.axis: m.write_params["Curve ID"] for m in motors}
+        self._designer(motors, waves.CASCADING, across=waves.BY_COLUMN)
 
         front = [m for m in motors if column_of(m.axis) == 0]
         assert len({m.write_params["Curve Offset"] for m in front}) == 1, (
             "a front-to-back wave must not stagger within a column"
         )
-        assert all(m.write_params["Curve ID"] == 1 for m in motors)
+        assert len({m.write_params["Curve Offset"] for m in motors}) ==             tags.COLUMN_COUNT, "every column gets its own delay"
+        assert all(m.write_params["Curve ID"] == before[m.axis]
+                   for m in motors)
 
 
 class TestTheStagingHonoursIt:
