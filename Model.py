@@ -35,9 +35,10 @@ BOOT_PULSE_SECONDS = 5.0
 CLEAR_FAULT_SECONDS = 5.0
 #: Floor for how long a run bit is held, unless the configured motion needs
 #: longer -- see :meth:`Model._stroke_seconds`. One stroke no longer uses it:
-#: Run_1 is a move to Position 1, so a stroke is built from two of them and
-#: timed by :meth:`Model._travel_seconds` instead. This is left serving the curve
-#: path, which holds a bit and waits.
+#: Run_1 is a move to Position 1, so a stroke is built from separate moves --
+#: onto the stroke, up, and back down -- each timed by
+#: :meth:`Model._travel_seconds` instead. This is left serving the curve path,
+#: which holds a bit and waits.
 SINGLE_STROKE_SECONDS = 5.0
 #: Never hold a run bit longer than this, however slow the parameters are.
 MAX_STROKE_SECONDS = 120.0
@@ -2382,7 +2383,7 @@ class Model:
         return max(floor, min(longest * 1.5, MAX_STROKE_SECONDS))
 
     def _single_stroke(self) -> Optional[Dict[int, float]]:
-        """One stroke: out to Position 2, then back to Position 1.
+        """One stroke: one full cycle, up to the top of the stroke and back down.
 
         Run_1 is not a stroke. At the machine it is an absolute move to
         Position 1, and it never reads Position 2 at all. Measured on the array
@@ -2394,10 +2395,20 @@ class Model:
         happened a stroke, so One stroke only ever went one way -- and only to
         Position 1, which might be the way it was already facing.
 
-        A stroke is therefore commanded as two moves, exactly the way
+        A stroke is therefore commanded as separate moves, each the way
         :meth:`_park_moves` commands one: put the destination in Position 1,
-        raise Run_1, wait for the pistons to arrive. The operator's own
-        Position 1 is written back at the end, whatever happens.
+        raise Run_1, wait for the pistons to arrive. Two moves were not
+        enough. The pistons rest at the bottom of travel, off the stroke, so
+        "out to Position 2, back to Position 1" spent its first leg getting
+        onto the stroke: from rest at 350 on a stroke of 0 to 150 the array
+        went 350 -> 150 -> 0, up and up again, and the operator saw half a
+        cycle. So the pistons are first brought gently onto the stroke at its
+        bottom (skipped if they are already there), then go up to its top and
+        back down. Up and down are by height, smaller millimetres being
+        higher, whichever of Position 1 and Position 2 is set above the other.
+
+        The operator's own Position 1 and speeds are written back at the end,
+        whatever happens.
 
         Returns travel per axis, or None if a stop landed before anything was
         commanded, so the caller can tell a cancelled stroke from a dead one.
