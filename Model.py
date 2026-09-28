@@ -2440,6 +2440,10 @@ class Model:
                 (bottoms, "Running one stroke: down...", True),
             )
             for index, (targets, status, counts) in enumerate(legs):
+                if not counts and self._all_within(targets, PARK_TOLERANCE):
+                    # Already there, as after a previous One stroke: a Run_1
+                    # pulse would only borrow the parameters for nothing.
+                    continue
                 if counts:
                     speeds = self._leg_speeds(targets, wanted)
                 else:

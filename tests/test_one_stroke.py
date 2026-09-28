@@ -209,3 +209,25 @@ def test_the_stroke_pauses_at_the_top_but_not_after_it_ends(
 
     assert 0.7 in waits, "the pause at the top"
     assert 9.0 not in waits, "no pause once the stroke has ended"
+
+
+def test_a_piston_already_at_the_bottom_goes_straight_up(homed_model, plc):
+    """A second One stroke starts where the first ended: no approach move."""
+    stroke(homed_model)
+    rest_at(plc, homed_model, BOTTOM)
+
+    homed_model.start(RunMode.SINGLE)
+
+    for motor in homed_model.all_motors:
+        assert plc.path(motor.axis) == [TOP, BOTTOM]
+
+
+def test_two_strokes_in_a_row_are_both_whole(homed_model, plc):
+    stroke(homed_model)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+    homed_model.start(RunMode.SINGLE)
+
+    axis = homed_model.all_motors[0].axis
+    assert plc.path(axis) == [BOTTOM, TOP, BOTTOM, TOP, BOTTOM]
