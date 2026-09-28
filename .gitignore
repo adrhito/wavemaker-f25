@@ -9,8 +9,10 @@ venv/
 
 # Written by the application at run time.
 logs/*.log
+logs/errors/*.log
 analytics/*.txt
 analytics/*.log
+analytics/soliton-trials/
 
 # macOS metadata (the Spring 24 copy is full of these).
 ._*

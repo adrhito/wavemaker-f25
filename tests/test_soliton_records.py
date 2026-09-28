@@ -1,0 +1,94 @@
+"""Trial files keep targets, commands, and observed water heights distinct."""
+
+import json
+
+import pytest
+
+from app.soliton_records import finish_trial, record_observation, save_trial
+from app.solitons import SolitaryTarget, SolitonTrial
+
+
+def test_trial_record_preserves_request_and_actual_observation(tmp_path):
+    trial = SolitonTrial(SolitaryTarget(30, 1200, 150), 45)
+    path = save_trial(trial, (29, 28, 27), directory=tmp_path,
+                      actual_end_positions_mm={"1": 324.9})
+    before = json.loads(path.read_text(encoding="utf-8"))
+    assert before["display_pistons"] == [1, 2, 3]
+    assert before["target_crest_rise_mm"] == 30
+    assert before["floor_lift_mm"] == 45
+    assert before["actual_end_positions_mm"] == {"1": 324.9}
+    assert before["observed_crest_rise_mm"] is None
+    assert before["observed_fwhm_width_mm"] is None
+    assert before["pulse_status"] == "pending"
+
+    finish_trial(path, "completed", {"1": 325.0})
+
+    record_observation(path, "24.5", "28.0", "2000", "side camera A",
+                       fwhm_width_mm="1100")
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert after["target_crest_rise_mm"] == before["target_crest_rise_mm"]
+    assert after["floor_lift_mm"] == before["floor_lift_mm"]
+    assert after["observed_crest_rise_mm"] == 24.5
+    assert after["observed_crest_to_trough_mm"] == 28.0
+    assert after["observed_fwhm_width_mm"] == 1100.0
+    assert after["pulse_status"] == "completed"
+    assert after["actual_end_positions_mm"] == {"1": 325.0}
+    assert after["measurement_station_mm"] == 2000.0
+    assert after["measurement_notes"] == "side camera A"
+
+
+@pytest.mark.parametrize("rise,total,station", [
+    ("", "", ""), ("nan", "", ""), ("-1", "", ""),
+    ("1", "", "in the middle"),
+])
+def test_invalid_observation_does_not_alter_record(
+        tmp_path, rise, total, station):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    original = path.read_bytes()
+    with pytest.raises(ValueError):
+        record_observation(path, rise, total, station)
+    assert path.read_bytes() == original
+
+
+def test_failed_trial_keeps_command_and_reason(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    finish_trial(path, "failed", {"1": None}, "connection lost")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["pulse_status"] == "failed"
+    assert data["pulse_finished_utc"]
+    assert data["pulse_error"] == "connection lost"
+    assert data["floor_lift_mm"] == 20
+    assert data["actual_end_positions_mm"] == {"1": None}
+
+
+def test_trial_records_planned_station_and_source(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path, source="hardware",
+                      planned_station_mm="2500")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["source"] == "hardware"
+    assert data["planned_measurement_station_mm"] == 2500.0
+
+
+def test_outcome_written_after_observation_preserves_both(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    record_observation(path, "15", "", "2000", fwhm_width_mm="900")
+    finish_trial(path, "interrupted", {"1": 360.0})
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["status"] == "water_observation_recorded"
+    assert data["pulse_status"] == "interrupted"
+    assert data["observed_crest_rise_mm"] == 15
+    assert data["observed_fwhm_width_mm"] == 900
+
+
+@pytest.mark.parametrize("width", ["nan", "0"])
+def test_invalid_observed_width_does_not_alter_record(tmp_path, width):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="Observed half-height width"):
+        record_observation(path, "12", "", "2000", fwhm_width_mm=width)
+    assert path.read_bytes() == original

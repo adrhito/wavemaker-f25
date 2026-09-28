@@ -61,6 +61,8 @@ install for it.
 | Tab | What it is for |
 |---|---|
 | **Operate** | Everything needed to run: choose pistons on the tank, set stroke and speed, press Start. Shows the pistons moving live while the machine runs. |
+| **Wave** | Choose and send a repeating piston-motion pattern. Its Height is motor stroke, not measured water height. |
+| **Soliton** | Set target crest height and width, stage the vertical floor, and fire one bounded upward trial pulse. Record observed dimensions; repeated matching hardware trials can suggest a floor lift. |
 | **Preset Options** | Load saved parameters onto groups, or save the groups you have built. |
 | **Feedback** | Everything the application has done. Also written to `logs/<date>.log`. |
 
