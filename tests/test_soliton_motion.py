@@ -2,7 +2,7 @@
 
 import pytest
 
-from Model import MachineState
+from Model import MachineState, RunMode
 from app import params, tags
 from app.plc import PlcError
 from app.solitons import BOTTOM_MM, SolitaryTarget, SolitonTrial
@@ -59,6 +59,22 @@ def test_escape_after_completed_pulse_does_not_lower_floor(
     assert moving_plc.read(tags.axis_field(0, tags.ACTUAL_POSITION)) == (
         params.to_counts(trial.top_mm))
     assert not homed_model._parking.is_set()
+
+
+def test_failed_followup_run_does_not_forget_raised_floor(
+        homed_model, moving_plc, trial, monkeypatch):
+    assert homed_model.stage_soliton(trial)
+    assert homed_model.fire_soliton(trial)
+
+    def fail_write(_transport):
+        raise PlcError("write failed")
+
+    monkeypatch.setattr(homed_model.all_motors[0], "write_to", fail_write)
+    assert homed_model.start(RunMode.SINGLE)
+    assert homed_model._soliton_floor_raised
+    moving_plc.clear_history()
+    assert homed_model.emergency_stop()
+    assert 1 not in moving_plc.writes_to(tags.RUN_SINGLE)
 
 
 def test_fire_without_same_staged_plan_writes_nothing(homed_model, plc, trial):

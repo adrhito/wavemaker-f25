@@ -1818,7 +1818,6 @@ class Model:
     def _start_worker(self, mode: RunMode) -> None:
         if self._stop_requested.is_set():
             return
-        self._soliton_floor_raised = False
         self._run_mode = mode
 
         # Parameters may have been edited since homing. Push the differences
@@ -1841,6 +1840,8 @@ class Model:
                 # would otherwise raise -- it is simply a cancelled start.
                 self.bridge.status("Stroke cancelled.")
                 return
+            if not self._stop_requested.is_set():
+                self._soliton_floor_raised = False
             self._report_travel("stroke", travel)
 
         elif mode is RunMode.CURVE:
@@ -1862,6 +1863,8 @@ class Model:
             if travel is None:
                 self.bridge.status("Curve cancelled.")
                 return
+            if not self._stop_requested.is_set():
+                self._soliton_floor_raised = False
             self._report_travel("curve", travel)
 
         else:  # continuous
@@ -1898,6 +1901,7 @@ class Model:
                 self._run_mode = None
                 self._set_state(MachineState.READY)
                 return
+            self._soliton_floor_raised = False
             LOGGER.log(15, "Continuous motion started.")
             self.bridge.status("Running continuously. Press Stop when finished.")
             if self.record_analytics:
