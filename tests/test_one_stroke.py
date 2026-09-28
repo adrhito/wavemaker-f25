@@ -191,3 +191,21 @@ def test_the_travel_reported_is_the_stroke_not_the_approach(homed_model, plc):
     said = " ".join(homed_model.bridge.messages)
     assert "moved {0} mm".format(BOTTOM - TOP) in said
     assert "moved {0} mm".format(REST - TOP) not in said
+
+
+def test_the_stroke_pauses_at_the_top_but_not_after_it_ends(
+        homed_model, plc, monkeypatch):
+    """Time 1 is the dwell at Position 1 (the top here) and Time 2 at
+    Position 2 (the bottom). Only the turn at the top is part of the stroke."""
+    stroke(homed_model)
+    for motor in homed_model.all_motors:
+        motor.set_param("Time 1", 700)
+        motor.set_param("Time 2", 9000)
+    rest_at(plc, homed_model)
+    waits = []
+    monkeypatch.setattr(homed_model, "_sleep", waits.append)
+
+    homed_model.start(RunMode.SINGLE)
+
+    assert 0.7 in waits, "the pause at the top"
+    assert 9.0 not in waits, "no pause once the stroke has ended"

@@ -2439,7 +2439,7 @@ class Model:
                 (tops, "Running one stroke: up...", True),
                 (bottoms, "Running one stroke: down...", True),
             )
-            for targets, status, counts in legs:
+            for index, (targets, status, counts) in enumerate(legs):
                 if counts:
                     speeds = self._leg_speeds(targets, wanted)
                 else:
@@ -2462,6 +2462,10 @@ class Model:
                     highest.clear()
                     sample()
                     continue
+                if index == len(legs) - 1:
+                    # Back at the bottom, the stroke is over. The dwell there
+                    # separates one cycle from the next, and there is no next.
+                    break
                 dwell = self._dwell_seconds(targets, wanted)
                 if dwell:
                     self._sleep(dwell)
