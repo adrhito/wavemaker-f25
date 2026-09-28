@@ -231,3 +231,28 @@ def test_two_strokes_in_a_row_are_both_whole(homed_model, plc):
 
     axis = homed_model.all_motors[0].axis
     assert plc.path(axis) == [BOTTOM, TOP, BOTTOM, TOP, BOTTOM]
+
+
+def test_stop_during_the_approach_starts_no_stroke(homed_model, plc,
+                                                   monkeypatch):
+    """Stopped on the way onto the stroke, nothing more is commanded, the
+    operator's stroke is given back, and it is not reported as a fault."""
+    stroke(homed_model)
+    rest_at(plc, homed_model)
+    real_write = plc.write
+
+    def write(tag, value):
+        real_write(tag, value)
+        if tag == tags.RUN_SINGLE and value and len(plc.pulses) == 1:
+            homed_model._stop_requested.set()   # Stop lands mid-approach
+
+    monkeypatch.setattr(plc, "write", write)
+
+    homed_model.start(RunMode.SINGLE)
+
+    axis = homed_model.all_motors[0].axis
+    assert plc.path(axis) == [BOTTOM], "no leg after the approach"
+    assert plc.read(tags.RUN_SINGLE) == 0
+    assert plc.read(params.BY_NAME["Position 1"].tag(axis)) == TOP
+    assert homed_model.bridge.problems == []
+    assert homed_model.bridge.messages[-1] == "Stroke cancelled."
