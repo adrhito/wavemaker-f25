@@ -2199,14 +2199,25 @@ class Model:
             bottoms = dict((axis, max(pair)) for axis, pair in wanted.items())
             # Until each leg is timed from its own speed, allow the slower way.
             seconds = max(self._leg_seconds(True), self._leg_seconds(False))
-            for way, targets in (("up", tops), ("down", bottoms)):
-                if not self._stroke_leg(
-                        targets, seconds, sample,
-                        "Running one stroke: {0}...".format(way)):
+            # The pistons rest at the bottom of travel, not on the stroke, so
+            # they are first brought onto it at its bottom end. Without this
+            # the first leg was spent getting there: from rest at 350 on a
+            # stroke of 0 to 150 the array went up, then up again, and the
+            # operator saw half a cycle. This move is positioning, not part of
+            # the stroke, so it does not count as the stroke having begun.
+            legs = (
+                (bottoms, "Moving onto the stroke at the bottom...", False),
+                (tops, "Running one stroke: up...", True),
+                (bottoms, "Running one stroke: down...", True),
+            )
+            for targets, status, counts in legs:
+                if not self._stroke_leg(targets, seconds, sample, status):
                     break
-                began = True
+                began = began or counts
                 if self._stop_requested.is_set():
                     break
+                if not counts:
+                    continue
                 dwell = self._dwell_seconds(targets, wanted)
                 if dwell:
                     self._sleep(dwell)

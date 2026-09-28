@@ -83,7 +83,6 @@ def rest_at(plc, model, mm=REST):
         plc.place(motor.axis, mm)
 
 
-@pytest.mark.xfail(strict=True, reason="One stroke from rest only goes up")
 def test_a_stroke_from_rest_goes_up_and_comes_back_down(homed_model, plc):
     stroke(homed_model)
     rest_at(plc, homed_model)
