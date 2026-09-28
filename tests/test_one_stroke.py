@@ -179,3 +179,15 @@ class TestLegWindow:
         axis = homed_model.all_motors[0].axis
         assert homed_model._travel_seconds({axis: 0}, {axis: 0}) == \
             model_module.MAX_STROKE_SECONDS
+
+
+def test_the_travel_reported_is_the_stroke_not_the_approach(homed_model, plc):
+    """From rest at 370, a stroke of 0 to 150 moved 150 mm, not 370."""
+    stroke(homed_model)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+
+    said = " ".join(homed_model.bridge.messages)
+    assert "moved {0} mm".format(BOTTOM - TOP) in said
+    assert "moved {0} mm".format(REST - TOP) not in said

@@ -2455,6 +2455,12 @@ class Model:
                 if self._stop_requested.is_set():
                     break
                 if not counts:
+                    # Travel is the stroke, not the stroke plus the journey
+                    # onto it: from rest at 370 a 150 mm stroke would
+                    # otherwise be reported as 370.
+                    lowest.clear()
+                    highest.clear()
+                    sample()
                     continue
                 dwell = self._dwell_seconds(targets, wanted)
                 if dwell:
