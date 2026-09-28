@@ -65,7 +65,7 @@ Work down this list. Stop at the first thing that misbehaves and keep the log.
 | 1 | Controller in Rem Run, **Studio 5000 closed**. Double-click `Open Wavemaker.cmd`. | Window in a second or two. Banner reads `Connected  ·  192.168.1.1`. The Feedback tab names the controller. |
 | 2 | Click 2–3 pistons on the tank. | They highlight, and the count under the tank updates. No "create" step. |
 | 3 | Set a conservative stroke and speed. | The stroke bars above those pistons change to match. |
-| 4 | **One stroke**, then **Start**. | Asks "Home the pistons first?" — say yes. Homing runs twice, then one stroke. |
+| 4 | **One stroke**, then **Start**. | Asks "Home the pistons first?" — say yes. Homing runs twice, then one stroke: onto the stroke at its bottom, up to the top, and back down. The log says the furthest piston moved the stroke length, not the distance from rest. |
 | 5 | **Start** again. | Runs immediately, no homing prompt. |
 | 6 | **Continuous**, **Start**, watch the live view. | Pistons animate with their real positions. Then press **Stop**. |
 | 7 | **After the stop, watch where the pistons end up.** | **See below — this is the one to watch.** |

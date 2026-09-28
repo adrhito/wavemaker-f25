@@ -222,6 +222,9 @@ The banner at the top of the Operate tab says whether you are connected:
    things that change between runs. Everything else is behind
    **All parameters**.
 3. Choose **One stroke**, **Continuous** or **Curve**, and press **Start**.
+   **One stroke** is one full cycle: the pistons first move gently onto
+   the stroke at its bottom (skipped if they are already there), then go
+   up to the top and come back down, pausing at the top for its dwell.
 
 **Start does whatever is needed.** It writes any parameters you have changed,
 homes the pistons if they are not homed, then runs. Homing physically moves
