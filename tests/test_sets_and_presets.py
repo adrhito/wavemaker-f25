@@ -272,7 +272,12 @@ class TestPresetsActuallyTakeEffect:
 
         model.set_selection(list(range(12)))
         group = model.sets[0]
-        assert group.common_value("Accel 1") == 10000  # the default
+        # The default preset already asks for 20,000, so start somewhere else
+        # or applying massive.csv would prove nothing.
+        for motor in group:
+            motor.update_params({"Accel 1": 10000, "Decel 1": 10000,
+                                 "Speed 1": 500, "Position 2": 300})
+        assert group.common_value("Accel 1") == 10000
 
         preset = PresetProcessor().load("Presets/massive.csv")
         for motor in group:
