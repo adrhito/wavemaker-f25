@@ -38,6 +38,12 @@ observed crest-to-trough height, observed longitudinal full width at half
 crest rise, measurement
 station and note/photo reference are separate fields. The water fields remain
 blank until an operator records a measurement.
+The operator can enter a directly measured width or derive it from video:
+distance between two marked stations multiplied by the half-height duration
+at the first station, divided by crest transit time between the marks. The
+record retains all three raw inputs and the calculation method. This assumes
+the crest propagates at roughly constant speed between the marks; no camera
+measurement is automated yet.
 
 The tab can suggest a floor lift after enough physical observations exist.
 `app/soliton_calibration.py` requires at least three consistent completed

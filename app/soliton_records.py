@@ -77,6 +77,10 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "observed_crest_rise_mm": None,
         "observed_crest_to_trough_mm": None,
         "observed_fwhm_width_mm": None,
+        "observed_width_method": None,
+        "video_station_spacing_mm": None,
+        "video_crest_transit_s": None,
+        "video_half_height_duration_s": None,
         "measurement_station_mm": None,
         "planned_measurement_station_mm": planned_station_mm,
         "measurement_notes": "",
@@ -108,31 +112,64 @@ def finish_trial(path: Path, outcome: str, actual_end_positions_mm: dict,
         _write_json(path, data)
 
 
-def _optional_measurement(value, label: str):
+def _optional_measurement(value, label: str, unit: str = "millimetres"):
     if value is None or str(value).strip() == "":
         return None
     if isinstance(value, bool):
-        raise ValueError("{0} must be a number in millimetres.".format(label))
+        raise ValueError("{0} must be a number in {1}.".format(label, unit))
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("{0} must be a number in millimetres.".format(label)) from exc
+        raise ValueError("{0} must be a number in {1}.".format(label, unit)) from exc
     if not math.isfinite(number) or number < 0:
         raise ValueError("{0} must be a finite nonnegative number.".format(label))
     return number
 
 
+def _positive_measurement(value, label: str, unit: str = "millimetres"):
+    number = _optional_measurement(value, label, unit)
+    if number is None or number == 0:
+        raise ValueError("{0} must be a positive number.".format(label))
+    return number
+
+
 def record_observation(path: Path, crest_rise_mm, crest_to_trough_mm,
-                       station_mm, notes: str = "", fwhm_width_mm=None) -> None:
-    """Add measured wave dimensions without changing commanded trial fields."""
+                       station_mm, notes: str = "", fwhm_width_mm=None,
+                       *, video_station_spacing_mm=None,
+                       video_crest_transit_s=None,
+                       video_half_height_duration_s=None) -> Optional[float]:
+    """Add measured dimensions and return the saved width, if supplied."""
     crest = _optional_measurement(crest_rise_mm, "Crest rise")
     total = _optional_measurement(crest_to_trough_mm, "Crest-to-trough height")
     width = _optional_measurement(fwhm_width_mm, "Observed half-height width")
     if width == 0:
         raise ValueError("Observed half-height width must be positive.")
+    timing = (video_station_spacing_mm, video_crest_transit_s,
+              video_half_height_duration_s)
+    has_timing = any(value is not None and str(value).strip() != ""
+                     for value in timing)
+    method = "direct" if width is not None else None
+    spacing = transit = duration = None
+    if has_timing:
+        if width is not None:
+            raise ValueError("Enter either a direct width or video timings, not both.")
+        spacing = _positive_measurement(video_station_spacing_mm,
+                                        "Video station spacing")
+        transit = _positive_measurement(video_crest_transit_s,
+                                        "Video crest transit time", "seconds")
+        duration = _positive_measurement(video_half_height_duration_s,
+                                         "Video half-height duration", "seconds")
+        width = spacing * duration / transit
+        if not math.isfinite(width) or width <= 0:
+            raise ValueError("Video timings did not produce a finite positive width.")
+        method = "video_timing"
     station = _optional_measurement(station_mm, "Measurement station")
+    if has_timing and station is None:
+        raise ValueError("Enter the first measurement station for video timing.")
     if crest is None and total is None:
         raise ValueError("Enter at least one observed water height.")
+    if width is not None and (crest is None or crest == 0):
+        raise ValueError("Enter a positive crest rise to define the half-height width.")
     with _RECORD_LOCK:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("schema_version") != 1:
@@ -142,8 +179,13 @@ def record_observation(path: Path, crest_rise_mm, crest_to_trough_mm,
             "observed_crest_rise_mm": crest,
             "observed_crest_to_trough_mm": total,
             "observed_fwhm_width_mm": width,
+            "observed_width_method": method,
+            "video_station_spacing_mm": spacing,
+            "video_crest_transit_s": transit,
+            "video_half_height_duration_s": duration,
             "measurement_station_mm": station,
             "measurement_notes": str(notes).strip(),
             "observation_recorded_utc": datetime.now(timezone.utc).isoformat(),
         })
         _write_json(path, data)
+    return width

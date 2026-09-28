@@ -12,8 +12,10 @@ mechanical review before making either claim.
    selection, keep the physical stop accessible, and ensure no other program
    is controlling the PLC.
 2. Measure still-water depth. Mark a fixed station along the tank and its
-   distance from the moving floor. Put a visible vertical scale at the station
-   and keep the camera position fixed between repeated runs.
+   distance from the moving floor. For width from video timing, mark a second
+   station downstream and measure the distance between the marks. Put a visible
+   vertical scale at the first station and keep the camera position fixed
+   between repeated runs.
 3. Rehearse **Stage floor**, **Fire one pulse**, **Stop**, and **Record observed
    wave** with the mock launcher. The mock has no water physics. Use the real
    launcher only with the lab operator present.
@@ -37,9 +39,16 @@ mechanical review before making either claim.
    its endpoint, and holds the floor raised. Use **Stop** or the physical stop
    if motion is abnormal. Do not increase limits to work around an abnormality.
 4. At the marked station, measure crest rise above still water, crest-to-trough
-   height, and longitudinal full width at half the crest rise if visible.
-   Record all observed dimensions in the app. Repeat the same settings at
-   least three times to assess repeatability.
+   height, and longitudinal full width at half the crest rise if visible. If
+   width cannot be measured directly from a scaled image, note when the same
+   crest passes each station and how long the surface stays above half the
+   crest rise at the first station. Enter the station spacing and both times
+   in the observation dialog; the app calculates width as spacing times
+   half-height duration divided by crest travel time and saves the raw values.
+   Use timings from one video or synchronized cameras. A breaking or reflected
+   crest, or a crest that changes substantially between marks, makes this
+   estimate unreliable; document that instead of treating it as calibration.
+   Repeat the same settings at least three times to assess repeatability.
 5. Transfer `analytics/soliton-trials/*.json`, relevant logs, and original
    videos or images from the offline computer. Each JSON record separates the
    requested wave, exact motor parameters, pulse outcome, start and final

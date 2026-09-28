@@ -324,44 +324,78 @@ class SolitonDesigner:
         dialog.resizable(False, False)
         content = ttk.Frame(dialog, padding=theme.GUTTER)
         content.grid(sticky="nsew")
-        fields = []
+        fields = {}
         try:
-            planned_station = json.loads(record.read_text(encoding="utf-8")).get(
-                "planned_measurement_station_mm")
+            saved = json.loads(record.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            planned_station = None
-        for row, label in enumerate((
-                "Crest rise above still water (mm)",
-                "Crest-to-trough height (mm)",
-                "Observed width at half crest rise (mm)",
-                "Measurement station from floor array (mm)",
-                "Notes / photo filename")):
-            variable = StringVar(value=(str(planned_station) if row == 3 and
-                                        planned_station is not None else ""))
+            saved = {}
+        if not isinstance(saved, dict):
+            saved = {}
+        station = saved.get("measurement_station_mm")
+        if station is None:
+            station = saved.get("planned_measurement_station_mm")
+        video = saved.get("observed_width_method") == "video_timing"
+        initial = {
+            "crest": saved.get("observed_crest_rise_mm"),
+            "total": saved.get("observed_crest_to_trough_mm"),
+            "width": None if video else saved.get("observed_fwhm_width_mm"),
+            "spacing": saved.get("video_station_spacing_mm") if video else None,
+            "transit": saved.get("video_crest_transit_s") if video else None,
+            "duration": saved.get("video_half_height_duration_s") if video else None,
+            "station": station,
+            "notes": saved.get("measurement_notes"),
+        }
+        labels = (
+            ("crest", "Crest rise above still water (mm)"),
+            ("total", "Crest-to-trough height (mm)"),
+            ("width", "Width at half crest rise, if measured directly (mm)"),
+            ("spacing", "Video: distance between two station marks (mm)"),
+            ("transit", "Video: crest travel time between marks (s)"),
+            ("duration", "Video: time above half height at first mark (s)"),
+            ("station", "First station from floor array (mm)"),
+            ("notes", "Notes / video or photo filename"),
+        )
+        for row, (name, label) in enumerate(labels):
+            value = initial[name]
+            variable = StringVar(value=str(value) if value is not None else "")
             ttk.Label(content, text=label).grid(row=row, column=0, sticky="w",
                                                   pady=(0, theme.GAP))
             ttk.Entry(content, textvariable=variable, width=38).grid(
                 row=row, column=1, sticky="ew", padx=(theme.GAP, 0),
                 pady=(0, theme.GAP))
-            fields.append(variable)
+            fields[name] = variable
+        ttk.Label(
+            content,
+            text="Enter a direct width OR all three video timings. Video width = "
+                 "station spacing × half-height duration ÷ crest travel time.",
+            wraplength=600, justify="left",
+        ).grid(row=len(labels), column=0, columnspan=2, sticky="w",
+               pady=(0, theme.GAP))
 
         def save() -> None:
             try:
-                soliton_records.record_observation(
-                    record, fields[0].get(), fields[1].get(),
-                    fields[3].get(), fields[4].get(),
-                    fwhm_width_mm=fields[2].get())
+                saved_width = soliton_records.record_observation(
+                    record, fields["crest"].get(), fields["total"].get(),
+                    fields["station"].get(), fields["notes"].get(),
+                    fwhm_width_mm=fields["width"].get(),
+                    video_station_spacing_mm=fields["spacing"].get(),
+                    video_crest_transit_s=fields["transit"].get(),
+                    video_half_height_duration_s=fields["duration"].get())
             except (ValueError, OSError) as exc:
                 messagebox.showerror("Check the observation", str(exc), parent=dialog)
                 return
-            self.result.configure(text="Observed water height saved to {0}.".format(
-                record.name))
+            detail = (" Calculated width: {0:.1f} mm.".format(saved_width)
+                      if saved_width is not None and fields["spacing"].get().strip()
+                      else "")
+            self.result.configure(
+                text="Observed water measurements saved to {0}.{1}".format(
+                    record.name, detail))
             self.view.status("Soliton observation saved.")
             self._schedule_calibration(force=True)
             dialog.destroy()
 
         ttk.Button(content, text="Save observation", command=save).grid(
-            row=len(fields), column=1, sticky="e")
+            row=len(labels) + 1, column=1, sticky="e")
         dialog.grab_set()
 
     def refresh(self, state: MachineState) -> None:

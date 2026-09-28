@@ -19,6 +19,7 @@ def test_trial_record_preserves_request_and_actual_observation(tmp_path):
     assert before["actual_end_positions_mm"] == {"1": 324.9}
     assert before["observed_crest_rise_mm"] is None
     assert before["observed_fwhm_width_mm"] is None
+    assert before["observed_width_method"] is None
     assert before["pulse_status"] == "pending"
     assert before["stage_command_parameters"] == trial.stage_parameters()
     assert before["pulse_command_parameters"] == trial.pulse_parameters()
@@ -33,6 +34,7 @@ def test_trial_record_preserves_request_and_actual_observation(tmp_path):
     assert after["observed_crest_rise_mm"] == 24.5
     assert after["observed_crest_to_trough_mm"] == 28.0
     assert after["observed_fwhm_width_mm"] == 1100.0
+    assert after["observed_width_method"] == "direct"
     assert after["pulse_status"] == "completed"
     assert after["actual_end_positions_mm"] == {"1": 325.0}
     assert after["measurement_station_mm"] == 2000.0
@@ -95,4 +97,52 @@ def test_invalid_observed_width_does_not_alter_record(tmp_path, width):
     original = path.read_bytes()
     with pytest.raises(ValueError, match="Observed half-height width"):
         record_observation(path, "12", "", "2000", fwhm_width_mm=width)
+    assert path.read_bytes() == original
+
+
+def test_video_times_calculate_and_preserve_observed_width(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    saved_width = record_observation(
+        path, "15", "18", "2000", "side camera frames 100-160",
+        video_station_spacing_mm="500",
+        video_crest_transit_s="0.4",
+        video_half_height_duration_s="0.8")
+    assert saved_width == pytest.approx(1000.0)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["observed_fwhm_width_mm"] == pytest.approx(1000.0)
+    assert data["observed_width_method"] == "video_timing"
+    assert data["video_station_spacing_mm"] == 500.0
+    assert data["video_crest_transit_s"] == 0.4
+    assert data["video_half_height_duration_s"] == 0.8
+    assert data["measurement_station_mm"] == 2000.0
+
+
+@pytest.mark.parametrize("timings,direct,station", [
+    (("500", "", "0.8"), "", "2000"),
+    (("500", "0", "0.8"), "", "2000"),
+    (("500", "0.4", "0.8"), "1000", "2000"),
+    (("500", "0.4", "0.8"), "", ""),
+    (("500", "inf", "0.8"), "", "2000"),
+])
+def test_invalid_video_measurement_does_not_alter_record(
+        tmp_path, timings, direct, station):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    original = path.read_bytes()
+    with pytest.raises(ValueError):
+        record_observation(
+            path, "15", "", station, fwhm_width_mm=direct,
+            video_station_spacing_mm=timings[0],
+            video_crest_transit_s=timings[1],
+            video_half_height_duration_s=timings[2])
+    assert path.read_bytes() == original
+
+
+def test_half_height_width_requires_measured_crest(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path)
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="positive crest rise"):
+        record_observation(path, "", "18", "2000", fwhm_width_mm="1000")
     assert path.read_bytes() == original

@@ -222,6 +222,10 @@ selected floor section more than 2 mm from the staged start.
 Each one-way move also checks the PLC's global Live_Motors selection before
 asserting Run_1; a mismatch rejects the move, but this is not an ownership
 lock against another live controller session.
+The observation dialog accepts a directly measured width or manual video
+timing: station spacing times half-height duration divided by crest transit
+time. The JSON retains the raw timing inputs and method. This estimate is
+only useful when the same crest travels cleanly between marked stations.
 
 ## Screenshotting the GUI
 

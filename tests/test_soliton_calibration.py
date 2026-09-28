@@ -15,7 +15,7 @@ def target():
 
 def add_sample(folder, target, lift, observed_crest, *, source="hardware",
                station=2000, observed_width=None, actual_offset=0.0,
-               start_offset=0.0,
+               start_offset=0.0, video_width=False,
                outcome="completed"):
     trial = SolitonTrial(target, lift)
     path = save_trial(trial, (29, 28, 27), directory=folder,
@@ -25,9 +25,16 @@ def add_sample(folder, target, lift, observed_crest, *, source="hardware",
                           for piston in (1, 2, 3)})
     finish_trial(path, outcome, dict((str(piston), BOTTOM_MM - lift + actual_offset)
                                      for piston in (1, 2, 3)))
-    record_observation(path, str(observed_crest), "", str(station),
-                       fwhm_width_mm=(target.width_mm if observed_width is None
-                                      else observed_width))
+    if video_width:
+        record_observation(
+            path, str(observed_crest), "", str(station),
+            video_station_spacing_mm=500,
+            video_crest_transit_s=0.4,
+            video_half_height_duration_s=target.width_mm * 0.4 / 500)
+    else:
+        record_observation(path, str(observed_crest), "", str(station),
+                           fwhm_width_mm=(target.width_mm if observed_width is None
+                                          else observed_width))
     return path
 
 
@@ -52,6 +59,13 @@ def test_interpolates_only_between_repeated_matching_heights(tmp_path, target):
     assert suggest_lift(target, (1, 2), 2000, directory=tmp_path) is None
     deeper = SolitaryTarget(30, target.width_mm, 160)
     assert suggest_lift(deeper, (1, 2, 3), 2000, directory=tmp_path) is None
+
+
+def test_video_derived_width_can_support_repeated_calibration(tmp_path, target):
+    add_two_levels(tmp_path, target, video_width=True)
+    result = suggest_lift(target, (1, 2, 3), 2000, directory=tmp_path)
+    assert result is not None
+    assert result.floor_lift_mm == 50
 
 
 def test_does_not_extrapolate_beyond_observed_heights(tmp_path, target):
