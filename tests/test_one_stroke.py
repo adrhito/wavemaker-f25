@@ -93,3 +93,17 @@ def test_a_stroke_from_rest_goes_up_and_comes_back_down(homed_model, plc):
         assert plc.path(motor.axis) == [BOTTOM, TOP, BOTTOM], (
             "onto the stroke at the bottom, up to the top, and back down"
         )
+
+
+def test_the_operators_stroke_is_given_back_afterwards(homed_model, plc):
+    """Position 1 and both speeds are borrowed; the PLC must end holding the
+    operator's own values, or the next run inherits the last leg's."""
+    stroke(homed_model, speed=300)
+    rest_at(plc, homed_model)
+
+    homed_model.start(RunMode.SINGLE)
+
+    for motor in homed_model.all_motors:
+        for name, value in (("Position 1", TOP), ("Speed 1", 300),
+                            ("Speed 2", 300)):
+            assert plc.read(params.BY_NAME[name].tag(motor.axis)) == value, name

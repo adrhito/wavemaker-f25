@@ -2225,17 +2225,7 @@ class Model:
             try:
                 self.plc.write(tags.RUN_SINGLE, 0)
             finally:
-                # Position 1 was borrowed as a destination; give it back, or
-                # the next run silently uses the far end as its near end.
-                for axis, (low, _high) in wanted.items():
-                    try:
-                        self.plc.write(
-                            params.BY_NAME["Position 1"].tag(axis), low)
-                    except PlcError:
-                        LOGGER.exception(
-                            "Could not restore Position 1 on piston %d",
-                            tags.display_number(axis))
-                self._forget_written_params()
+                self._restore_stroke(wanted)
 
         if not began:
             return None
@@ -2276,6 +2266,32 @@ class Model:
             self.plc.write(tags.RUN_SINGLE, 0)
         sample()
         return True
+
+    def _restore_stroke(self, wanted: Dict[int, Tuple[int, int]]) -> None:
+        """Give back what one stroke borrowed from the operator's parameters.
+
+        Position 1 is borrowed as each leg's destination, and the speeds as
+        each leg's pace. Left behind, the next run would silently use the far
+        end as its near end, at whatever pace the last leg happened to need.
+        Each tag is restored on its own, so one failed write does not strand
+        the others.
+        """
+        for motor in self.all_motors:
+            axis = motor.axis
+            if axis not in wanted:
+                continue
+            restore = [("Position 1", wanted[axis][0])]
+            for name in ("Speed 1", "Speed 2"):
+                if name in motor.write_params:
+                    restore.append((name, motor.write_params[name]))
+            for name, value in restore:
+                try:
+                    self.plc.write(params.BY_NAME[name].tag(axis), value)
+                except PlcError:
+                    LOGGER.exception(
+                        "Could not restore %s on piston %d",
+                        name, tags.display_number(axis))
+        self._forget_written_params()
 
     def _dwell_seconds(self, reached: Dict[int, int],
                        wanted: Dict[int, Tuple[int, int]]) -> float:
