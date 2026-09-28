@@ -256,3 +256,60 @@ def test_stop_during_the_approach_starts_no_stroke(homed_model, plc,
     assert plc.read(params.BY_NAME["Position 1"].tag(axis)) == TOP
     assert homed_model.bridge.problems == []
     assert homed_model.bridge.messages[-1] == "Stroke cancelled."
+
+
+def test_the_moving_mock_goes_up_and_comes_back_down(monkeypatch):
+    """End to end in the mock that really moves: from rest at 370 a stroke of
+    0 to 150 visits the top and finishes at the bottom, having moved 150 mm.
+    The mock is not the machine; this proves what the application commands."""
+    import threading
+    import time
+
+    import app.simulator as sim_module
+    from app.simulator import SimulatedMachine
+    from Model import MachineState, Model
+
+    monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+    monkeypatch.setattr(model_module, "HOME_POLL_SECONDS", 0.05)
+    monkeypatch.setattr(model_module, "STAGE_SPEED", 3000)
+    machine = SimulatedMachine(tick=0.005)
+    try:
+        model = Model(transport=machine, is_live=False)
+        model._spawn = lambda name, work: work()
+        model.toggle(0, True)
+        model.create_set()
+        stroke(model, speed=900)
+        assert model.prepare()
+        assert model.state is MachineState.HOMED
+        machine.place(0, REST)
+
+        seen = []
+        done = threading.Event()
+
+        def watch():
+            while not done.is_set():
+                seen.append(machine.snapshot()[0])
+                time.sleep(0.005)
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        try:
+            model.start(RunMode.SINGLE)
+        finally:
+            done.set()
+            watcher.join(timeout=1.0)
+
+        # Visiting the top and then finishing at the bottom is up and back
+        # down. The watcher can lag the last few millimetres under load, so
+        # where it ended is read from the machine itself.
+        assert min(seen) == pytest.approx(TOP, abs=6), "reached the top"
+        assert machine.snapshot()[0] == pytest.approx(BOTTOM, abs=6), (
+            "came back down to the bottom")
+        import re
+
+        moved = re.search(r"moved (\d+) mm", " ".join(model.bridge.messages))
+        assert moved, "the stroke's travel was reported"
+        assert int(moved.group(1)) == pytest.approx(BOTTOM - TOP, abs=6), (
+            "the stroke, not the journey from rest")
+    finally:
+        machine.close()
