@@ -14,12 +14,13 @@ import time
 from datetime import datetime, timezone
 from enum import Enum
 from logging import Logger, getLogger
-from typing import Callable, Dict, Iterable, Iterator, List, Optional
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from app import params, paths, plc as plc_module, soliton_records, solitons, tags, waves
 from app.plc import PlcError, Transport
 from Motor import Motor
 from modules.logging.log_utils import LOGGER_NAME
+from preset_options.PresetProcessor import default_parameters
 
 LOGGER: Logger = getLogger(LOGGER_NAME)
 
@@ -35,9 +36,10 @@ BOOT_PULSE_SECONDS = 5.0
 CLEAR_FAULT_SECONDS = 5.0
 #: Floor for how long a run bit is held, unless the configured motion needs
 #: longer -- see :meth:`Model._stroke_seconds`. One stroke no longer uses it:
-#: Run_1 is a move to Position 1, so a stroke is built from two of them and
-#: timed by :meth:`Model._leg_seconds` instead. This is left serving the curve
-#: path, which holds a bit and waits.
+#: Run_1 is a move to Position 1, so a stroke is built from separate moves --
+#: onto the stroke, up, and back down -- each timed by
+#: :meth:`Model._travel_seconds` instead. This is left serving the curve path,
+#: which holds a bit and waits.
 SINGLE_STROKE_SECONDS = 5.0
 #: Never hold a run bit longer than this, however slow the parameters are.
 MAX_STROKE_SECONDS = 120.0
@@ -145,6 +147,21 @@ MOVEMENT_WINDOW = 3.0
 STUCK_FRACTION = 0.35
 #: Strokes shorter than this are not judged; there is too little to measure.
 MIN_JUDGED_STROKE = 25
+
+# --- Deselecting a piston while it runs ---------------------------------------
+# Unticking a piston mid-run used to take it out of the group and nothing else:
+# its Live_Motors bit stayed set, so the controller kept driving it, and because
+# it was no longer in a group the Stop that followed neither waited for it nor
+# rested it. Now its Live_Motors bit is cleared and the piston is watched until
+# it is seen to stand still, while every other piston carries on.
+
+#: Gap between position reads while checking that a released piston stopped.
+RELEASE_POLL_SECONDS = 0.1
+#: A released piston counts as stopped once it has stayed within
+#: RELEASE_STILL_MM of one spot for this long. Longer than a turnaround at the
+#: end of a leg, so a piston merely reversing is not mistaken for one stopped.
+RELEASE_STILL_SECONDS = 1.0
+RELEASE_STILL_MM = 1.0
 
 #: How often live piston positions are read while the machine runs.
 #: Four times a second is enough for the array to read as moving without
@@ -354,7 +371,11 @@ class Model:
             (axis, False) for axis in range(tags.MOTOR_COUNT)
         )
         #: Parameters the operator is editing for the pending selection.
-        self.pending_params: Dict[str, int] = params.defaults()
+        #: Seeded from the default preset rather than the factory defaults, so
+        #: a piston picked on the tank is already set up to move and the
+        #: Preset Options tab is somewhere to go for a *different* preset, not
+        #: a step every run has to start with.
+        self.pending_params: Dict[str, int] = default_parameters()
         #: The groups of pistons, in the order they were created.
         self.sets: List[MotorSet] = []
         #: While True the tank selection builds a group directly, so an
@@ -409,6 +430,10 @@ class Model:
         #: Pistons that would not home. Shown on the tank and offered for
         #: removal so a stuck one does not block the whole array.
         self.unhomed_axes: List[int] = []
+        #: Pistons dropped from the run because they would not home. Cleared
+        #: from :attr:`unhomed_axes` once dropped, so this is what the tank
+        #: marks and what the operator is told about.
+        self.dropped_axes: List[int] = []
         #: Pistons this session has actually homed. Homing is slow, so once a
         #: piston is referenced there is no reason to do it again -- but only
         #: pistons homed under our own control count, never ones that merely
@@ -430,6 +455,11 @@ class Model:
         self._pending_live_stroke: Optional[int] = None
         self._pending_live_stroke_axes: List[int] = []
         self._pending_live_stroke_applied: set = set()
+        #: True when the selection changed while the machine was moving, so
+        #: the Live_Motors bits on the PLC no longer match the groups. The next
+        #: run then goes through preparation, which marks them afresh (and
+        #: homes any piston added mid-run) instead of starting straight away.
+        self._live_motors_stale = False
 
         paths.ensure_directories()
 
@@ -496,7 +526,11 @@ class Model:
         """
         if not self._implicit_group:
             return
+        before = {motor.axis: motor for motor in self.all_motors}
+        self._rebuild_implicit_group()
+        self._after_selection_change(before)
 
+    def _rebuild_implicit_group(self) -> None:
         frozen = self.sets[: self._live_index]
         taken = set(axis for group in frozen for axis in group.axes)
         axes = [a for a in self.selected_axes() if a not in taken]
@@ -617,7 +651,9 @@ class Model:
         """Delete one set, freeing its pistons."""
         if motor_set not in self.sets:
             return
+        before = {motor.axis: motor for motor in self.all_motors}
         self.sets.remove(motor_set)
+        self._after_selection_change(before)
         for index, remaining in enumerate(self.sets, start=1):
             if remaining.name.startswith("Group "):
                 remaining.name = "Group {0}".format(index)
@@ -635,6 +671,130 @@ class Model:
             self._set_state(MachineState.READY)
         else:
             self._refresh_idle_state()
+
+    # -- deselecting a piston while it runs -----------------------------------
+
+    def _in_motion(self) -> bool:
+        """Whether the run bits may be driving whatever has Live_Motors set.
+
+        Homing and staging count as well as running: a piston left live
+        through either would be carried straight into the run that follows.
+        So does the resting move, which pulses Run_1 for every live piston.
+        """
+        return (
+            self._state in (MachineState.PREPARING, MachineState.RUNNING)
+            or self._stopping.is_set()
+            or self._parking.is_set()
+        )
+
+    def _after_selection_change(self, before: Dict[int, Motor]) -> None:
+        """Take any piston that just left the groups out of the moving machine."""
+        if not self._in_motion():
+            return
+        self._live_motors_stale = True
+        now = set(self.live_axes)
+        removed = [motor for axis, motor in sorted(before.items()) if axis not in now]
+        if removed:
+            self._spawn("Release", lambda: self._release_worker(removed))
+
+    def _release_worker(self, motors: List[Motor]) -> None:
+        """Clear Live_Motors for deselected pistons and confirm they stopped.
+
+        Never goes through :meth:`_command`, for the same reason Stop does not:
+        this is needed precisely while a run holds the worker. It writes only
+        Live_Motors bits, never a run bit, so the rest of the array is left
+        exactly as it was.
+        """
+        axes = [motor.axis for motor in motors]
+        shown = tags.display_list(axes)
+        try:
+            for axis in axes:
+                self.plc.write(tags.live_motor(axis), 0)
+        except PlcError as exc:
+            LOGGER.critical("Could not release piston(s) %s: %s", shown, exc)
+            self.bridge.problem(
+                "Piston not stopped",
+                "Piston(s) {0} were deselected, but the controller did not "
+                "accept the change:{1}{2}{1}{1}They may still be moving. "
+                "Press Stop.".format(shown, chr(10), exc),
+            )
+            return
+        LOGGER.info("Piston(s) %s deselected while moving; released from the run.", shown)
+
+        if not self.all_motors:
+            # Nothing is left for the run bits to drive, so this is a stop,
+            # and it should look like one on screen too.
+            self.stop(immediate=True)
+            return
+
+        self.bridge.status("Stopping piston(s) {0}; the others carry on.".format(shown))
+        moving = self._wait_until_still(motors)
+        if moving is None:
+            return  # a Stop took over; it halts everything anyway
+        if moving:
+            LOGGER.warning(
+                "Piston(s) %s still moving after being deselected.",
+                tags.display_list(moving),
+            )
+            self.bridge.problem(
+                "Piston still moving",
+                "Piston(s) {0} were deselected but have not been seen to stop, "
+                "or could not be read.{1}{1}Press Stop if they are still "
+                "moving.".format(tags.display_list(moving), chr(10)),
+            )
+        else:
+            self.bridge.status(
+                "Piston(s) {0} stopped; the others carry on.".format(shown)
+            )
+
+    def _wait_until_still(self, motors: List[Motor]) -> Optional[List[int]]:
+        """Watch released pistons until each has stood still for a while.
+
+        Returns the axes not seen to stop, empty if all did, or None if a Stop
+        arrived meanwhile. The controller may let a piston finish the leg it is
+        on before it honours the cleared bit, so each gets up to two of its own
+        legs, and still has to hold one spot for RELEASE_STILL_SECONDS: a piston
+        only turning round at the end of a leg must not pass for stopped.
+        """
+        longest = 0.0
+        for motor in motors:
+            wanted = motor.write_params
+            try:
+                stroke = abs(float(wanted["Position 2"]) - float(wanted["Position 1"]))
+                speed = max(min(float(wanted["Speed 1"]), float(wanted["Speed 2"])), 1.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            longest = max(longest, stroke / speed)
+        deadline = time.time() + min(
+            longest * 2.0 + RELEASE_STILL_SECONDS + 2.0, MAX_STROKE_SECONDS
+        )
+
+        #: axis -> (when it arrived at this spot, the spot)
+        anchor: Dict[int, tuple] = {}
+        pending = set(motor.axis for motor in motors)
+        while pending:
+            if self._stop_requested.is_set() or self._stopping.is_set():
+                return None
+            now = time.time()
+            for axis in sorted(pending):
+                try:
+                    actual = params.to_mm(
+                        self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
+                    )
+                except (PlcError, TypeError, ValueError):
+                    continue
+                if not math.isfinite(actual):
+                    continue
+                since, spot = anchor.get(axis, (now, actual))
+                if abs(actual - spot) > RELEASE_STILL_MM:
+                    since, spot = now, actual
+                anchor[axis] = (since, spot)
+                if now - since >= RELEASE_STILL_SECONDS:
+                    pending.discard(axis)
+            if not pending or now >= deadline:
+                break
+            self._sleep(RELEASE_POLL_SECONDS)
+        return sorted(pending)
 
     # -- running commands -----------------------------------------------------
 
@@ -769,6 +929,9 @@ class Model:
 
     def _mark_live_motors(self) -> None:
         """Set the Live_Motors bit for every piston in a set, clear the rest."""
+        # Cleared before reading the groups, not after writing: a selection
+        # change landing mid-loop must leave the flag set for the next run.
+        self._live_motors_stale = False
         live = set(self.live_axes)
         for axis in range(tags.MOTOR_COUNT):
             self.plc.write(tags.live_motor(axis), 1 if axis in live else 0)
@@ -865,6 +1028,32 @@ class Model:
             self._set_state(MachineState.HOMED)
             self.bridge.status("Motors homed and ready to run.")
             LOGGER.log(15, "Motors homed.")
+        elif self.unhomed_axes and not self._stop_requested.is_set():
+            # One mechanically stuck piston used to cost the whole array. The
+            # run ended in READY rather than HOMED, so Start did nothing and
+            # every other piston sat there -- which is exactly what "the
+            # wavemaker is not moving" looks like from the operating position.
+            # Measured on this machine on 21 September 2026: piston 26 would
+            # not home ("has not moved since homing began"), and a thirty-piston
+            # Rows-out-of-step run was abandoned before it began. With piston 26
+            # dropped, the other twenty-nine staged and ran correctly.
+            #
+            # So a piston that will not home is now dropped automatically and
+            # the rest carry on. drop_unhomed() puts the state back to HOMED
+            # itself when the survivors are still referenced, and says which
+            # pistons went. A piston that cannot home cannot run, so keeping it
+            # selected only blocks the pistons that are fine.
+            stuck = list(self.unhomed_axes)
+            dropped = self.drop_unhomed()
+            #: Kept for the display after unhomed_axes is cleared, so the tank
+            #: can still mark them and the operator can see what went.
+            self.dropped_axes = list(dropped or stuck)
+            if self.state is not MachineState.HOMED:
+                # drop_unhomed cannot settle this itself while the state is
+                # still PREPARING. If every piston went, there is nothing left
+                # to be ready: IDLE, so Start asks for a selection instead.
+                self._set_state(
+                    MachineState.READY if self.sets else MachineState.IDLE)
         else:
             self._set_state(MachineState.READY)
 
@@ -1366,7 +1555,7 @@ class Model:
         A read failure falls back to asking, since a machine that will not
         answer is not one to assume anything about.
         """
-        if self._state is MachineState.HOMED:
+        if self._state is MachineState.HOMED and not self._live_motors_stale:
             return False
         return not self._already_homed()
 
@@ -1399,7 +1588,11 @@ class Model:
 
     def _run_worker(self, mode: RunMode) -> None:
         self.clear_lag_warnings()
-        if self._state is not MachineState.HOMED:
+        # A selection changed mid-run leaves the PLC's Live_Motors out of step
+        # with the groups, and any piston added then was never homed. The
+        # machine can still read HOMED after that run's Stop, so preparation
+        # is forced here; it skips homing when nothing new needs it.
+        if self._state is not MachineState.HOMED or self._live_motors_stale:
             self._prepare_worker()
             if self._state is not MachineState.HOMED:
                 return  # homing failed or was cancelled; already reported
@@ -1416,6 +1609,8 @@ class Model:
                 "and it will do that first.",
             )
             return False
+        if self._live_motors_stale:
+            return self.run(mode)
         return self._command("Start", lambda: self._start_worker(mode))
 
     def change_speed_live(self, speed: int, axes: Optional[Iterable[int]] = None) -> bool:
@@ -2159,21 +2354,51 @@ class Model:
         if errors or self._stop_requested.is_set():
             return False
         if not arrived:
-            # A timeout here is "could not stage", not "was stopped" -- and
-            # `_all_within` gives up on a single unreadable axis, so one
-            # flaky piston used to be enough to report "Staging failed" and
-            # cancel the whole run after the full STAGE_SECONDS wait. An
-            # unstaggered wave is worth more than no wave: run anyway, and
-            # say so rather than silently dropping the stagger.
+            # A timeout here is "could not stage", not "was stopped".
+            #
+            # This used to run anyway, unstaggered, on the reasoning that an
+            # unstaggered wave beats no wave. In practice that is the single
+            # most confusing thing the machine does: the operator picks "Rows
+            # out of step", waits twelve seconds, and gets a wave that is not
+            # out of step, with the only evidence a status line that has
+            # usually been replaced by the time they look. It also runs on
+            # drives that have just spent twelve seconds demonstrating they
+            # will not execute a move -- which is how a staging failure turns
+            # into "the pistons are barely moving".
+            #
+            # So say which pistons did not get there, and refuse. The operator
+            # can free them, deselect them, or choose "All together" on the
+            # Wave tab and mean it.
+            late = self._outside(targets, STAGE_TOLERANCE)
+            unreadable = [axis for axis, actual, _gap in late if actual is None]
+            short = [(axis, gap) for axis, _actual, gap in late if gap is not None]
+
+            detail = []
+            for axis, gap in short:
+                detail.append("piston {0} is {1:.0f} mm from its start".format(
+                    tags.display_number(axis), abs(gap)))
+            if unreadable:
+                detail.append("could not read piston(s) {0}".format(
+                    tags.display_list(unreadable)))
+            if not detail:
+                detail.append("the pistons did not report arriving in time")
+
+            message = (
+                "The pistons could not be moved to their staggered starting "
+                "points within {0:.0f} seconds, so the wave was not started:\n\n"
+                "{1}\n\nFree or deselect those pistons and press Start again. "
+                "To run without the stagger, choose \"All together\" on the "
+                "Wave tab.".format(STAGE_SECONDS, "\n".join(detail))
+            )
             self.bridge.status(
-                "Could not confirm the pistons reached their starting points; "
-                "running unstaggered instead."
+                "Staging failed: {0}. Nothing was started.".format("; ".join(detail))
             )
+            self.bridge.problem("Could not stagger the pistons", message)
             LOGGER.warning(
-                "Staging did not complete within %s seconds; running unstaggered.",
-                STAGE_SECONDS,
+                "Staging did not complete within %s seconds: %s. Run refused.",
+                STAGE_SECONDS, "; ".join(detail),
             )
-            return True
+            return False
 
         spread = max(targets.values()) - min(targets.values())
         LOGGER.log(
@@ -2212,7 +2437,7 @@ class Model:
         return max(floor, min(longest * 1.5, MAX_STROKE_SECONDS))
 
     def _single_stroke(self) -> Optional[Dict[int, float]]:
-        """One stroke: out to Position 2, then back to Position 1.
+        """One stroke: one full cycle, up to the top of the stroke and back down.
 
         Run_1 is not a stroke. At the machine it is an absolute move to
         Position 1, and it never reads Position 2 at all. Measured on the array
@@ -2224,23 +2449,25 @@ class Model:
         happened a stroke, so One stroke only ever went one way -- and only to
         Position 1, which might be the way it was already facing.
 
-        A stroke is therefore commanded as two moves, exactly the way
+        A stroke is therefore commanded as separate moves, each the way
         :meth:`_park_moves` commands one: put the destination in Position 1,
-        raise Run_1, wait for the pistons to arrive. The operator's own
-        Position 1 is written back at the end, whatever happens.
+        raise Run_1, wait for the pistons to arrive. Two moves were not
+        enough. The pistons rest at the bottom of travel, off the stroke, so
+        "out to Position 2, back to Position 1" spent its first leg getting
+        onto the stroke: from rest at 350 on a stroke of 0 to 150 the array
+        went 350 -> 150 -> 0, up and up again, and the operator saw half a
+        cycle. So the pistons are first brought gently onto the stroke at its
+        bottom (skipped if they are already there), then go up to its top and
+        back down. Up and down are by height, smaller millimetres being
+        higher, whichever of Position 1 and Position 2 is set above the other.
+
+        The operator's own Position 1 and speeds are written back at the end,
+        whatever happens.
 
         Returns travel per axis, or None if a stop landed before anything was
         commanded, so the caller can tell a cancelled stroke from a dead one.
         """
-        wanted = {}
-        for motor in self.all_motors:
-            try:
-                wanted[motor.axis] = (
-                    int(motor.write_params["Position 1"]),
-                    int(motor.write_params["Position 2"]),
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
+        wanted = self._stroke_positions()
         if not wanted:
             return None
 
@@ -2260,56 +2487,62 @@ class Model:
         sample()
         began = False
         try:
-            for leg, out in enumerate((True, False)):
-                targets = {axis: (high if out else low)
-                           for axis, (low, high) in wanted.items()}
-                for axis, target in targets.items():
-                    # Absolute, or the target is taken as a relative lurch.
-                    self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
-                    self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+            # Up first, then down, by height rather than by name: smaller
+            # millimetres are higher, and an operator may set Position 1 above
+            # or below Position 2. A stroke that set off "towards Position 2"
+            # went down first on one preset and up first on another.
+            tops = dict((axis, min(pair)) for axis, pair in wanted.items())
+            bottoms = dict((axis, max(pair)) for axis, pair in wanted.items())
+            # The pistons rest at the bottom of travel, not on the stroke, so
+            # they are first brought onto it at its bottom end. Without this
+            # the first leg was spent getting there: from rest at 350 on a
+            # stroke of 0 to 150 the array went up, then up again, and the
+            # operator saw half a cycle. This move is positioning, not part of
+            # the stroke, so it does not count as the stroke having begun.
+            legs = (
+                (bottoms, "Moving onto the stroke at the bottom...", False),
+                (tops, "Running one stroke: up...", True),
+                (bottoms, "Running one stroke: down...", True),
+            )
+            for index, (targets, status, counts) in enumerate(legs):
+                if not counts and self._all_within(targets, PARK_TOLERANCE):
+                    # Already there, as after a previous One stroke: a Run_1
+                    # pulse would only borrow the parameters for nothing.
+                    continue
+                if counts:
+                    speeds = self._leg_speeds(targets, wanted)
+                else:
+                    # Getting onto the stroke can be most of the machine's
+                    # travel. It is positioning, so it goes at the gentle
+                    # staging pace, not at whatever the wave itself is set to.
+                    speeds = dict((axis, STAGE_SPEED) for axis in targets)
+                seconds = self._travel_seconds(targets, speeds)
+                if not self._stroke_leg(
+                        targets, seconds, sample, status, speeds):
+                    break
+                began = began or counts
                 if self._stop_requested.is_set():
                     break
-                if not self._begin_motion(tags.RUN_SINGLE):
-                    break
-                began = True
-                self.bridge.status(
-                    "Running one stroke: {0}...".format("out" if out else "back")
-                )
-                deadline = time.time() + self._leg_seconds(out)
-                while (time.time() < deadline
-                       and not self._stop_requested.is_set()):
+                if not counts:
+                    # Travel is the stroke, not the stroke plus the journey
+                    # onto it: from rest at 370 a 150 mm stroke would
+                    # otherwise be reported as 370.
+                    lowest.clear()
+                    highest.clear()
                     sample()
-                    if self._all_within(targets, PARK_TOLERANCE):
-                        break
-                    time.sleep(STOP_POLL_INTERVAL)
-                self.plc.write(tags.RUN_SINGLE, 0)
-                sample()
-                if self._stop_requested.is_set():
+                    continue
+                if index == len(legs) - 1:
+                    # Back at the bottom, the stroke is over. The dwell there
+                    # separates one cycle from the next, and there is no next.
                     break
-                dwell = 0.0
-                for motor in self.all_motors:
-                    try:
-                        dwell = max(dwell, float(motor.write_params.get(
-                            "Time 2" if out else "Time 1", 0)) / 1000.0)
-                    except (TypeError, ValueError):
-                        continue
+                dwell = self._dwell_seconds(targets, wanted)
                 if dwell:
                     self._sleep(dwell)
         finally:
             try:
                 self.plc.write(tags.RUN_SINGLE, 0)
             finally:
-                # Position 1 was borrowed as a destination; give it back, or
-                # the next run silently uses the far end as its near end.
-                for axis, (low, _high) in wanted.items():
-                    try:
-                        self.plc.write(
-                            params.BY_NAME["Position 1"].tag(axis), low)
-                    except PlcError:
-                        LOGGER.exception(
-                            "Could not restore Position 1 on piston %d",
-                            tags.display_number(axis))
-                self._forget_written_params()
+                self._restore_stroke(wanted)
 
         if not began:
             return None
@@ -2318,19 +2551,159 @@ class Model:
             for axis in highest
         )
 
-    def _leg_seconds(self, outbound: bool) -> float:
-        """How long one leg of a stroke should need, with headroom."""
-        longest = 0.0
+    def _stroke_leg(self, targets: Dict[int, int], seconds: float,
+                    sample: Callable[[], None], status: str,
+                    speeds: Optional[Dict[int, int]] = None) -> bool:
+        """Send every piston to its target with Run_1 and wait for arrival.
+
+        Run_1 is an absolute move to Position 1, so the target is written
+        there first. Arrival is judged by position; ``seconds`` only caps the
+        wait, so a stuck piston cannot hold the bit for ever.
+
+        ``speeds`` sets each piston's pace for this leg. Both Speed 1 and
+        Speed 2 are written, the way the resting move and staging do it: which
+        of the two the controller's Run_1 reads has never been established, and
+        writing both makes the answer not matter.
+
+        Returns False if a stop landed before the bit could be raised, so the
+        caller knows this leg commanded nothing.
+        """
+        for axis, target in targets.items():
+            # Absolute, or the target is taken as a relative lurch.
+            self.plc.write(params.BY_NAME["Move Type"].tag(axis), 0)
+            self.plc.write(params.BY_NAME["Position 1"].tag(axis), target)
+            if speeds and axis in speeds:
+                for name in ("Speed 1", "Speed 2"):
+                    self.plc.write(params.BY_NAME[name].tag(axis), speeds[axis])
+        if self._stop_requested.is_set():
+            return False
+        if not self._begin_motion(tags.RUN_SINGLE):
+            return False
+        try:
+            self.bridge.status(status)
+            deadline = time.time() + seconds
+            while (time.time() < deadline
+                   and not self._stop_requested.is_set()):
+                sample()
+                if self._all_within(targets, PARK_TOLERANCE):
+                    break
+                time.sleep(STOP_POLL_INTERVAL)
+        finally:
+            self.plc.write(tags.RUN_SINGLE, 0)
+        sample()
+        return True
+
+    def _leg_speeds(self, targets: Dict[int, int],
+                    wanted: Dict[int, Tuple[int, int]]) -> Dict[int, int]:
+        """The speed each piston should use heading for ``targets``.
+
+        The same pairing as a continuous run: Speed 1 on the way to
+        Position 2, Speed 2 on the way back to Position 1. Taken per piston,
+        because whether "up" means towards Position 1 or Position 2 depends
+        on which of the two the operator set higher.
+        """
+        speeds: Dict[int, int] = {}
         for motor in self.all_motors:
-            wanted = motor.write_params
+            axis = motor.axis
+            if axis not in targets or axis not in wanted:
+                continue
+            first, second = wanted[axis]
+            name = ("Speed 1" if targets[axis] == second and first != second
+                    else "Speed 2")
             try:
-                stroke = abs(float(wanted["Position 2"])
-                             - float(wanted["Position 1"]))
-                speed = max(float(
-                    wanted["Speed 1" if outbound else "Speed 2"]), 1.0)
+                speeds[axis] = int(motor.write_params[name])
             except (KeyError, TypeError, ValueError):
                 continue
-            longest = max(longest, stroke / speed)
+        return speeds
+
+    def _restore_stroke(self, wanted: Dict[int, Tuple[int, int]]) -> None:
+        """Give back what one stroke borrowed from the operator's parameters.
+
+        Position 1 is borrowed as each leg's destination, and the speeds as
+        each leg's pace. Left behind, the next run would silently use the far
+        end as its near end, at whatever pace the last leg happened to need.
+        Each tag is restored on its own, so one failed write does not strand
+        the others.
+        """
+        for motor in self.all_motors:
+            axis = motor.axis
+            if axis not in wanted:
+                continue
+            restore = [("Position 1", wanted[axis][0])]
+            for name in ("Speed 1", "Speed 2"):
+                if name in motor.write_params:
+                    restore.append((name, motor.write_params[name]))
+            for name, value in restore:
+                try:
+                    self.plc.write(params.BY_NAME[name].tag(axis), value)
+                except PlcError:
+                    LOGGER.exception(
+                        "Could not restore %s on piston %d",
+                        name, tags.display_number(axis))
+        self._forget_written_params()
+
+    def _dwell_seconds(self, reached: Dict[int, int],
+                       wanted: Dict[int, Tuple[int, int]]) -> float:
+        """The longest pause any piston is due at the end it has just reached.
+
+        Time 1 is the dwell at Position 1 and Time 2 the dwell at Position 2,
+        in milliseconds. Which one applies depends on the end each piston
+        arrived at, not on which leg this was: an operator can set Position 1
+        above or below Position 2, so "the first leg" names no fixed end.
+        """
+        dwell = 0.0
+        for motor in self.all_motors:
+            axis = motor.axis
+            if axis not in reached or axis not in wanted:
+                continue
+            name = "Time 1" if reached[axis] == wanted[axis][0] else "Time 2"
+            try:
+                dwell = max(dwell, float(motor.write_params.get(name, 0)) / 1000.0)
+            except (TypeError, ValueError):
+                continue
+        return dwell
+
+    def _stroke_positions(self) -> Dict[int, Tuple[int, int]]:
+        """Each piston's Position 1 and Position 2, as the operator set them.
+
+        A piston whose parameters cannot be read as whole millimetres is left
+        out rather than guessed at: commanding it somewhere invented is worse
+        than leaving it still.
+        """
+        wanted: Dict[int, Tuple[int, int]] = {}
+        for motor in self.all_motors:
+            try:
+                wanted[motor.axis] = (
+                    int(motor.write_params["Position 1"]),
+                    int(motor.write_params["Position 2"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return wanted
+
+    def _travel_seconds(self, targets: Dict[int, int],
+                        speeds: Dict[int, int]) -> float:
+        """How long one leg should need, from where each piston actually is.
+
+        Judged from the real distance to go at the pace this leg sets. Getting
+        onto the stroke from rest can be far longer than the stroke itself,
+        and a window sized from the stroke alone gave up on it part-way.
+        A piston whose position cannot be read is allowed the whole travel.
+        """
+        whole = float(params.BY_NAME["Position 1"].maximum
+                      - params.BY_NAME["Position 1"].minimum)
+        longest = 0.0
+        for axis, target in targets.items():
+            try:
+                actual = params.to_mm(self.plc.read(
+                    tags.axis_field(axis, tags.ACTUAL_POSITION)))
+                distance = abs(float(target) - actual)
+            except (PlcError, TypeError, ValueError):
+                distance = whole
+            if not math.isfinite(distance):
+                distance = whole
+            speed = max(float(speeds.get(axis, 0) or 0), 1.0)
+            longest = max(longest, distance / speed)
         # Generous: arrival is detected by position, so this is only a cap.
         return min(max(longest * 2.0 + 2.0, 3.0), MAX_STROKE_SECONDS)
 
@@ -2703,6 +3076,33 @@ class Model:
                 return False
         return True
 
+    def _outside(self, targets: Dict[int, int], tolerance: float):
+        """Which pistons are not within ``tolerance`` of their target, and by
+        how far.
+
+        :meth:`_all_within` answers yes or no, which is all a polling loop
+        needs but useless in a failure message: "staging did not complete" with
+        no piston named leaves the operator nothing to act on. This reports the
+        offenders so they can be freed, deselected, or looked at.
+
+        Returns a list of ``(axis, actual_mm_or_None, gap_mm_or_None)``, an
+        unreadable axis carrying ``None`` for both.
+        """
+        late = []
+        for axis, target in sorted(targets.items()):
+            try:
+                actual = params.to_mm(
+                    self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION))
+                )
+            except (PlcError, TypeError, ValueError):
+                late.append((axis, None, None))
+                continue
+            if not math.isfinite(actual):
+                late.append((axis, None, None))
+            elif abs(actual - target) > tolerance:
+                late.append((axis, actual, actual - target))
+        return late
+
     def _forget_written_params(self) -> None:
         """The PLC now holds resting values, not the operator's.
 
@@ -2982,7 +3382,9 @@ class Model:
 
         self.sets = []
         self.selection = dict((axis, False) for axis in range(tags.MOTOR_COUNT))
-        self.pending_params = params.defaults()
+        # "Just-launched" includes the default preset, which is what launching
+        # actually gives you.
+        self.pending_params = default_parameters()
         self._implicit_group = True
         self._live_index = 0
         self._homed_axes = set()

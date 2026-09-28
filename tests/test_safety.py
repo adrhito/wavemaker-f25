@@ -304,7 +304,10 @@ class TestHomingFailureIsActionable:
         self._stuck_setup(model, plc, stuck_axis=2)
         model.prepare()
 
-        assert model.unhomed_axes == [2]
+        # Dropped automatically since 21 September 2026 (see _prepare_worker),
+        # so it is named in dropped_axes rather than left in unhomed_axes.
+        assert model.dropped_axes == [2]
+        assert model.unhomed_axes == []
         # Axis 2 is shown to the operator as piston 3.
         assert any("3" in message for _title, message in model.bridge.problems)
         assert any("did not" in message for _title, message in model.bridge.problems)
@@ -319,12 +322,12 @@ class TestHomingFailureIsActionable:
         self._stuck_setup(model, plc, stuck_axis=2)
         model.prepare()
 
-        dropped = model.drop_unhomed()
-        assert dropped == [2]
+        # The stuck piston is left out without the operator having to ask, and
+        # the rest are ready to run straight away.
         assert model.live_axes == [0, 1, 3]
         assert model.unhomed_axes == []
+        assert model.state is MachineState.HOMED
 
-        # With the stuck piston gone, the rest home and the machine is ready.
         assert model.prepare()
         assert model.state is MachineState.HOMED
 
@@ -340,8 +343,7 @@ class TestHomingFailureIsActionable:
         for axis in range(tags.MOTOR_COUNT):
             plc.write(tags.axis_field(axis, tags.STATUS_WORD), 0)
         model.prepare()
-        assert model.unhomed_axes == [5]
-        model.drop_unhomed()
+        assert model.dropped_axes == [5]
         assert model.sets == []
         assert model.state is MachineState.IDLE
 
@@ -374,16 +376,16 @@ class TestHomingIsNotRepeatedNeedlessly:
     def test_dropping_the_stuck_piston_leaves_the_rest_homed(self, model, plc):
         self._select(model, plc, range(15), stuck=[14])
         model.prepare()
-        assert model.state is MachineState.READY
-        assert model.unhomed_axes == [14]
 
-        plc.clear_history()
-        model.drop_unhomed()
-
-        # The fourteen that homed are still homed: no second homing cycle.
+        # The stuck one is dropped and the fourteen that homed stay homed.
+        assert model.dropped_axes == [14]
         assert model.state is MachineState.HOMED
-        assert plc.writes_to(tags.HOME_BUTTON) == []
         assert model.live_axes == list(range(14))
+
+        # No second homing cycle for them on the next attempt.
+        plc.clear_history()
+        assert model.prepare()
+        assert plc.writes_to(tags.HOME_BUTTON) == []
 
     def test_adding_a_new_piston_does_require_homing(self, model, plc):
         """Only pistons already homed are skipped; a fresh one is not."""
@@ -462,7 +464,7 @@ class TestSpottingATroubledPistonEarly:
         monkeypatch.setattr(plc, "read", read)
         model.prepare()
 
-        assert 1 in model.unhomed_axes
+        assert 1 in model.dropped_axes
 
     def test_calibrate_all_homes_every_piston(self, model, plc):
         for axis in range(tags.MOTOR_COUNT):

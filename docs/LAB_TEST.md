@@ -4,6 +4,11 @@ The lab PC is Windows 7 with no internet. **Nothing needs to be installed** —
 the application uses only the Python standard library plus the copy of pylogix
 already inside `modules/`.
 
+Windows 7 caps the interpreter at Python 3.8, so everything here targets
+Python 3.7. If the application will not start on that machine, the rules and
+the checks are in
+[Running on Windows 7](OPERATING.md#windows-7) — do not install a newer Python.
+
 ## Getting the files there
 
 1. Copy the `WaveMaker_F25` folder onto a USB stick.
@@ -16,6 +21,11 @@ already inside `modules/`.
 3. The folder must sit next to `WaveMaker Programs`, i.e. both on the Desktop.
    That is how the *Open Studio 5000* button finds the `.ACD` project.
 4. Double-click `Open Wavemaker.cmd` inside the new folder.
+
+   If a command window flashes up and vanishes and nothing opens, double-click
+   `Diagnose Wavemaker.cmd` instead — it stays open and says why. The usual
+   cause is a Python 3.9 or newer on the machine, which cannot run on
+   Windows 7 at all.
 
 Nothing else. No `pip install`, no database script, no Studio 5000.
 
@@ -55,7 +65,7 @@ Work down this list. Stop at the first thing that misbehaves and keep the log.
 | 1 | Controller in Rem Run, **Studio 5000 closed**. Double-click `Open Wavemaker.cmd`. | Window in a second or two. Banner reads `Connected  ·  192.168.1.1`. The Feedback tab names the controller. |
 | 2 | Click 2–3 pistons on the tank. | They highlight, and the count under the tank updates. No "create" step. |
 | 3 | Set a conservative stroke and speed. | The stroke bars above those pistons change to match. |
-| 4 | **One stroke**, then **Start**. | Asks "Home the pistons first?" — say yes. Homing runs twice, then one stroke. |
+| 4 | **One stroke**, then **Start**. | Asks "Home the pistons first?" — say yes. Homing runs twice, then one stroke: onto the stroke at its bottom, up to the top, and back down. The log says the furthest piston moved the stroke length, not the distance from rest. |
 | 5 | **Start** again. | Runs immediately, no homing prompt. |
 | 6 | **Continuous**, **Start**, watch the live view. | Pistons animate with their real positions. Then press **Stop**. |
 | 7 | **After the stop, watch where the pistons end up.** | **See below — this is the one to watch.** |
@@ -120,16 +130,23 @@ block, this is where it would show. Report it — the fix is one line.
 go online, confirm the controller is in Rem Run, then *Reconnect*. You can
 close Studio 5000 again afterwards.
 
-**It will not start at all.** Run from a command prompt so you can see the
-error:
+**It will not start at all — a window flashes and vanishes.** Double-click
+`Diagnose Wavemaker.cmd`. It stays open, lists every Python on the machine,
+runs the environment check, and offers to start the application with a console
+attached so the error is visible. Or do it by hand:
 
 ```
 cd /d "%USERPROFILE%\Desktop\WaveMaker_F25_new"
 py -3 main.py
 ```
 
+Note `py`/`python`, not `pyw`/`pythonw`: the windowless interpreters the
+launcher uses have no stderr, which is why the failure was invisible.
+
 ## What to bring back
 
+- `logs\startup-error.txt` if it exists — written whenever the application
+  fails before its window appears, and it names the interpreter that ran.
 - `logs\<date>.log` from the new folder — it records everything from INFO up,
   including the connection attempt and every command.
 - `analytics\<date>.txt` if analytics were recorded.

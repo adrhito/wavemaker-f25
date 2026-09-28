@@ -229,7 +229,8 @@ class SimulatedMachine(SimulatedPlc):
                 # successive pulses. The mock used to run a full out-and-back
                 # here, which is why One stroke looked right in simulation and
                 # did half of nothing at the machine. Model._single_stroke
-                # builds a real stroke out of two of these moves.
+                # builds a real stroke out of these moves: onto the stroke at
+                # its bottom, up to its top, and back down.
                 target = first
                 speed = out_speed
             else:

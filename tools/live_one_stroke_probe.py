@@ -1,12 +1,11 @@
 """What does One stroke actually do at the machine?
 
-The application believes One stroke is a full out-and-back: `_stroke_seconds`
-budgets the travel each way plus the dwells, and the mock returns the piston to
-Position 1 at the end. The operator reports that the real array only goes up.
-
-If that is right, the ladder's Run_1 is a single move rather than an
-out-and-back, and the application has been holding the bit for twice as long as
-the motion it actually commands.
+One stroke should be one full cycle: onto the stroke at its bottom, up to its
+top, and back down. The operator reported that the real array only went up --
+from rest at 350 on a stroke of 0 to 150 it went 350 -> 150 -> 0 -- because
+the first of two moves was spent getting onto the stroke. The application now
+approaches the bottom first, so a correct run ends at the bottom having
+visited the top. Smaller millimetres are higher.
 
 This settles it by running one stroke on ONE piston and recording where it goes,
 leg by leg. It moves that piston through the stroke you give it -- 120 mm at a
@@ -114,8 +113,10 @@ def main(argv=None) -> int:
         worker = threading.Thread(target=run, daemon=True)
         worker.start()
 
-        # Watch for well past the budgeted out-and-back time.
-        budget = (args.stroke / float(args.speed)) * 2 + 6.0
+        # Watch for well past the budgeted up-and-down time, plus the gentle
+        # approach from wherever homing left the piston (at most the whole
+        # travel at the staging speed).
+        budget = (args.stroke / float(args.speed)) * 2 + 390.0 / 200.0 + 6.0
         while time.time() - started < budget:
             samples.append({
                 "at": round(time.time() - started, 3),
@@ -151,17 +152,18 @@ def main(argv=None) -> int:
         # to Position 2, so "did it come back to where it started" answers the
         # wrong question: it reported a correct out-and-back as a failure
         # because the piston began at 350 mm on a stroke of 0 to 150.
+        # Position 1 (--low) is the top here and Position 2 the bottom.
         tolerance = max(args.stroke * 0.1, 3.0)
-        reached_out = any(abs(s["mm"] - high) <= tolerance for s in samples)
-        ended_back = abs(end - args.low) <= tolerance
-        record["reached_position_2"] = reached_out
-        record["ended_at_position_1"] = ended_back
-        print("reached Position 2 ({0} mm): {1}".format(high, reached_out))
-        print("ended at Position 1 ({0} mm): {1}".format(args.low, ended_back))
+        reached_top = any(abs(s["mm"] - args.low) <= tolerance for s in samples)
+        ended_bottom = abs(end - high) <= tolerance
+        record["reached_top"] = reached_top
+        record["ended_at_bottom"] = ended_bottom
+        print("reached the top ({0} mm): {1}".format(args.low, reached_top))
+        print("ended at the bottom ({0} mm): {1}".format(high, ended_bottom))
         print("\nVERDICT: One stroke went {0}".format(
-            "OUT AND BACK -- to Position 2, then back to Position 1"
-            if reached_out and ended_back else
-            "OUT ONLY -- it never reached Position 2, or did not return"))
+            "UP AND BACK DOWN -- a full cycle"
+            if reached_top and ended_bottom else
+            "HALF A CYCLE -- it never reached the top, or did not come down"))
     finally:
         for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS,
                     tags.RUN_CURVE, tags.HOME_BUTTON):
