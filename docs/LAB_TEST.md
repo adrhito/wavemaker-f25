@@ -66,22 +66,26 @@ Work down this list. Stop at the first thing that misbehaves and keep the log.
 
 ### Step 7 is the new behaviour
 
-**Stop now returns the pistons to the bottom of their stroke (368 mm).** This is
+**Stop now returns the pistons to the bottom of their stroke (370 mm).** This is
 new — the machine has never done a commanded move after a stop before.
 
 What happens: all three run bits are dropped immediately, then the pistons are
-sent to 368 mm at 200 mm/s. Move Type is forced to absolute first, so 368 cannot
+sent to 370 mm at 200 mm/s. Move Type is forced to absolute first, so 370 cannot
 be taken as a relative move. Pressing Stop again during the travel cancels it.
 
 **Do this first with two or three pistons, not thirty.** Watch that:
 
 - the halt is immediate — the pistons stop before they start travelling down;
 - they travel to the bottom smoothly, not abruptly;
-- 368 mm is actually where you want them to rest.
+- 370 mm is actually where you want them to rest.
 
 If the resting position should be different, it is one constant —
 `PARK_POSITION` at the top of `Model.py`. To switch the behaviour off entirely,
 set `PARK_ON_STOP = False` in the same block.
+
+For the separate one-way Soliton trial, follow
+[the lab validation procedure](SOLITON_LAB_VALIDATION.md) after this general
+checkout. Its Stop leaves the floor where it halted rather than parking it.
 
 ### The old step 6 still applies
 

@@ -101,11 +101,17 @@ motion equation is **not** used for this vertical-floor machine.
    return pulse. To lower it for another trial, press **Stage floor** again.
 5. Measure the resulting wave at a marked station and press **Record observed
    wave**. Enter crest rise and/or crest-to-trough height, the observed
-   longitudinal half-height width if measured, station distance, and a photo
-   or note reference. Records are saved locally in
+   longitudinal half-height width if measured directly, station distance, and
+   a video or photo reference. Alternatively, enter the spacing between two
+   marked stations, the time the same crest takes to cross them, and its time
+   above half height at the first mark. The app calculates longitudinal width
+   from those video measurements and keeps all three inputs. A breaking or
+   reflected crest is unsuitable for that estimate. Reopening the form loads
+   the saved values for correction. Records are saved locally in
    `analytics/soliton-trials/` as JSON files with target, command, pulse
    outcome, depth, actual start and final motor positions, the exact stage and
-   pulse parameter values, and observation in separate fields.
+   pulse parameter values, application-side command timing, and observation in
+   separate fields. The timing is not a measured drive deceleration trace.
    A trial file is created before motion, so a stopped or faulted pulse is
    retained too. Transfer those files from the offline lab computer with the
    code and any photos when analyzing calibration.
