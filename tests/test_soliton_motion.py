@@ -50,6 +50,7 @@ def test_stage_and_fire_are_distinct_one_way_moves(homed_model, moving_plc, tria
     assert homed_model.last_soliton_record.exists()
     record = json.loads(homed_model.last_soliton_record.read_text(encoding="utf-8"))
     assert record["pulse_status"] == "completed"
+    assert record["source"] == "simulator"
     assert record["pulse_finished_utc"]
     assert record["actual_end_positions_mm"]["30"] == trial.top_mm
     assert homed_model._soliton_floor_raised

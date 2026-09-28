@@ -63,6 +63,15 @@ def test_failed_trial_keeps_command_and_reason(tmp_path):
     assert data["actual_end_positions_mm"] == {"1": None}
 
 
+def test_trial_records_planned_station_and_source(tmp_path):
+    path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
+                      (29,), directory=tmp_path, source="hardware",
+                      planned_station_mm="2500")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["source"] == "hardware"
+    assert data["planned_measurement_station_mm"] == 2500.0
+
+
 def test_outcome_written_after_observation_preserves_both(tmp_path):
     path = save_trial(SolitonTrial(SolitaryTarget(20, 1000, 100), 20),
                       (29,), directory=tmp_path)

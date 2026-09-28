@@ -32,8 +32,17 @@ def _write_json(path: Path, data: dict) -> None:
 
 def save_trial(trial: SolitonTrial, axes: Iterable[int],
                directory: Optional[Path] = None,
-               actual_end_positions_mm: Optional[dict] = None) -> Path:
+               actual_end_positions_mm: Optional[dict] = None,
+               source: str = "unknown",
+               planned_station_mm: Optional[float] = None) -> Path:
     """Save the planned pulse before motion, including if the pulse later fails."""
+    if source not in ("hardware", "simulator", "unknown"):
+        raise ValueError("Unknown soliton trial source.")
+    if planned_station_mm is not None:
+        planned_station_mm = _optional_measurement(
+            planned_station_mm, "Planned station")
+        if planned_station_mm is None:
+            raise ValueError("Planned station must be a number in millimetres.")
     folder = directory or paths.ANALYTICS_DIR / "soliton-trials"
     now = datetime.now(timezone.utc)
     filename = "trial-{0}-{1}.json".format(
@@ -46,6 +55,7 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "pulse_status": "pending",
         "pulse_finished_utc": None,
         "pulse_error": None,
+        "source": source,
         "display_pistons": [tags.display_number(axis) for axis in axes],
         "target_crest_rise_mm": trial.target.crest_height_mm,
         "target_fwhm_width_mm": trial.target.width_mm,
@@ -64,6 +74,7 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "observed_crest_to_trough_mm": None,
         "observed_fwhm_width_mm": None,
         "measurement_station_mm": None,
+        "planned_measurement_station_mm": planned_station_mm,
         "measurement_notes": "",
     }
     _write_json(path, data)
@@ -96,6 +107,8 @@ def finish_trial(path: Path, outcome: str, actual_end_positions_mm: dict,
 def _optional_measurement(value, label: str):
     if value is None or str(value).strip() == "":
         return None
+    if isinstance(value, bool):
+        raise ValueError("{0} must be a number in millimetres.".format(label))
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:

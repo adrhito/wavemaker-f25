@@ -1688,7 +1688,8 @@ class Model:
                 solitons.BOTTOM_MM))
         LOGGER.log(15, "Soliton trial staged on pistons %s.", tags.display_list(axes))
 
-    def fire_soliton(self, trial: solitons.SolitonTrial) -> bool:
+    def fire_soliton(self, trial: solitons.SolitonTrial,
+                     planned_station_mm: Optional[float] = None) -> bool:
         """Send exactly one upward move after the same trial was staged."""
         if self._soliton_staged != (trial, tuple(self.live_axes)):
             self.bridge.problem(
@@ -1698,9 +1699,11 @@ class Model:
         if self._state is not MachineState.HOMED:
             self.bridge.problem("Not ready", "The floor must be homed and staged first.")
             return False
-        return self._command("Soliton pulse", lambda: self._fire_soliton_worker(trial))
+        return self._command(
+            "Soliton pulse",
+            lambda: self._fire_soliton_worker(trial, planned_station_mm))
 
-    def _fire_soliton_worker(self, trial) -> None:
+    def _fire_soliton_worker(self, trial, planned_station_mm=None) -> None:
         staged = self._soliton_staged
         if staged != (trial, tuple(self.live_axes)) or not self._already_homed():
             raise ValueError("Piston selection or homing changed; stage again.")
@@ -1722,7 +1725,11 @@ class Model:
             # An interrupted or faulted pulse is still an experiment. Save
             # its requested command before asserting Run_1 so it cannot vanish
             # when the PLC or connection fails mid-motion.
-            self.last_soliton_record = soliton_records.save_trial(trial, axes)
+            self.last_soliton_record = soliton_records.save_trial(
+                trial, axes, source=(
+                    "hardware" if self.is_live and not isinstance(
+                        self.plc, plc_module.SimulatedPlc) else "simulator"),
+                planned_station_mm=planned_station_mm)
         except OSError as exc:
             raise ValueError("Cannot save the soliton trial before motion: {0}".format(
                 exc)) from exc
