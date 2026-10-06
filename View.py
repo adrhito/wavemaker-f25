@@ -23,8 +23,8 @@ from Model import MachineState, Model
 from diagnostics.Diagnostics import Diagnostics
 from feedback.Feedback import Feedback
 from operate.Operate import Operate
+from soliton.SolitonDesigner import SolitonDesigner
 from wave.WaveDesigner import WaveDesigner
-from wave.SolitonDesigner import SolitonDesigner
 from preset_options.PresetOptions import PresetOptions
 from style import STATE_COLOURS, style_GUI, theme
 

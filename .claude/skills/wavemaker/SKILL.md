@@ -98,6 +98,57 @@ axis_from_display(n) = (9 - (n-1)//3) * 3 + (2 - (n-1)%3)
 - Always show the operator `tags.display_number` / `tags.display_list`, never a
   raw axis.
 
+## The tank, physically -- and what it means for which pistons to use
+
+Confirmed with the lab owner on 26 September 2026. The control software says
+nothing about this anywhere else, and it decides which pistons are worth
+driving at all.
+
+The thirty pistons sit **above** the water in a bank at **one end** of the
+tank, and they push **downwards** to move the water. They are not a paddle wall
+and they are not in the floor. The tank is only **three pistons wide**, so the
+3 x 10 grid is ten columns running *into* the tank from that end, three across
+its width. Water driven by the bank travels away down the length of the tank to
+the far end.
+
+The bank is **not level**. Each column is mounted higher than the one before it
+as you move away from the end wall, so:
+
+```
+   column      1    2    3    4    5    6    7    8    9   10
+   pistons   1-3  4-6  7-9 10-12 13-15 16-18 19-21 22-24 25-27 28-30
+   height    lowest ------------------------------------> highest
+             |<---- always fully submerged ---->|<-- only if the water is high -->
+```
+
+- **Pistons 1-15 (columns 1-5) are always fully submerged.** They are the ones
+  to use, and **pistons 1, 2 and 3 are the best of them** -- lowest, deepest,
+  most water moved per millimetre of stroke.
+- **Pistons 16-30 (columns 6-10) ride higher.** When the tank is low they are
+  clear of the surface, so commanding them does nothing to the water at all
+  while still reporting a perfectly healthy stroke. A run that "did not make a
+  wave" with a high-numbered selection is the first thing to check.
+- So piston number is not interchangeable here. Thirty pistons all stroking
+  350 mm do **not** contribute equally, and defaulting a new feature to "all
+  thirty" quietly wastes more than half of them.
+
+### The word "front" means opposite things to the code and to the operator
+
+This is a live trap. The lab owner calls column 1 **"the back"** -- the end
+wall the bank is bolted to -- and calls the far end of the tank, where the
+waves go, **"the front"**. The code says the exact opposite: `AGENTS.md` and
+this file both state *"the chamber's front starts at display column 1"*,
+settled by commit `c87654a`.
+
+They agree about the pistons and disagree about the English. Column 1 is the
+same physical place in both: **the end wall, deepest, always submerged, piston
+1.** Column 10 is the far side of the bank, highest, nearest the open water.
+
+When talking to an operator, say **"nearest the end wall"** or **"deepest"**
+rather than front or back, and never let the two vocabularies meet inside a
+piece of code. A cascade that marches the wrong way down the tank is the
+failure this causes, and it has already happened once here.
+
 ## Making the array move as a pattern
 
 Three modes, on the Wave tab under MOVES, and all three are also reachable from
@@ -193,42 +244,6 @@ piston 1 wants looking at mechanically before anything else.
 
 Prefer `--dry-run` first on anything new. Write evidence to
 `logs/verification/` as JSON; print a summary, not the raw samples.
-
-## Soliton trial path
-
-The array raises floor/plate sections vertically. `wave/SolitonDesigner.py`
-shows a requested water crest and longitudinal width, while the separate
-floor-lift control commands an uncalibrated one-way move. Do not apply a
-horizontal-paddle stroke formula here. `Model.stage_soliton` homes if needed
-and lowers the selected floor sections; the operator then waits for still
-water before `Model.fire_soliton`. Fire uses the existing `Run_1` absolute move
-with a bounded S-curve and waits for confirmed arrival before clearing the
-run bit. It leaves the floor raised instead of making an immediate return wave.
-Stop during a pulse is immediate and does not park the floor. Trial records
-are written to `analytics/soliton-trials/`; both observed water heights must
-come from the lab, since the mock has no fluid model. No safe maximum stopping
-deceleration has been measured. Read `docs/CALIBRATION_NOTES.md` before
-changing this path.
-
-`app/soliton_calibration.py` can suggest a floor lift only from completed
-hardware trials with repeated crest and width measurements at the same tank
-station, depth, target width, piston selection and motion settings. It rejects
-mock runs and extrapolation. The operator applies a suggestion explicitly and
-stages again before firing; it is still an experimental trial, not a certified
-water-height controller. Preserve the recorded source and station fields when
-changing trial JSON. The trial record also captures actual start and end
-positions and the exact stage/pulse parameter dictionaries; Fire rejects any
-selected floor section more than 2 mm from the staged start.
-Each one-way move also checks the PLC's global Live_Motors selection before
-asserting Run_1; a mismatch rejects the move, but this is not an ownership
-lock against another live controller session.
-The observation dialog accepts a directly measured width or manual video
-timing: station spacing times half-height duration divided by crest transit
-time. The JSON retains the raw timing inputs and method. This estimate is
-only useful when the same crest travels cleanly between marked stations.
-Trial JSON includes application-side Run_1 assertion, endpoint and cleanup
-timing. The interval is not a measured drive deceleration; a separate Stop
-may clear the run bit before the pulse worker finishes its cleanup.
 
 ## Screenshotting the GUI
 

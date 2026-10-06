@@ -245,93 +245,70 @@ per position, or mirrored about the centre. Staggering a timing or curve offset
 **front to back** is what makes a wave travel along the chamber rather than the
 whole array moving together. There is a preview before anything is applied.
 
-### Soliton trials
+## Solitary waves
 
-The **Soliton** tab is for a single experimental pulse of the vertically
-moving floor sections. Its requested **crest rise** is above the still-water
-line. **Width** is the desired longitudinal full width of that crest at half
-its height. Enter the still-water depth for this run. These are water-wave
-targets, not measured outcomes or guaranteed results.
+The **Soliton** tab makes one wave, not a repeating one. Everything on the Wave
+tab runs continuously; a soliton is a single push, and the shape of that push in
+time is the whole result.
 
-**Floor lift** is a separate motor command in millimetres. There is no measured
-conversion from floor travel to water height yet, so the software does not
-calculate floor lift from crest rise. The preview shows the requested water
-shape. At fixed depth, a true first-order solitary wave has a specific width
-for each height; the tab shows the theoretical width when the chosen values
-disagree. The theory is from [this numerical and experimental solitary-wave
-study](https://www.mdpi.com/2077-1312/11/1/35), but its horizontal-paddle
-motion equation is **not** used for this vertical-floor machine.
+Set the **water depth** and the **wave height** you want. The tab works out how
+fast the wave will travel, how wide it will be, how far the pistons have to
+push, the fastest they must move and how long the push lasts, and it staggers
+the columns so the bank pushes where the wave already is rather than all at
+once.
 
-1. Select the floor sections on **Operate**. Check that the tank is clear, the
-   water depth is measured, and no other controller session is running.
-2. Set crest target, width target, depth, and an initial floor lift. Enter the
-   fixed measurement station in millimetres along the tank to check prior
-   observations. The station is optional for an uncalibrated trial. The trial
-   restricts lift to 120 mm and command speed to 200 mm/s. It uses 4,000
-   mm/s² acceleration/deceleration and an S-curve profile, all within the
-   shipped gentle preset. These are conservative starting bounds; the lab has
-   not established the fastest safe stop for the assembly.
-3. Press **Stage floor**. This prepares/homes if needed and lowers the selected
-   sections to 370 mm. Let the water become still before the next step.
-4. Press **Fire one pulse**. The controller makes one absolute upward move and
-   decelerates into its endpoint. Fire first checks every selected floor
-   section is within 2 mm of its staged start. The software waits for arrival
-   before clearing the command. The floor stays raised; there is no automatic
-   return pulse. To lower it for another trial, press **Stage floor** again.
-5. Measure the resulting wave at a marked station and press **Record observed
-   wave**. Enter crest rise and/or crest-to-trough height, the observed
-   longitudinal half-height width if measured directly, station distance, and
-   a video or photo reference. Alternatively, enter the spacing between two
-   marked stations, the time the same crest takes to cross them, and its time
-   above half height at the first mark. The app calculates longitudinal width
-   from those video measurements and keeps all three inputs. A breaking or
-   reflected crest is unsuitable for that estimate. Reopening the form loads
-   the saved values for correction. Records are saved locally in
-   `analytics/soliton-trials/` as JSON files with target, command, pulse
-   outcome, depth, actual start and final motor positions, the exact stage and
-   pulse parameter values, application-side command timing, and observation in
-   separate fields. The timing is not a measured drive deceleration trace.
-   A trial file is created before motion, so a stopped or faulted pulse is
-   retained too. Transfer those files from the offline lab computer with the
-   code and any photos when analyzing calibration.
+### Press Start Curve, not Start
 
-When enough matching physical trials have been recorded, the tab offers an
-**Apply measured lift** button. It interpolates only between measured crest
-heights from at least three completed runs at each of two floor lifts, using
-the same piston selection, water depth, target width, measurement station,
-motion settings, and a measured width near the target. It ignores mock runs,
-faulted runs, inconsistent repeats, and targets outside the measured height
-range. Review the suggested floor lift before applying it. Applying a lift
-changes the trial settings, so stage again before firing. A suggestion is
-still experimental and does not guarantee the requested water height. When no
-suggestion is available, the tab names the missing evidence, such as repeats,
-observed width, or a target outside the measured range.
+This is the one place in the application where that matters. The stagger
+between columns lives in **Curve Offset**, and the controller reads Curve Offset
+during a curve run only — an ordinary **Start** ignores it completely and fires
+every column at the same moment. That does not make a smaller soliton; it makes
+a hump, and a hump breaks up into a train of smaller waves as it travels.
 
-During a soliton pulse, **Stop** and Escape clear the run command immediately
-and do not automatically lower the floor. A commanded pulse is an experimental
-forcing, not proof that a solitary wave was formed. Increase aggressiveness
-only after physical inspection and measured trials establish safe limits and a
-height/width calibration.
+If you press Start Curve and nothing moves, the likeliest reason is that no
+curve is loaded on the drives for Curve ID 1. The archived drive configuration
+from 2018 has one on drive 1 and none at all on drive 2, so it cannot be assumed
+they are all loaded. `python tools/live_curve_probe.py` reads what is actually
+there and moves nothing.
 
-Follow [the offline lab validation procedure](SOLITON_LAB_VALIDATION.md) for
-the first water trials and the measurements to bring back for calibration.
+### Which pistons it uses
+
+Columns 1 to 5 — **pistons 1 to 15** — because those are the ones always fully
+submerged. Columns 6 to 10 sit higher and ride clear of a low water level, where
+they report a perfectly healthy stroke while moving no water at all. You can ask
+for more columns with the slider if the tank is full enough to cover them.
+
+Piston 1 is the deepest, against the end wall the bank is bolted to, and it
+leads: the stagger runs from there down the tank.
+
+### The heights are targets, not measurements
+
+Nothing in this application has ever measured water height. There is no wave
+gauge and no camera tracker, so the tab tells you what it is asking the pistons
+to do and what wave that is *meant* to produce. Those are not the same number
+and it does not pretend they are.
+
+The **Calibration** box is how you close the gap. Run a wave, look at the tank,
+and if the result is consistently half what you asked for, put 2 in the box.
+It multiplies the push and changes nothing else about the design.
+
+### Column spacing
+
+The delays between columns are worked out from how far apart the columns are
+along the tank and how fast the wave travels. The default is 150 mm, which is a
+guess — measure it and put the real number in, because it sets the stagger.
 
 ## Stopping
 
 **Stop** is in the status bar at the bottom of every tab. On an ordinary run,
 the first press can wait briefly for the current stroke to finish; a second
-press halts immediately. `Escape` halts immediately. During a soliton pulse,
-either Stop or Escape halts immediately.
+press halts immediately. `Escape` halts immediately.
 
 For ordinary runs, the selected resting position controls what happens after
-the run bits drop. The bottom resting position is 370 mm. A soliton trial is
-different: Stop clears its run command promptly and leaves the floor where it
-stopped. The floor also stays raised after a completed pulse until the operator
-stages another trial.
+the run bits drop. The bottom resting position is 370 mm.
 
 After an ordinary parked stop, the machine stays homed and the next run sends
-its own parameters again. Inspect floor position before changing modes after a
-soliton trial.
+its own parameters again.
 
 If a stop cannot be delivered — a network fault, the PLC offline — the
 application says so in a dialog rather than reporting success. Use the physical
@@ -373,7 +350,7 @@ the boxes saying why. Nothing is sent to the machine until it is valid.
 **Position limit:** The application accepts positions from -20 through 370 mm.
 The drive's own configured envelope (`LinMot Drive Config`) is -57 through
 453 mm, with home at 390 mm. The application limit is narrower than the drive
-envelope; do not infer clearance for the assembled floor from either value.
+envelope; do not infer mechanical clearance from either value.
 
 **Acceleration: 20,000 or 50,000?** The application enforces 20,000. The old
 tooltips said 50,000 while the old code rejected anything above 20,000, so the

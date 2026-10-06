@@ -93,9 +93,6 @@ If the resting position should be different, it is one constant —
 `PARK_POSITION` at the top of `Model.py`. To switch the behaviour off entirely,
 set `PARK_ON_STOP = False` in the same block.
 
-For the separate one-way Soliton trial, follow
-[the lab validation procedure](SOLITON_LAB_VALIDATION.md) after this general
-checkout. Its Stop leaves the floor where it halted rather than parking it.
 
 ### The old step 6 still applies
 
