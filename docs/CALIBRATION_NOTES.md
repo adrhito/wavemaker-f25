@@ -87,9 +87,9 @@ from a recipe into a prediction.
 
 - Mark a repeatable measurement location along the tank and capture both observed crest rise and crest-to-trough height there. The requested target is crest rise above still water.
 - Obtain and inspect the old soliton spreadsheet, including units and how its acceleration values were measured.
-- Confirm which stored PLC curves or trajectory commands are available for a
-  closer-to-ideal, time-varying floor trajectory. The current one-way S-curve
-  is only a bounded first trial.
+- Confirm which stored PLC curves are loaded on each drive. The Soliton tab's
+  Start Curve route depends on them, and only drive 1's archived configuration
+  is known to hold one.
 - Establish an inspected mechanical stopping limit and compare actual drive
   position/following error with water observations before raising trial bounds.
 - Decide how the operator will extract observed height from the camera or other manual measurement before later automating the process.

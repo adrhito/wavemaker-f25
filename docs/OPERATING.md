@@ -350,7 +350,7 @@ the boxes saying why. Nothing is sent to the machine until it is valid.
 **Position limit:** The application accepts positions from -20 through 370 mm.
 The drive's own configured envelope (`LinMot Drive Config`) is -57 through
 453 mm, with home at 390 mm. The application limit is narrower than the drive
-envelope; do not infer clearance for the assembled floor from either value.
+envelope; do not infer mechanical clearance from either value.
 
 **Acceleration: 20,000 or 50,000?** The application enforces 20,000. The old
 tooltips said 50,000 while the old code rejected anything above 20,000, so the
