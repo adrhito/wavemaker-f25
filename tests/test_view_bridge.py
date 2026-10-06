@@ -109,7 +109,7 @@ def test_state_changed_reaches_every_tab(window):
 
 def test_tab_routing_matches_the_notebook_order(window):
     """Selecting a tab must run that tab's own onSelect, not its neighbour's."""
-    order = (window.operate, window.wave, window.soliton,
+    order = (window.operate, window.wave,
              window.preset_options, window.diagnostics, window.feedback)
     assert window.tabControl.index("end") == len(order)
 
