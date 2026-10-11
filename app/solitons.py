@@ -22,17 +22,19 @@ _HALF_HEIGHT_ARGUMENT = math.acosh(math.sqrt(2.0))
 BOTTOM_MM = params.BY_NAME["Position 2"].maximum
 TRIAL_POSITION_TOLERANCE_MM = 2.0
 
-# The pulse was first held to the shipped gentle preset (120 mm, 200 mm/s),
-# and the waves it made were too small to judge: 120 mm of travel is far less
-# water than a soliton in this tank carries.  Lift may now use the full
-# Position range every other tab accepts, and speed the full Speed range.
-# Acceleration and jerk stay at the gentle preset for now.  These are software
-# bounds, not a measured safe stopping limit.
+# The pulse was first held to the shipped gentle preset (120 mm, 200 mm/s,
+# 4,000 mm/s², jerk 2,000 mm/s³), and the waves it made were too small to
+# judge, mostly because 120 mm of travel is far less water than a soliton in
+# this tank carries.  The pulse may now use the full Position range every
+# other tab accepts.  Its speed, acceleration and jerk are worked out for each
+# pulse from the wave itself (see SolitonTrial), and never exceed the
+# strongest motion the shipped presets already run on this array (Maximum,
+# Lil wave demo, Big Wave Demo).  These are software bounds, not a measured
+# safe stopping limit.
 MAX_TRIAL_LIFT_MM = BOTTOM_MM - params.BY_NAME["Position 1"].minimum
 MAX_TRIAL_SPEED_MM_S = params.BY_NAME["Speed 1"].maximum
-TRIAL_ACCEL_MM_S2 = 4000
-TRIAL_DECEL_MM_S2 = 4000
-TRIAL_JERK_MM_S3 = 2000
+MAX_TRIAL_ACCEL_MM_S2 = 20000
+MAX_TRIAL_JERK_MM_S3 = 7500
 
 # Staging only moves the floor into place before the water settles, so it
 # keeps the gentle preset's motion: a hard staging move would make the very
@@ -126,10 +128,13 @@ def _s_curve_seconds(distance: float, speed: float, accel: float,
 class SolitonTrial:
     """A bounded one-way floor lift to try against a solitary-wave target.
 
-    The independent ``floor_lift_mm`` is deliberate: no measured transfer
-    function maps a requested water crest to floor travel yet.  Width is used
-    only to estimate a traversal speed from shallow-water phase speed.  A
-    point-to-point S-curve cannot reproduce the ideal sech² velocity pulse.
+    The floor's travel follows the ideal soliton-making trajectory
+    X(t) = (S/2)(1 + tanh(wt)), whose time scale w is the time for the
+    target's width to pass at its phase speed.  That fixes the peak speed
+    (Sw/2), peak acceleration (0.385 S w²) and peak jerk (S w³) the S-curve
+    is given, so a long, low soliton in deep water gets the long, gentle
+    push it needs instead of a hard knock that only makes ripples.  A
+    point-to-point S-curve is still only an approximation of that tanh.
     """
 
     target: SolitaryTarget
@@ -147,23 +152,51 @@ class SolitonTrial:
         return BOTTOM_MM - self.floor_lift_mm
 
     @property
+    def _rate(self) -> float:
+        """The trajectory's time scale w, in 1/s."""
+        return (2.0 * _HALF_HEIGHT_ARGUMENT * self.target.phase_speed_mm_s /
+                self.target.width_mm)
+
+    @property
     def requested_speed_mm_s(self) -> float:
-        return self.floor_lift_mm / self.target.half_height_seconds
+        return self.floor_lift_mm * self._rate / 2.0
+
+    @property
+    def requested_accel_mm_s2(self) -> float:
+        return self.floor_lift_mm * self._rate ** 2 * 2.0 / (3.0 * math.sqrt(3.0))
+
+    @property
+    def requested_jerk_mm_s3(self) -> float:
+        return self.floor_lift_mm * self._rate ** 3
 
     @property
     def speed_mm_s(self) -> int:
-        return max(1, min(int(round(self.requested_speed_mm_s)),
+        return max(1, min(int(math.ceil(self.requested_speed_mm_s)),
                           MAX_TRIAL_SPEED_MM_S))
 
     @property
+    def accel_mm_s2(self) -> int:
+        """Used for deceleration too: the ideal push is symmetric."""
+        return max(1, min(int(math.ceil(self.requested_accel_mm_s2)),
+                          MAX_TRIAL_ACCEL_MM_S2))
+
+    @property
+    def jerk_mm_s3(self) -> int:
+        return max(1, min(int(math.ceil(self.requested_jerk_mm_s3)),
+                          MAX_TRIAL_JERK_MM_S3))
+
+    @property
     def speed_limited(self) -> bool:
-        return self.requested_speed_mm_s > MAX_TRIAL_SPEED_MM_S
+        """True when any cap stops the drive following the ideal push."""
+        return (self.requested_speed_mm_s > MAX_TRIAL_SPEED_MM_S or
+                self.requested_accel_mm_s2 > MAX_TRIAL_ACCEL_MM_S2 or
+                self.requested_jerk_mm_s3 > MAX_TRIAL_JERK_MM_S3)
 
     @property
     def nominal_travel_seconds(self) -> float:
         """Expected duration of the pulse, including its S-curve ramps."""
         return _s_curve_seconds(self.floor_lift_mm, self.speed_mm_s,
-                                TRIAL_ACCEL_MM_S2, TRIAL_JERK_MM_S3)
+                                self.accel_mm_s2, self.jerk_mm_s3)
 
     @staticmethod
     def _motion_values(destination_mm: int, speed_mm_s: int,
@@ -194,5 +227,5 @@ class SolitonTrial:
     def pulse_parameters(self):
         """One controlled upward move; no immediate return wave."""
         return self._motion_values(self.top_mm, self.speed_mm_s,
-                                   TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2,
-                                   TRIAL_JERK_MM_S3)
+                                   self.accel_mm_s2, self.accel_mm_s2,
+                                   self.jerk_mm_s3)

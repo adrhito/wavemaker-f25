@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from app import paths, tags
-from app.solitons import SolitonTrial, TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2, TRIAL_JERK_MM_S3
+from app.solitons import SolitonTrial
 
 
 _RECORD_LOCK = threading.RLock()
@@ -75,9 +75,9 @@ def save_trial(trial: SolitonTrial, axes: Iterable[int],
         "actual_start_positions_mm": actual_start_positions_mm or {},
         "actual_end_positions_mm": actual_end_positions_mm or {},
         "command_speed_mm_s": trial.speed_mm_s,
-        "command_accel_mm_s2": TRIAL_ACCEL_MM_S2,
-        "command_decel_mm_s2": TRIAL_DECEL_MM_S2,
-        "command_jerk_mm_s3": TRIAL_JERK_MM_S3,
+        "command_accel_mm_s2": trial.accel_mm_s2,
+        "command_decel_mm_s2": trial.accel_mm_s2,
+        "command_jerk_mm_s3": trial.jerk_mm_s3,
         "command_profile": "S-curve",
         "observed_crest_rise_mm": None,
         "observed_crest_to_trough_mm": None,

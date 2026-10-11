@@ -18,14 +18,12 @@ from typing import Optional, Sequence
 from app import paths
 from app.solitons import (
     BOTTOM_MM, MAX_TRIAL_LIFT_MM, MAX_TRIAL_SPEED_MM_S,
-    TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2, TRIAL_JERK_MM_S3,
-    TRIAL_POSITION_TOLERANCE_MM, SolitaryTarget,
+    TRIAL_POSITION_TOLERANCE_MM, SolitaryTarget, SolitonTrial,
 )
 
 
 MIN_REPEATS_PER_LIFT = 3
 MAX_WIDTH_ERROR_FRACTION = 0.15
-MAX_PULSE_TIME_ERROR_FRACTION = 0.10
 MAX_HEIGHT_SPREAD_FRACTION = 0.15
 MAX_HEIGHT_SPREAD_MM = 5.0
 
@@ -72,10 +70,9 @@ def _core_matches(record: dict, target: SolitaryTarget,
         return False
     if record.get("command_profile") != "S-curve":
         return False
+    # Speed, acceleration and jerk follow the lift, so they are checked per
+    # run in _matching_observation rather than against one fixed value.
     if any(not _same(record.get(name), value) for name, value in (
-            ("command_accel_mm_s2", TRIAL_ACCEL_MM_S2),
-            ("command_decel_mm_s2", TRIAL_DECEL_MM_S2),
-            ("command_jerk_mm_s3", TRIAL_JERK_MM_S3),
             ("target_fwhm_width_mm", target.width_mm),
             ("still_water_depth_mm", target.water_depth_mm),
             ("measurement_station_mm", station_mm))):
@@ -104,20 +101,28 @@ def _matching_observation(record: dict, target: SolitaryTarget,
         return None
     if not _same(record.get("floor_end_mm"), BOTTOM_MM - lift):
         return None
+    # The run must have been fired with exactly the motion this software
+    # commands for its own target and lift today, and not clipped by a cap.
+    # Runs made under older fixed motion settings are a different experiment.
+    # Its own crest target is used because calibration deliberately compares
+    # runs aimed at different heights over the same width and depth.
+    fired_crest = _number(record.get("target_crest_rise_mm"))
+    if fired_crest is None or fired_crest <= 0:
+        return None
+    expected = SolitonTrial(
+        SolitaryTarget(fired_crest, target.width_mm, target.water_depth_mm),
+        int(lift))
+    if expected.speed_limited or not _same(speed, expected.speed_mm_s):
+        return None
     command = record.get("pulse_command_parameters")
-    if (not isinstance(command, dict) or
-            not _same(command.get("Position 1"), BOTTOM_MM - lift) or
-            not _same(command.get("Position 2"), BOTTOM_MM - lift) or
-            not _same(command.get("Speed 1"), speed) or
-            not _same(command.get("Speed 2"), speed) or
-            not _same(command.get("Profile"), 2) or
-            not _same(command.get("Move Type"), 0)):
+    wanted = expected.pulse_parameters()
+    if not isinstance(command, dict) or any(
+            not _same(command.get(name), wanted[name]) for name in (
+                "Position 1", "Position 2", "Speed 1", "Speed 2",
+                "Accel 1", "Accel 2", "Decel 1", "Decel 2",
+                "Jerk 1", "Jerk 2", "Profile", "Move Type")):
         return None
     if abs(width / target.width_mm - 1.0) > MAX_WIDTH_ERROR_FRACTION:
-        return None
-    pulse_time = lift / speed
-    if (abs(pulse_time / target.half_height_seconds - 1.0) >
-            MAX_PULSE_TIME_ERROR_FRACTION):
         return None
 
     starts = record.get("actual_start_positions_mm")

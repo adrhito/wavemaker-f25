@@ -222,10 +222,16 @@ def test_stop_during_pulse_does_not_park_or_wait_for_stroke(
     assert record["motion_timing"]["endpoint_confirmed_elapsed_s"] is None
 
 
-def test_trial_parameters_do_not_exceed_existing_gentle_preset(trial):
-    for values in (trial.stage_parameters(), trial.pulse_parameters()):
+def test_trial_parameters_stay_within_what_the_presets_already_run(trial):
+    # The pulse may be as strong as the shipped Maximum preset, never more;
+    # staging stays at the gentle preset so it does not make its own wave.
+    stage, pulse = trial.stage_parameters(), trial.pulse_parameters()
+    for values in (stage, pulse):
         assert not params.validate_all(values)
-        assert values["Speed 1"] <= 200
-        assert values["Decel 1"] <= 4000
-        assert values["Jerk 1"] <= 2000
+        assert values["Speed 1"] <= 900
+        assert values["Decel 1"] <= 20000
+        assert values["Jerk 1"] <= 7500
         assert values["Position 1"] <= BOTTOM_MM
+    assert stage["Speed 1"] <= 200
+    assert stage["Decel 1"] <= 4000
+    assert stage["Jerk 1"] <= 2000
