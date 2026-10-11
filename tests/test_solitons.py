@@ -5,7 +5,8 @@ import math
 import pytest
 
 from app.solitons import (
-    BOTTOM_MM, MAX_TRIAL_SPEED_MM_S, SolitaryTarget, SolitonTrial,
+    BOTTOM_MM, MAX_TRIAL_SPEED_MM_S, STAGE_SPEED_MM_S, SolitaryTarget,
+    SolitonTrial,
 )
 
 
@@ -72,3 +73,11 @@ def test_width_slider_changes_the_commanded_floor_speed():
 def test_trial_rejects_invalid_lift(lift):
     with pytest.raises(ValueError):
         SolitonTrial(SolitaryTarget(30, 600, 150), lift)
+
+
+def test_staging_keeps_its_own_gentle_motion():
+    trial = SolitonTrial(SolitaryTarget(100, 100, 100), 120)
+    stage = trial.stage_parameters()
+    assert stage["Speed 1"] == STAGE_SPEED_MM_S == 200
+    assert stage["Accel 1"] == stage["Decel 1"] == 4000
+    assert stage["Jerk 1"] == 2000

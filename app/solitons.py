@@ -30,6 +30,14 @@ TRIAL_JERK_MM_S3 = 2000
 BOTTOM_MM = params.BY_NAME["Position 2"].maximum
 TRIAL_POSITION_TOLERANCE_MM = 2.0
 
+# Staging only moves the floor into place before the water settles, so it
+# keeps the gentle preset's motion: a hard staging move would make the very
+# wave the operator is about to wait out.
+STAGE_SPEED_MM_S = 200
+STAGE_ACCEL_MM_S2 = 4000
+STAGE_DECEL_MM_S2 = 4000
+STAGE_JERK_MM_S3 = 2000
+
 
 @dataclass(frozen=True)
 class SolitaryTarget:
@@ -125,19 +133,20 @@ class SolitonTrial:
         return self.floor_lift_mm / float(self.speed_mm_s)
 
     @staticmethod
-    def _motion_values(destination_mm: int, speed_mm_s: int):
+    def _motion_values(destination_mm: int, speed_mm_s: int,
+                       accel: int, decel: int, jerk: int):
         values = params.defaults()
         values.update({
             "Position 1": destination_mm,
             "Position 2": destination_mm,
             "Speed 1": speed_mm_s,
             "Speed 2": speed_mm_s,
-            "Accel 1": TRIAL_ACCEL_MM_S2,
-            "Accel 2": TRIAL_ACCEL_MM_S2,
-            "Decel 1": TRIAL_DECEL_MM_S2,
-            "Decel 2": TRIAL_DECEL_MM_S2,
-            "Jerk 1": TRIAL_JERK_MM_S3,
-            "Jerk 2": TRIAL_JERK_MM_S3,
+            "Accel 1": accel,
+            "Accel 2": accel,
+            "Decel 1": decel,
+            "Decel 2": decel,
+            "Jerk 1": jerk,
+            "Jerk 2": jerk,
             "Profile": 2,  # S-curve: controlled deceleration into the endpoint.
             "Move Type": 0,
         })
@@ -145,8 +154,12 @@ class SolitonTrial:
 
     def stage_parameters(self):
         """Slowly lower the selected floor sections before a separate fire."""
-        return self._motion_values(BOTTOM_MM, MAX_TRIAL_SPEED_MM_S)
+        return self._motion_values(BOTTOM_MM, STAGE_SPEED_MM_S,
+                                   STAGE_ACCEL_MM_S2, STAGE_DECEL_MM_S2,
+                                   STAGE_JERK_MM_S3)
 
     def pulse_parameters(self):
         """One controlled upward move; no immediate return wave."""
-        return self._motion_values(self.top_mm, self.speed_mm_s)
+        return self._motion_values(self.top_mm, self.speed_mm_s,
+                                   TRIAL_ACCEL_MM_S2, TRIAL_DECEL_MM_S2,
+                                   TRIAL_JERK_MM_S3)
