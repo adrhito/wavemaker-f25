@@ -4,9 +4,10 @@ import math
 
 import pytest
 
+from app import params
 from app.solitons import (
-    BOTTOM_MM, MAX_TRIAL_SPEED_MM_S, STAGE_SPEED_MM_S, SolitaryTarget,
-    SolitonTrial,
+    BOTTOM_MM, MAX_TRIAL_LIFT_MM, MAX_TRIAL_SPEED_MM_S, STAGE_SPEED_MM_S,
+    SolitaryTarget, SolitonTrial,
 )
 
 
@@ -69,7 +70,7 @@ def test_width_slider_changes_the_commanded_floor_speed():
     assert narrow.pulse_parameters()["Speed 1"] > broad.pulse_parameters()["Speed 1"]
 
 
-@pytest.mark.parametrize("lift", [0, 121, 1.5, True])
+@pytest.mark.parametrize("lift", [0, MAX_TRIAL_LIFT_MM + 1, 1.5, True])
 def test_trial_rejects_invalid_lift(lift):
     with pytest.raises(ValueError):
         SolitonTrial(SolitaryTarget(30, 600, 150), lift)
@@ -81,3 +82,17 @@ def test_staging_keeps_its_own_gentle_motion():
     assert stage["Speed 1"] == STAGE_SPEED_MM_S == 200
     assert stage["Accel 1"] == stage["Decel 1"] == 4000
     assert stage["Jerk 1"] == 2000
+
+
+def test_pulse_can_use_the_full_travel_and_speed_other_tabs_accept():
+    # The old 120 mm / 200 mm/s caps made waves too small to judge.
+    assert MAX_TRIAL_LIFT_MM == (params.BY_NAME["Position 2"].maximum -
+                                 params.BY_NAME["Position 1"].minimum)
+    assert MAX_TRIAL_SPEED_MM_S == params.BY_NAME["Speed 1"].maximum
+    trial = SolitonTrial(SolitaryTarget(100, 100, 100), MAX_TRIAL_LIFT_MM)
+    pulse = trial.pulse_parameters()
+    assert pulse["Position 1"] == params.BY_NAME["Position 1"].minimum
+    assert pulse["Speed 1"] == MAX_TRIAL_SPEED_MM_S
+    assert not params.validate_all(pulse)
+    assert not params.validate_all(trial.stage_parameters())
+    assert trial.stage_parameters()["Speed 1"] == STAGE_SPEED_MM_S

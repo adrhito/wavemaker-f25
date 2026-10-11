@@ -12,7 +12,7 @@ import math
 from tkinter import Canvas, IntVar, StringVar, TclError, Toplevel, messagebox, ttk
 
 from app import soliton_calibration, soliton_records, tags
-from app.solitons import SolitaryTarget, SolitonTrial
+from app.solitons import MAX_TRIAL_LIFT_MM, SolitaryTarget, SolitonTrial
 from Model import MachineState, Model
 from modules.widgets import RoundedButton
 from style import theme
@@ -66,7 +66,7 @@ class SolitonDesigner:
                       "mm along the tank, at half height")
         self._control(controls, 2, "STILL-WATER DEPTH", self.depth, 50, 500,
                       "mm; measure for each trial")
-        self._control(controls, 3, "FLOOR LIFT", self.lift, 1, 120,
+        self._control(controls, 3, "FLOOR LIFT", self.lift, 1, MAX_TRIAL_LIFT_MM,
                       "mm of motor travel; uncalibrated")
         ttk.Label(controls, text="MEASUREMENT STATION",
                   style="CardDim.TLabel").grid(

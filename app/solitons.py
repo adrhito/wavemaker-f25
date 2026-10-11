@@ -19,16 +19,20 @@ from app import params
 GRAVITY_MM_S2 = 9810.0
 _HALF_HEIGHT_ARGUMENT = math.acosh(math.sqrt(2.0))
 
-# Until the lab establishes a safe stopping limit, this trial uses no more
-# than the speed and acceleration of the shipped gentle piston preset.  These
-# are conservative software bounds, not a certification of mechanical safety.
-MAX_TRIAL_LIFT_MM = 120
-MAX_TRIAL_SPEED_MM_S = 200
+BOTTOM_MM = params.BY_NAME["Position 2"].maximum
+TRIAL_POSITION_TOLERANCE_MM = 2.0
+
+# The pulse was first held to the shipped gentle preset (120 mm, 200 mm/s),
+# and the waves it made were too small to judge: 120 mm of travel is far less
+# water than a soliton in this tank carries.  Lift may now use the full
+# Position range every other tab accepts, and speed the full Speed range.
+# Acceleration and jerk stay at the gentle preset for now.  These are software
+# bounds, not a measured safe stopping limit.
+MAX_TRIAL_LIFT_MM = BOTTOM_MM - params.BY_NAME["Position 1"].minimum
+MAX_TRIAL_SPEED_MM_S = params.BY_NAME["Speed 1"].maximum
 TRIAL_ACCEL_MM_S2 = 4000
 TRIAL_DECEL_MM_S2 = 4000
 TRIAL_JERK_MM_S3 = 2000
-BOTTOM_MM = params.BY_NAME["Position 2"].maximum
-TRIAL_POSITION_TOLERANCE_MM = 2.0
 
 # Staging only moves the floor into place before the water settles, so it
 # keeps the gentle preset's motion: a hard staging move would make the very
