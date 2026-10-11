@@ -8,6 +8,7 @@ from app import params
 from app.solitons import (
     BOTTOM_MM, MAX_TRIAL_ACCEL_MM_S2, MAX_TRIAL_JERK_MM_S3, MAX_TRIAL_LIFT_MM,
     MAX_TRIAL_SPEED_MM_S, STAGE_SPEED_MM_S, SolitaryTarget, SolitonTrial,
+    plate_footprint_mm, volume_lift_mm,
 )
 
 
@@ -101,9 +102,12 @@ def theory_target(crest, depth):
                           depth)
 
 
-def test_eighty_mm_in_deep_water_gets_the_motion_worked_out_by_hand():
-    """240 mm for 80 mm in 394 mm of water: the figures given the lab."""
-    trial = SolitonTrial(theory_target(80, 394), 240)
+def test_nine_plates_need_the_travel_worked_out_by_hand():
+    """80 mm in 394 mm of water from 3 x 3 plates: the figures given the lab."""
+    target = theory_target(80, 394)
+    assert plate_footprint_mm(9) == pytest.approx(673.0)
+    assert volume_lift_mm(target, 9) == pytest.approx(240, abs=2)
+    trial = SolitonTrial(target, 240)
     assert trial.speed_mm_s == pytest.approx(257, abs=3)
     assert trial.accel_mm_s2 == pytest.approx(422, abs=5)
     assert trial.jerk_mm_s3 == pytest.approx(2339, abs=25)
@@ -111,6 +115,12 @@ def test_eighty_mm_in_deep_water_gets_the_motion_worked_out_by_hand():
     pulse = trial.pulse_parameters()
     assert pulse["Decel 1"] == pulse["Accel 1"] == trial.accel_mm_s2
     assert pulse["Jerk 2"] == trial.jerk_mm_s3
+
+
+def test_more_plates_need_less_travel_and_none_need_nothing():
+    target = theory_target(60, 394)
+    assert volume_lift_mm(target, 3) == pytest.approx(3 * volume_lift_mm(target, 9))
+    assert volume_lift_mm(target, 0) == 0.0
 
 
 def test_a_long_deep_water_soliton_gets_a_gentle_push():

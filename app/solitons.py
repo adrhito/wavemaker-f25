@@ -36,6 +36,16 @@ MAX_TRIAL_SPEED_MM_S = params.BY_NAME["Speed 1"].maximum
 MAX_TRIAL_ACCEL_MM_S2 = 20000
 MAX_TRIAL_JERK_MM_S3 = 7500
 
+# The tank, for working out how far the plates must move to carry one
+# soliton's worth of water.  The width was measured by the operator (26.5 in).
+# Three plates fill that width; their length along the tank has NOT been
+# measured, and is taken as square until it is.  The lift scales directly
+# with PLATE_LENGTH_MM, so measure a plate and correct it here.
+TANK_WIDTH_MM = 673.0
+PLATES_ACROSS = 3
+PLATE_WIDTH_MM = TANK_WIDTH_MM / PLATES_ACROSS
+PLATE_LENGTH_MM = PLATE_WIDTH_MM
+
 # Staging only moves the floor into place before the water settles, so it
 # keeps the gentle preset's motion: a hard staging move would make the very
 # wave the operator is about to wait out.
@@ -94,6 +104,35 @@ class SolitaryTarget:
         # Avoid overflow in cosh for distant preview samples.
         argument = min(abs(k * x_mm), 350.0)
         return self.crest_height_mm / math.cosh(argument) ** 2
+
+
+def plate_footprint_mm(piston_count: int) -> float:
+    """Length of tank the selected plates cover, averaged across its width.
+
+    Water carried per millimetre of tank width is plate area times travel
+    divided by the tank width, so nine plates three-across act like one plate
+    three plates long spanning the whole width.
+    """
+    return (max(int(piston_count), 0) * PLATE_LENGTH_MM * PLATE_WIDTH_MM /
+            TANK_WIDTH_MM)
+
+
+def volume_lift_mm(target: SolitaryTarget, piston_count: int) -> float:
+    """Plate travel that moves one soliton's worth of water, in mm.
+
+    A soliton H sech²(kx) carries 2H/k of water per unit tank width.  Plates
+    that nearly fill the tank move their footprint times their travel, so the
+    travel is 2H / (k * footprint).  This assumes every plate passes its full
+    area of water into the wave; plates with water above and below them
+    probably pass less, so the real crest is expected to fall short and the
+    operator may need to ask for more.  Returns 0 with nothing selected.
+    """
+    footprint = plate_footprint_mm(piston_count)
+    if footprint <= 0:
+        return 0.0
+    k = math.sqrt(3.0 * target.crest_height_mm /
+                  (4.0 * target.water_depth_mm ** 3))
+    return 2.0 * target.crest_height_mm / (k * footprint)
 
 
 def _s_curve_seconds(distance: float, speed: float, accel: float,
