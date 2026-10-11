@@ -94,6 +94,34 @@ class SolitaryTarget:
         return self.crest_height_mm / math.cosh(argument) ** 2
 
 
+def _s_curve_seconds(distance: float, speed: float, accel: float,
+                     jerk: float) -> float:
+    """Duration of a symmetric jerk-limited point-to-point move.
+
+    The drive honours jerk in mm/s³ (the measured BIGGER WAVE cycle only fits
+    that reading), so lift/speed badly underestimates a gentle move.
+    """
+    def ramp(peak):
+        # Time and distance to reach ``peak`` speed from rest.
+        if peak >= accel * accel / jerk:
+            seconds = peak / accel + accel / jerk
+        else:
+            seconds = 2.0 * math.sqrt(peak / jerk)
+        return seconds, peak * seconds / 2.0
+
+    seconds, covered = ramp(speed)
+    if 2.0 * covered <= distance:
+        return 2.0 * seconds + (distance - 2.0 * covered) / speed
+    low, high = 0.0, speed  # Too short to reach full speed: find the peak.
+    for _ in range(60):
+        middle = (low + high) / 2.0
+        if 2.0 * ramp(middle)[1] < distance:
+            low = middle
+        else:
+            high = middle
+    return 2.0 * ramp(high)[0]
+
+
 @dataclass(frozen=True)
 class SolitonTrial:
     """A bounded one-way floor lift to try against a solitary-wave target.
@@ -133,8 +161,9 @@ class SolitonTrial:
 
     @property
     def nominal_travel_seconds(self) -> float:
-        # Actual travel is longer when acceleration and jerk are active.
-        return self.floor_lift_mm / float(self.speed_mm_s)
+        """Expected duration of the pulse, including its S-curve ramps."""
+        return _s_curve_seconds(self.floor_lift_mm, self.speed_mm_s,
+                                TRIAL_ACCEL_MM_S2, TRIAL_JERK_MM_S3)
 
     @staticmethod
     def _motion_values(destination_mm: int, speed_mm_s: int,

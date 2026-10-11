@@ -96,3 +96,11 @@ def test_pulse_can_use_the_full_travel_and_speed_other_tabs_accept():
     assert not params.validate_all(pulse)
     assert not params.validate_all(trial.stage_parameters())
     assert trial.stage_parameters()["Speed 1"] == STAGE_SPEED_MM_S
+
+
+def test_travel_time_includes_the_s_curve_ramps():
+    target = SolitaryTarget(80, 1780, 394)
+    trial = SolitonTrial(target, 240)
+    assert trial.nominal_travel_seconds > 240 / trial.speed_mm_s
+    longer = SolitonTrial(target, 300)
+    assert longer.nominal_travel_seconds > trial.nominal_travel_seconds
