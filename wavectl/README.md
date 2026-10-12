@@ -123,8 +123,9 @@ A session killed outright cannot drop its own run bits, so after anything
 abrupt run `wavectl/wm stop` before walking away.
 
 Dropping the run bits is all any of these can do, and it does not freeze the
-pistons: each completes the leg it is on, up to a whole stroke further. The
-physical stop is still the physical stop.
+pistons: each completes the move it is on. That is up to a whole stroke, and
+more when a piston is still on its way onto the stroke from where it was
+resting. The physical stop is still the physical stop.
 
 ## A soliton trial
 
@@ -179,33 +180,38 @@ On 12 October 2026, from the Mac, on pistons 1 to 3 with a 60 mm stroke at
 | Command | What happened |
 |---|---|
 | `survey -p` | Read the controller (a 1756-L82E) and all thirty drives in 0.3 s. |
-| `session start --live`, `status`, `session info` | Session up and answering. This was the earlier start, which cleared the machine as the window does; see below. |
+| `session start --live` | Up in 0.2 s. A survey before and after read the same position and drive state on all thirty pistons. |
+| `status`, `session info`, `log` | As on the mock. |
 | `select`, `set`, `params` | As on the mock. |
-| `prepare` | Booted and homed the three pistons in 45 s; they came to rest at 350 mm. |
+| `prepare` | Booted and homed the three pistons in 31 and 45 s; they came to rest at 350 mm. |
 | `run --single --sample 25` | Down to 60 mm, up to the top of the stroke, back to 60.1 to 60.3 mm. Sampled at 24.9 Hz. |
 | `run --seconds 10 --sample 25`, `wait` | Twelve reversals, each piston covering 60.1 to 60.2 mm, then stopped itself with the run bits clear. |
-| `stop --now` mid-run, `watch` | Run bits low within 80 ms. |
+| `stop --now` mid-run, `watch` | Run bits low within 80 ms; the pistons then finished the move they were on. |
+| `stop` mid-run | Finished the stroke and parked at 369.7 mm, 3.9 s in all. |
 | `stop` at rest | Moved nothing. |
 | `park` | To 368.5 mm in under 3 s. |
 | `session stop` | Run bits clear, drives off, session file gone. |
 
-Two things that run taught, both now reflected in the code:
+Two things those runs taught, both now reflected in the code:
 
-- **Dropping the run bits does not freeze a piston.** Recorded at 30 Hz, an
-  immediate stop sent with the pistons at 44 to 49 mm of a 0 to 60 mm stroke
-  was followed by 0.2 s more travel to exactly 60.0 mm; in another run they
-  went about 55 mm further. Each drive finishes the leg it is on. `stop`
-  therefore waits for the pistons to stand still before it says where they
-  are, and says how much further they went.
-- **Switching a drive off lets its piston sink.** The session used to open
-  the way the window does, by clearing the machine. Pistons 1 to 3 were
-  being held at 120 mm; that switched their drives off and they sank to 126,
-  260 and 151 mm. A session now writes nothing when it starts. Ending one
-  still switches its drives off, from 369 mm that cost 0.6 mm, so park first.
+- **Dropping the run bits does not freeze a piston.** Each drive finishes
+  the move it is on. Recorded at 30 Hz, an immediate stop sent with the
+  pistons at 44 to 49 mm of a 0 to 60 mm stroke was followed by 0.2 s more
+  travel to exactly 60.0 mm. Another, sent near the top, by about 55 mm. A
+  third, sent while the pistons were still coming down from their 350 mm
+  resting place to begin that stroke, by 115 mm, nearly twice the stroke.
+  `stop` therefore waits for the pistons to stand still before it says where
+  they are, and says how much further they went.
+- **Switching a drive off lets its piston sink.** The session at first
+  opened the way the window does, by clearing the machine. Pistons 1 to 3
+  were being held at 120 mm; that switched their drives off and they sank to
+  126, 260 and 151 mm. A session now writes nothing when it starts. Ending
+  one still switches its drives off. From 369 mm that cost a fraction of a
+  millimetre, so park first.
 
-Not run on the machine: `preset`, `calibrate`, `speed`, `stroke`, a `stop`
-that rests the pistons after a run, `stop --direct`, `session stop --force`,
-and everything under `soliton`, `trial` and `camera`.
+Not run on the machine: `preset`, `calibrate`, `speed`, `stroke`,
+`stop --direct`, `session stop --force`, and everything under `soliton`,
+`trial` and `camera`.
 
 ## Not yet proven
 

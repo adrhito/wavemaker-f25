@@ -142,10 +142,12 @@ class MotionOperations:
         The model calls the machine stopped once the run bits are low, and
         the pistons are not. Measured on the array on 12 October 2026, on
         pistons 1 to 3 with a 60 mm stroke at 150 mm/s: after an immediate
-        stop each piston carried on to the end of the leg it was on, 0.2 s
-        and 15 mm later in one run and about 55 mm later in another. An
-        answer that read the positions as soon as the bits dropped said
-        "between 1 and 5 mm" of pistons that came to rest at 60.
+        stop each piston carried on to the end of the move it was on: 15 mm
+        and 0.2 s later in one run, about 55 mm in another, and 115 mm in a
+        third, where the stop came while they were still travelling from
+        their resting place onto the stroke. An answer that read the
+        positions as soon as the bits dropped said "between 1 and 5 mm" of
+        pistons that came to rest at 60.
 
         So where the pistons are is read only once it has stopped changing.
         Returns None if they were still moving when the wait ran out, or

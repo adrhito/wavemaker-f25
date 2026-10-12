@@ -187,11 +187,13 @@ piston 1 wants looking at mechanically before anything else.
 Measured through `wavectl` on 12 October 2026, pistons 1 to 3, 60 mm stroke
 at 150 mm/s, positions recorded at 30 Hz:
 
-- **Dropping Run_2 does not freeze a piston.** It finishes the leg it is on
-  and holds at that end of the stroke. A stop sent at 44 to 49 mm was
-  followed by 0.2 s of travel to exactly 60.0 mm; another, sent near the top,
-  by about 55 mm. "Stopped" in the application means the run bits are low,
-  so read positions only after they have stopped changing.
+- **Dropping Run_2 does not freeze a piston.** It finishes the move it is
+  on and holds there. A stop sent at 44 to 49 mm was followed by 0.2 s of
+  travel to exactly 60.0 mm; another, sent near the top, by about 55 mm. A
+  third came while the pistons were still coming down from 350 mm to begin
+  the stroke, and they went on 115 mm to Position 1, nearly twice the
+  stroke. "Stopped" in the application means the run bits are low, so read
+  positions only after they have stopped changing.
 - **A drive that is switched off lets its piston sink.** Pistons held at
   120 mm were de-energised by the application's motors-off sequence (run bits
   low, fault clear pulsed, Live_Motors cleared) and came to rest at 126, 260
