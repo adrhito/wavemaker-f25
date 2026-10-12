@@ -1,0 +1,16 @@
+{
+  "note": "Placeholder numbers showing the layout of a rig file. Replace every value with what was measured at the tank; this file describes no real camera position.",
+  "markers_mm": {
+    "0": [100.0, 560.0],
+    "1": [700.0, 560.0],
+    "2": [1300.0, 560.0],
+    "3": [100.0, 120.0],
+    "4": [700.0, 120.0],
+    "5": [1300.0, 120.0]
+  },
+  "x_range_mm": [40.0, 1360.0],
+  "z_range_mm": [300.0, 520.0],
+  "glass_thickness_mm": 0.0,
+  "camera_distance_mm": 0.0,
+  "water_is_darker": null
+}
