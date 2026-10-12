@@ -279,6 +279,14 @@ class SolitonDesigner:
                 self.lift.set(lift)
         finally:
             self._applying = False
+        if count == 0:
+            return ("Select the pistons to use on Operate; the floor lift is "
+                    "worked out from how many plates are pushing.")
+        if wanted > MAX_TRIAL_LIFT_MM:
+            return ("This wave needs about {0:.0f} mm of travel from {1} "
+                    "piston(s), more than the {2} mm available. It is limited "
+                    "to {2} mm; select more pistons or ask for less height."
+                    .format(wanted, count, MAX_TRIAL_LIFT_MM))
         return None
 
     def _changed(self) -> None:
@@ -457,6 +465,10 @@ class SolitonDesigner:
         dialog.grab_set()
 
     def refresh(self, state: MachineState) -> None:
+        if self.auto.get() and self._auto_count != self._selected_count():
+            # The selection changed on Operate; the lift depends on it.
+            self._changed()
+            return
         try:
             trial = self._trial()
         except ValueError:

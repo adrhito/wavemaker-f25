@@ -156,7 +156,29 @@ def test_soliton_tab_works_out_width_and_lift_from_height_and_depth(window):
         tab.auto.set(True)
 
 
-def test_soliton_tab_follows_the_selection_and_warrs_values(window):
+def test_soliton_tab_follows_the_selection_and_warns_at_full_travel(window):
+    tab = window.soliton
+    try:
+        tab.auto.set(True)
+        tab.depth.set(394)
+        tab.crest.set(80)
+        _select(window, range(1, 10))
+        tab.refresh(window.model.state)
+        nine = tab.lift.get()
+        _select(window, [1, 2, 3])
+        tab.refresh(window.model.state)
+        assert tab.lift.get() > nine
+        assert tab.lift.get() == 390
+        assert "more than the 390 mm available" in tab.warning.cget("text")
+        _select(window, [])
+        tab.refresh(window.model.state)
+        assert "Select the pistons" in tab.warning.cget("text")
+    finally:
+        _select(window, [])
+        tab.auto.set(True)
+
+
+def test_soliton_tab_manual_mode_keeps_the_operators_values(window):
     tab = window.soliton
     try:
         _select(window, range(1, 10))
