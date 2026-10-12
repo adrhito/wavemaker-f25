@@ -1,0 +1,16 @@
+#!/bin/sh
+# Run wavectl from anywhere, with the repository's own Python if it has one.
+#
+# The model imports tkinter, which a bare system Python often lacks, so the
+# virtual environment at the top of the checkout is preferred when it exists.
+# Set WAVECTL_PYTHON to choose another interpreter.
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(dirname "$here")"
+if [ -n "$WAVECTL_PYTHON" ]; then
+    python="$WAVECTL_PYTHON"
+elif [ -x "$root/.venv/bin/python" ]; then
+    python="$root/.venv/bin/python"
+else
+    python="python3"
+fi
+PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" exec "$python" -m wavectl "$@"

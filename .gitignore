@@ -27,3 +27,6 @@ logs/vision/
 analytics/vision/
 *.surface.npz
 *.crest.png
+
+# What a wavectl session writes: its own log and position samples.
+logs/wavectl/

@@ -39,6 +39,19 @@ def instant_timings(monkeypatch):
         monkeypatch.setattr(model_module, name, 0.0)
 
 
+@pytest.fixture(autouse=True)
+def wavectl_kept_off_the_machine(monkeypatch, tmp_path):
+    """Keep ``wavectl`` away from the controller and from any real session.
+
+    Its session file normally lives in the home folder and its live mode opens
+    a socket to 192.168.1.1. A test run on the laptop that is plugged into the
+    array must be able to do neither, whatever the test itself gets wrong.
+    """
+    monkeypatch.setenv("WAVECTL_MOCK_ONLY", "1")
+    monkeypatch.setenv("WAVECTL_HOME", str(tmp_path / "wavectl-home"))
+    monkeypatch.setenv("WAVECTL_DATA", str(tmp_path / "wavectl-data"))
+
+
 @pytest.fixture
 def plc() -> SimulatedPlc:
     return SimulatedPlc()
