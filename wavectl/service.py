@@ -17,7 +17,7 @@ import time
 from logging import getLogger
 from typing import Callable, Dict, Optional
 
-from app import drive_status, params, paths, tags
+from app import params, paths, tags
 from app.plc import PlcError
 from Model import MachineState, Model
 from modules.logging.log_utils import LOGGER_NAME
@@ -190,25 +190,6 @@ class Service(MotionOperations):
 
     # -- reading the machine -----------------------------------------------------
 
-    def _read_piston(self, axis: int) -> dict:
-        """What one drive reports, with its piston's display number."""
-        row = {"piston": tags.display_number(axis)}
-        try:
-            status = int(self.plc.read(tags.axis_field(axis, tags.STATUS_WORD)))
-            warn = int(self.plc.read(tags.axis_field(axis, tags.WARN_WORD)))
-            position = params.to_mm(
-                self.plc.read(tags.axis_field(axis, tags.ACTUAL_POSITION)))
-        except (PlcError, TypeError, ValueError) as exc:
-            row["unreadable"] = str(exc)
-            return row
-        row.update({
-            "mm": round(position, 1),
-            "homed": drive_status.is_homed(status),
-            "enabled": bool(status & 1),
-            "problems": drive_status.problems(warn, status),
-        })
-        return row
-
     def _state_phrase(self) -> str:
         model = self.model
         state = model.state
@@ -274,7 +255,7 @@ class Service(MotionOperations):
         selected = model.live_axes
         axes = list(range(tags.MOTOR_COUNT)) if every else selected
         high = live.bits_high(self.plc)
-        rows = [self._read_piston(axis) for axis in
+        rows = [live.read_drive(self.plc, axis) for axis in
                 sorted(axes, key=tags.display_number)]
 
         parts = [self._state_phrase()]
@@ -286,14 +267,9 @@ class Service(MotionOperations):
             parts.append("no pistons selected")
         parts.append(", ".join(high) + " HIGH" if high else "run bits clear")
 
-        troubled = [row for row in rows
-                    if row.get("unreadable") or row.get("problems")]
+        troubled = live.troubled(rows)
         if troubled:
-            first = troubled[0]
-            what = (first.get("unreadable") or "; ".join(first["problems"]))
-            more = (" (and {0} more)".format(len(troubled) - 1)
-                    if len(troubled) > 1 else "")
-            parts.append("piston {0}: {1}{2}".format(first["piston"], what, more))
+            parts.append(troubled)
         elif rows:
             parts.append("drives ok")
         if model.lagging_axes:
@@ -303,7 +279,7 @@ class Service(MotionOperations):
 
         text = " | ".join(parts)
         if pistons_table:
-            text += "".join("\n" + self._piston_line(row) for row in rows)
+            text += "".join("\n" + live.drive_line(row) for row in rows)
         data = {
             "state": model.state.value,
             "busy": model.busy,
@@ -316,16 +292,6 @@ class Service(MotionOperations):
             "would_not_home": pistons.shown(model.dropped_axes),
         }
         return Result(text, data)
-
-    @staticmethod
-    def _piston_line(row: dict) -> str:
-        if "unreadable" in row:
-            return "{0:>3}  unreadable: {1}".format(row["piston"], row["unreadable"])
-        return "{0:>3}  {1:>6.1f} mm  {2}  {3}  {4}".format(
-            row["piston"], row["mm"],
-            "homed" if row["homed"] else "not homed",
-            "enabled" if row["enabled"] else "off",
-            "; ".join(row["problems"]) or "ok")
 
     def log(self, count: int = 10, full: bool = False) -> Result:
         """The last things the model said, oldest first."""

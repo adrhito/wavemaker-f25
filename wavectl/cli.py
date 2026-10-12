@@ -102,9 +102,12 @@ def _session_stop(args) -> int:
     except client.Silent as exc:
         if not sessionfile.process_exists(pid):
             sessionfile.release()
-            return _fail("the session (process {0}) had already died; its "
-                         "session file is cleared.".format(pid),
-                         args.json, mode, status=0)
+            gone = ("The session (process {0}) had already died; its session "
+                    "file is cleared.".format(pid))
+            if mode == "live":
+                # However it died, it may not have dropped the run bits.
+                return _stop_directly(args, info.get("ip"), info.get("slot"), gone)
+            return _fail(gone, args.json, mode, status=0)
         if not args.force:
             return _silent(exc, args.json)
         reply = None
@@ -130,6 +133,10 @@ def _session_stop(args) -> int:
             break
         _wait_for_exit(pid, 5.0)
     sessionfile.release()
+    if mode == "live":
+        # Killed, it had no chance to drop the run bits on its way out.
+        return _stop_directly(args, info.get("ip"), info.get("slot"),
+                              "Session (process {0}) ended by force.".format(pid))
     return _fail("session (process {0}) ended by force.".format(pid),
                  args.json, mode, status=0)
 
@@ -228,10 +235,66 @@ def _run(args) -> int:
         "ignore_warnings": args.ignore_warnings}, patience)
 
 
+def _stop_directly(args, ip, slot, because: str = "") -> int:
+    """Drop the command bits on a connection of this command's own."""
+    try:
+        ok, text = live.stop_directly(ip or live.DEFAULT_IP,
+                                      live.DEFAULT_SLOT if slot is None else slot)
+    except live.Unreachable as exc:
+        ok, text = False, "{0} Use the physical stop.".format(exc)
+    return _fail((because + " " if because else "") + text, args.json, "live",
+                 status=0 if ok else 1)
+
+
 def _stop(args) -> int:
+    info = sessionfile.read() or {}
+    if args.direct:
+        return _stop_directly(args, args.ip or info.get("ip"),
+                              args.slot if args.slot is not None else info.get("slot"))
     park = True if args.park else False if args.no_park else None
-    return _ask(args, "stop", {"now": args.now, "park": park},
-                seconds=timing.REST_SECONDS + timing.ANSWER_MARGIN_SECONDS)
+    try:
+        reply = client.request(
+            "stop", {"now": args.now, "park": park},
+            timing.REST_SECONDS + timing.ANSWER_MARGIN_SECONDS)
+    except client.NoSession:
+        return _fail("No session, so nothing started here is driving the "
+                     "machine. If something else left a run going, drop it "
+                     "with: wavectl stop --direct", args.json)
+    except client.Silent as exc:
+        if exc.info.get("mode") != "live":
+            return _silent(exc, args.json)
+        # Stop means stop. The session was ours and so are its run bits, so
+        # when it cannot be asked the bits are written from here instead.
+        return _stop_directly(
+            args, exc.info.get("ip"), exc.info.get("slot"),
+            "The session (process {0}) did not answer ({1}), so this command "
+            "stopped the machine itself. Clear the session with: wavectl "
+            "session stop --force.".format(exc.info.get("pid", "?"), exc))
+    if reply.get("ok") or reply.get("mode") != "live":
+        return _show(reply, args.json)
+    # The session answered but could not stop the machine, which usually
+    # means its connection to the controller is what failed. Try a fresh one.
+    return _stop_directly(args, info.get("ip"), info.get("slot"),
+                          "The session could not stop the machine ({0}), so "
+                          "this command tried directly.".format(reply.get("text", "")))
+
+
+def _survey(args) -> int:
+    try:
+        seen = live.survey(args.ip, args.slot)
+    except live.Unreachable as exc:
+        return _fail(str(exc), args.json, "live", status=1)
+    rows = seen["drives"]
+    parts = [", ".join(seen["bits_high"]) + " HIGH" if seen["bits_high"]
+             else "run bits clear",
+             "{0} of {1} drives homed, {2} enabled".format(
+                 sum(1 for row in rows if row.get("homed")), len(rows),
+                 sum(1 for row in rows if row.get("enabled"))),
+             live.troubled(rows) or "drives ok"]
+    text = "read only, {0} | ".format(seen["controller"] or args.ip) + " | ".join(parts)
+    if args.pistons:
+        text += "".join("\n" + live.drive_line(row) for row in rows)
+    return _show({"ok": True, "mode": "live", "text": text, "data": seen}, args.json)
 
 
 def _park(args) -> int:
@@ -384,7 +447,9 @@ def build_parser() -> argparse.ArgumentParser:
     stop = commands.add_parser(
         "stop", parents=[common], help="stop the machine",
         description="By default each piston finishes its stroke and the array "
-                    "then moves to its resting position.")
+                    "then moves to its resting position. If a session on "
+                    "the machine does not answer, the run bits are written "
+                    "low from here instead.")
     stop.add_argument("--now", action="store_true",
                       help="drop the run bits at once; pistons stay where they are")
     resting = stop.add_mutually_exclusive_group()
@@ -392,7 +457,23 @@ def build_parser() -> argparse.ArgumentParser:
                          help="move to the resting position afterwards")
     resting.add_argument("--no-park", action="store_true",
                          help="leave the pistons where the stop catches them")
+    stop.add_argument("--direct", action="store_true",
+                      help="write the run bits low on the controller without "
+                           "asking the session, whoever raised them")
+    stop.add_argument("--ip", help="with --direct: the controller's address")
+    stop.add_argument("--slot", type=int, help="with --direct: processor slot")
     stop.set_defaults(run=_stop)
+
+    survey = commands.add_parser(
+        "survey", parents=[common],
+        help="read the run bits and all thirty drives; writes nothing",
+        description="Needs no session and changes nothing, so it is the look "
+                    "to take before starting one on the machine.")
+    survey.add_argument("--ip", default=live.DEFAULT_IP)
+    survey.add_argument("--slot", type=int, default=live.DEFAULT_SLOT)
+    survey.add_argument("-p", "--pistons", action="store_true",
+                        help="add a line per piston")
+    survey.set_defaults(run=_survey)
 
     park = commands.add_parser("park", parents=[common],
                                help="move the selection to its resting position")

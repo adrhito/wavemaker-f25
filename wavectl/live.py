@@ -6,9 +6,9 @@ so there is one place to refuse.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 
-from app import tags
+from app import drive_status, params, tags
 from app.plc import PlcClient, PlcError
 from wavectl import places
 
@@ -99,3 +99,86 @@ def drop_bits(transport) -> List[str]:
         except PlcError as exc:
             failures.append("{0}: {1}".format(name, exc))
     return failures
+
+
+def read_drive(transport, axis: int) -> dict:
+    """What one drive reports, under its piston's display number."""
+    row = {"piston": tags.display_number(axis)}
+    try:
+        status = int(transport.read(tags.axis_field(axis, tags.STATUS_WORD)))
+        warn = int(transport.read(tags.axis_field(axis, tags.WARN_WORD)))
+        position = params.to_mm(
+            transport.read(tags.axis_field(axis, tags.ACTUAL_POSITION)))
+    except (PlcError, TypeError, ValueError) as exc:
+        row["unreadable"] = str(exc)
+        return row
+    row.update({
+        "mm": round(position, 1),
+        "homed": drive_status.is_homed(status),
+        "enabled": bool(status & 1),
+        "problems": drive_status.problems(warn, status),
+    })
+    return row
+
+
+def drive_line(row: dict) -> str:
+    if "unreadable" in row:
+        return "{0:>3}  unreadable: {1}".format(row["piston"], row["unreadable"])
+    return "{0:>3}  {1:>6.1f} mm  {2}  {3}  {4}".format(
+        row["piston"], row["mm"],
+        "homed" if row["homed"] else "not homed",
+        "enabled" if row["enabled"] else "off",
+        "; ".join(row["problems"]) or "ok")
+
+
+def troubled(rows: List[dict]) -> str:
+    """The first drive with something wrong, and how many more there are."""
+    bad = [row for row in rows if row.get("unreadable") or row.get("problems")]
+    if not bad:
+        return ""
+    first = bad[0]
+    more = " (and {0} more)".format(len(bad) - 1) if len(bad) > 1 else ""
+    return "piston {0}: {1}{2}".format(
+        first["piston"], first.get("unreadable") or "; ".join(first["problems"]), more)
+
+
+def stop_directly(ip: str = DEFAULT_IP, slot: int = DEFAULT_SLOT) -> Tuple[bool, str]:
+    """Write the command bits low on a connection of our own.
+
+    The way out when the session cannot be asked: it has died, it has hung,
+    or its own connection to the controller is what failed. Dropping a run
+    bit is always the safe direction, so this does not ask who raised it.
+    Returns whether every bit then read low, and a sentence saying so.
+    """
+    client = connect(ip, slot)
+    try:
+        failures = drop_bits(client)
+        try:
+            high = bits_high(client)
+        except PlcError as exc:
+            failures.append("could not read them back: {0}".format(exc))
+            high = []
+    finally:
+        client.close()
+    names = ", ".join(name for name, _tag in COMMAND_BITS)
+    if failures:
+        return False, ("Could not write every command bit low at {0}: {1}. "
+                       "Use the physical stop.".format(ip, "; ".join(failures)))
+    if high:
+        return False, ("{0} written low at {1}, but {2} still read high: "
+                       "something is raising it again. Use the physical stop."
+                       .format(names, ip, " and ".join(high)))
+    return True, "{0} written low at {1}; all read low".format(names, ip)
+
+
+def survey(ip: str = DEFAULT_IP, slot: int = DEFAULT_SLOT) -> dict:
+    """Read the command bits and all thirty drives. Writes nothing."""
+    client = connect(ip, slot)
+    try:
+        high = bits_high(client)
+        rows = [read_drive(client, axis) for axis in sorted(
+            range(tags.MOTOR_COUNT), key=tags.display_number)]
+        identity = client.identity()
+    finally:
+        client.close()
+    return {"bits_high": high, "drives": rows, "controller": identity}
