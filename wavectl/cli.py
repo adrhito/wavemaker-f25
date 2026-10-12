@@ -320,6 +320,36 @@ def _watch(args) -> int:
                 seconds=args.seconds + timing.ANSWER_MARGIN_SECONDS)
 
 
+# -- soliton trials ------------------------------------------------------------
+
+def _trial_numbers(args) -> dict:
+    return {"crest_mm": args.crest, "depth_mm": args.depth,
+            "width_mm": args.width, "lift_mm": args.lift}
+
+
+def _soliton_plan(args) -> int:
+    return _ask(args, "soliton_plan", _trial_numbers(args))
+
+
+def _soliton_stage(args) -> int:
+    return _waited(args, "soliton_stage", dict(
+        _trial_numbers(args), prepare=args.prepare, wait=not args.no_wait),
+        args.timeout or timing.PREPARE_SECONDS)
+
+
+def _soliton_fire(args) -> int:
+    return _waited(args, "soliton_fire", {
+        "station_mm": args.station_mm, "sample_hz": args.sample,
+        "wait": not args.no_wait}, args.timeout or timing.PULSE_SECONDS)
+
+
+def _soliton_observe(args) -> int:
+    return _ask(args, "soliton_observe", {
+        "crest_rise_mm": args.crest_rise, "crest_to_trough_mm": args.crest_to_trough,
+        "width_mm": args.width, "station_mm": args.station_mm,
+        "notes": args.notes, "record": args.record})
+
+
 # -- the parser ----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -515,6 +545,62 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--hz", type=float, default=timing.SAMPLE_HZ)
     watch.add_argument("--pistons", help="which pistons (default: the selection)")
     watch.set_defaults(run=_watch)
+
+    wave = argparse.ArgumentParser(add_help=False)
+    wave.add_argument("--crest", type=float, required=True, metavar="MM",
+                      help="crest rise wanted above still water")
+    wave.add_argument("--depth", type=float, required=True, metavar="MM",
+                      help="still-water depth, as measured")
+    wave.add_argument("--width", type=float, metavar="MM",
+                      help="width at half height (default: the first-order "
+                           "width for this crest and depth)")
+    wave.add_argument("--lift", type=int, metavar="MM",
+                      help="floor travel (default: what moves one soliton's "
+                           "worth of water with the selected pistons)")
+
+    soliton = commands.add_parser(
+        "soliton", help="stage the floor and fire one solitary-wave pulse",
+        description="The Soliton tab's two buttons. The floor is staged low, "
+                    "the water is left to settle, and one upward pulse is "
+                    "fired and held. No wave height is predicted here.")
+    moves = soliton.add_subparsers(dest="action", metavar="action")
+    moves.required = True
+
+    plan = moves.add_parser("plan", parents=[common, wave],
+                            help="what a trial would command; moves nothing")
+    plan.set_defaults(run=_soliton_plan)
+
+    stage = moves.add_parser(
+        "stage", parents=[common, wave, slow],
+        help="lower the selected floor sections, ready for a pulse")
+    stage.add_argument("--prepare", action="store_true",
+                       help="boot and home first if the pistons need it")
+    stage.add_argument("--no-wait", action="store_true")
+    stage.set_defaults(run=_soliton_stage)
+
+    fire = moves.add_parser("fire", parents=[common, slow],
+                            help="send the staged pulse and hold the floor up")
+    fire.add_argument("--station-mm", type=float, metavar="MM",
+                      help="where along the tank the wave will be measured")
+    fire.add_argument("--sample", type=float, nargs="?", const=50.0, metavar="HZ",
+                      help="record the floor's positions through the pulse "
+                           "(default %(const)g Hz)")
+    fire.add_argument("--no-wait", action="store_true")
+    fire.set_defaults(run=_soliton_fire)
+
+    observe = moves.add_parser(
+        "observe", parents=[common],
+        help="add a measured wave to the last pulse's record")
+    observe.add_argument("--crest-rise", type=float, metavar="MM")
+    observe.add_argument("--crest-to-trough", type=float, metavar="MM")
+    observe.add_argument("--width", type=float, metavar="MM",
+                         help="measured width at half height")
+    observe.add_argument("--station-mm", type=float, metavar="MM",
+                         help="where along the tank it was measured")
+    observe.add_argument("--notes", default="")
+    observe.add_argument("--record", metavar="PATH",
+                         help="a trial file other than the last pulse's")
+    observe.set_defaults(run=_soliton_observe)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

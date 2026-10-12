@@ -26,3 +26,6 @@ DEFAULT_RUN_SECONDS = 30.0
 ANSWER_MARGIN_SECONDS = 20.0
 #: How often piston positions are recorded when no rate is given.
 SAMPLE_HZ = 10.0
+#: Longest a soliton pulse is waited for. The model itself gives up on one
+#: after ``MAX_STROKE_SECONDS``; this only has to be longer than that.
+PULSE_SECONDS = 150.0

@@ -26,6 +26,7 @@ from wavectl import live, pistons, settings
 from wavectl.jobs import Job, Refusal, Result
 from wavectl.journal import Journal, one_line
 from wavectl.motion import MotionOperations
+from wavectl.soliton import SolitonOperations
 
 LOGGER = getLogger(LOGGER_NAME)
 
@@ -41,7 +42,7 @@ POLL_SECONDS = 0.05
 QUICK_FAILURE_SECONDS = 0.3
 
 
-class Service(MotionOperations):
+class Service(MotionOperations, SolitonOperations):
     """One session's worth of operations on one model."""
 
     #: Operation name on the wire -> method name here.
@@ -57,6 +58,7 @@ class Service(MotionOperations):
         "presets": "presets",
     }
     OPERATIONS.update(MotionOperations.MOTION_OPERATIONS)
+    OPERATIONS.update(SolitonOperations.SOLITON_OPERATIONS)
 
     def __init__(self, model: Model, mode: str, details: Optional[dict] = None) -> None:
         self.model = model
@@ -70,6 +72,8 @@ class Service(MotionOperations):
         self._job: Optional[Job] = None
         #: When the continuous run in progress will be stopped (monotonic).
         self._run_deadline: Optional[float] = None
+        #: The soliton trial whose floor is staged and waiting to be fired.
+        self._staged_trial = None
 
     @property
     def plc(self):
@@ -272,6 +276,9 @@ class Service(MotionOperations):
             parts.append(troubled)
         elif rows:
             parts.append("drives ok")
+        floor = self._floor_phrase()
+        if floor:
+            parts.append(floor)
         if model.lagging_axes:
             parts.append("lagging " + pistons.describe(model.lagging_axes))
         if model.dropped_axes:
