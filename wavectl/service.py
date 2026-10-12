@@ -27,6 +27,7 @@ from wavectl.jobs import Job, Refusal, Result
 from wavectl.journal import Journal, one_line
 from wavectl.motion import MotionOperations
 from wavectl.soliton import SolitonOperations
+from wavectl.trials import TrialOperations
 
 LOGGER = getLogger(LOGGER_NAME)
 
@@ -42,7 +43,7 @@ POLL_SECONDS = 0.05
 QUICK_FAILURE_SECONDS = 0.3
 
 
-class Service(MotionOperations, SolitonOperations):
+class Service(MotionOperations, SolitonOperations, TrialOperations):
     """One session's worth of operations on one model."""
 
     #: Operation name on the wire -> method name here.
@@ -59,6 +60,7 @@ class Service(MotionOperations, SolitonOperations):
     }
     OPERATIONS.update(MotionOperations.MOTION_OPERATIONS)
     OPERATIONS.update(SolitonOperations.SOLITON_OPERATIONS)
+    OPERATIONS.update(TrialOperations.TRIAL_OPERATIONS)
 
     def __init__(self, model: Model, mode: str, details: Optional[dict] = None) -> None:
         self.model = model

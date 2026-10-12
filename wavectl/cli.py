@@ -350,6 +350,21 @@ def _soliton_observe(args) -> int:
         "notes": args.notes, "record": args.record})
 
 
+def _trial(args) -> int:
+    patience = args.timeout or (
+        timing.PREPARE_SECONDS + args.settle + args.pre + timing.PULSE_SECONDS
+        + args.post + timing.MEASURE_SECONDS)
+    return _waited(args, "trial", dict(
+        _trial_numbers(args), settle=args.settle, camera_source=args.camera,
+        # The session resolves paths from the checkout, not from wherever
+        # this command was typed.
+        rig=os.path.abspath(args.rig) if args.rig else None,
+        still_mm=args.still_mm, pre=args.pre, post=args.post,
+        station_mm=args.station_mm, record_observation=args.record_observation,
+        prepare=args.prepare, sample_hz=args.sample, wait=not args.no_wait),
+        patience)
+
+
 # -- the parser ----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -601,6 +616,46 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--record", metavar="PATH",
                          help="a trial file other than the last pulse's")
     observe.set_defaults(run=_soliton_observe)
+
+    trial = commands.add_parser(
+        "trial", parents=[common, wave, slow],
+        help="stage, wait for the water, fire one pulse, and measure it",
+        description="One job on the session's clock: open the camera and find "
+                    "the rig, stage the floor, wait for the water, start "
+                    "recording, fire, keep recording while the wave passes, "
+                    "measure the clip. Without --camera it is stage, wait, "
+                    "fire. A trial with a long --settle outlasts most "
+                    "terminals' patience: use --no-wait, then wavectl wait.")
+    trial.add_argument("--settle", type=float, default=60.0, metavar="SECONDS",
+                       help="how long to leave the water after staging "
+                            "(default %(default)g); with --still-mm, the "
+                            "longest to wait")
+    trial.add_argument("--camera", metavar="N",
+                       help='camera number to record with, or "synthetic" for '
+                            "a drawn tank to rehearse against")
+    trial.add_argument("--rig", metavar="PATH",
+                       help="rig file for this camera position; the clip is "
+                            "measured when it is given")
+    trial.add_argument("--still-mm", type=float, metavar="MM",
+                       help="fire as soon as the camera reads the surface "
+                            "moving less than this; do not fire if it never does")
+    trial.add_argument("--pre", type=float, default=2.0, metavar="SECONDS",
+                       help="still water recorded before the pulse (default %(default)g)")
+    trial.add_argument("--post", type=float, default=8.0, metavar="SECONDS",
+                       help="recording kept running after the pulse is sent "
+                            "(default %(default)g)")
+    trial.add_argument("--station-mm", type=float, metavar="MM",
+                       help="where along the tank to report the height "
+                            "(default: the middle of the view)")
+    trial.add_argument("--record-observation", action="store_true",
+                       help="also enter the camera's measurement in the "
+                            "trial's own record")
+    trial.add_argument("--prepare", action="store_true",
+                       help="boot and home first if the pistons need it")
+    trial.add_argument("--sample", type=float, nargs="?", const=50.0, metavar="HZ",
+                       help="record the floor's positions through the pulse")
+    trial.add_argument("--no-wait", action="store_true")
+    trial.set_defaults(run=_trial)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

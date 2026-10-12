@@ -29,3 +29,5 @@ SAMPLE_HZ = 10.0
 #: Longest a soliton pulse is waited for. The model itself gives up on one
 #: after ``MAX_STROKE_SECONDS``; this only has to be longer than that.
 PULSE_SECONDS = 150.0
+#: Allowed on top of everything else in a trial for measuring the clip.
+MEASURE_SECONDS = 180.0
