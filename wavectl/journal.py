@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from logging import getLogger
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from modules.logging.log_utils import LOGGER_NAME
 
@@ -48,6 +48,7 @@ class Journal:
         self._state: Optional[str] = None
         #: The newest positions the model's monitor published, by axis.
         self.last_positions: Dict[int, float] = {}
+        self._extent: Dict[int, Tuple[float, float]] = {}
 
     # -- writing ---------------------------------------------------------------
 
@@ -89,6 +90,26 @@ class Journal:
 
     def positions(self, readings: Dict[int, float]) -> None:
         self.last_positions = dict(readings)
+        with self._lock:
+            for axis, where in readings.items():
+                low, high = self._extent.get(axis, (where, where))
+                self._extent[axis] = (min(low, where), max(high, where))
+
+    # -- how far the pistons were seen to go --------------------------------------
+
+    def clear_extent(self) -> None:
+        with self._lock:
+            self._extent = {}
+
+    def extent(self) -> Dict[int, Tuple[float, float]]:
+        """Lowest and highest position seen per axis since the last clear.
+
+        Taken from the model's monitor, which reads four times a second, so a
+        fast piston is seldom caught exactly at the end of its stroke. Good
+        for "did it move, and about how far"; not a measurement of the stroke.
+        """
+        with self._lock:
+            return dict(self._extent)
 
     # -- reading ---------------------------------------------------------------
 

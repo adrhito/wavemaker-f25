@@ -17,7 +17,7 @@ import sys
 import time
 from typing import Optional
 
-from wavectl import client, live, sessionfile
+from wavectl import client, live, sessionfile, timing
 
 #: How long to wait for a session to finish ending before saying it has not.
 END_SECONDS = 20.0
@@ -190,6 +190,66 @@ def _preset(args) -> int:
     return _ask(args, "preset", {"name": args.name, "select": args.select})
 
 
+# -- motion --------------------------------------------------------------------
+
+def _waited(args, operation: str, arguments: dict, patience: float) -> int:
+    """Ask for something slow, waiting a little longer than the session will."""
+    arguments = dict(arguments, patience=patience)
+    return _ask(args, operation, arguments,
+                seconds=patience + timing.ANSWER_MARGIN_SECONDS)
+
+
+def _prepare(args) -> int:
+    return _waited(args, "prepare", {
+        "wait": not args.no_wait, "ignore_warnings": args.ignore_warnings},
+        args.timeout or timing.PREPARE_SECONDS)
+
+
+def _calibrate(args) -> int:
+    return _waited(args, "calibrate", {"wait": not args.no_wait},
+                   args.timeout or timing.PREPARE_SECONDS)
+
+
+def _run(args) -> int:
+    mode = "single" if args.single else "curve" if args.curve else "continuous"
+    continuous = mode == "continuous"
+    seconds = args.seconds if continuous else None
+    if not continuous and args.seconds is not None:
+        return _fail("--seconds sets how long a continuous run lasts; one "
+                     "stroke or one curve ends by itself.", args.json, status=1)
+    wait = True if args.wait else False if args.no_wait else None
+    length = (seconds if seconds is not None else timing.DEFAULT_RUN_SECONDS)
+    patience = args.timeout or (
+        (length + timing.REST_SECONDS if continuous else timing.ONCE_SECONDS)
+        + timing.START_SECONDS
+        + (timing.PREPARE_SECONDS if args.prepare else 0.0))
+    return _waited(args, "run", {
+        "mode": mode, "seconds": seconds, "wait": wait, "prepare": args.prepare,
+        "ignore_warnings": args.ignore_warnings}, patience)
+
+
+def _stop(args) -> int:
+    park = True if args.park else False if args.no_park else None
+    return _ask(args, "stop", {"now": args.now, "park": park},
+                seconds=timing.REST_SECONDS + timing.ANSWER_MARGIN_SECONDS)
+
+
+def _park(args) -> int:
+    return _ask(args, "park", seconds=timing.PREPARE_SECONDS + timing.REST_SECONDS)
+
+
+def _speed(args) -> int:
+    return _ask(args, "speed", {"value": args.value})
+
+
+def _stroke(args) -> int:
+    return _ask(args, "stroke", {"value": args.value})
+
+
+def _wait(args) -> int:
+    return _waited(args, "wait", {}, args.timeout)
+
+
 # -- the parser ----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -271,6 +331,88 @@ def build_parser() -> argparse.ArgumentParser:
                         help="select the pistons the preset gives motion to")
     preset.add_argument("--list", action="store_true", help="name the presets")
     preset.set_defaults(run=_preset)
+
+    slow = argparse.ArgumentParser(add_help=False)
+    slow.add_argument("--timeout", type=float, metavar="SECONDS",
+                      help="stop waiting for the answer after this long; the "
+                           "machine carries on, and wavectl wait picks it up")
+
+    prepare = commands.add_parser(
+        "prepare", parents=[common, slow],
+        help="write parameters and home the selection (about a minute)",
+        description="Boots the drives, which drops every selected piston to "
+                    "zero, then homes them. Pistons this session has already "
+                    "homed are not homed again.")
+    prepare.add_argument("--no-wait", action="store_true",
+                         help="return at once; wavectl wait reports the outcome")
+    prepare.add_argument("--ignore-warnings", action="store_true",
+                         help="go ahead although a selected drive reports a fault")
+    prepare.set_defaults(run=_prepare)
+
+    calibrate = commands.add_parser(
+        "calibrate", parents=[common, slow],
+        help="home all thirty pistons, whatever is selected")
+    calibrate.add_argument("--no-wait", action="store_true")
+    calibrate.set_defaults(run=_calibrate)
+
+    run = commands.add_parser(
+        "run", parents=[common, slow],
+        help="run the selection: continuously for a set time, or once",
+        description="A continuous run stops itself after --seconds and rests "
+                    "the pistons. The pistons must be homed first: wavectl "
+                    "prepare.")
+    once = run.add_mutually_exclusive_group()
+    once.add_argument("--single", action="store_true", help="one stroke, up and back")
+    once.add_argument("--curve", action="store_true", help="one curve run")
+    run.add_argument("--seconds", type=float,
+                     help="how long a continuous run lasts (default {0:.0f}, "
+                          "at most {1:.0f})".format(timing.DEFAULT_RUN_SECONDS,
+                                                    timing.MAX_RUN_SECONDS))
+    waiting = run.add_mutually_exclusive_group()
+    waiting.add_argument("--wait", action="store_true",
+                         help="answer when the run is over (the default for "
+                              "one stroke or curve)")
+    waiting.add_argument("--no-wait", action="store_true",
+                         help="answer as soon as it is under way (the default "
+                              "for a continuous run)")
+    run.add_argument("--prepare", action="store_true",
+                     help="boot and home first if the pistons need it")
+    run.add_argument("--ignore-warnings", action="store_true",
+                     help="go ahead although a selected drive reports a fault")
+    run.set_defaults(run=_run)
+
+    stop = commands.add_parser(
+        "stop", parents=[common], help="stop the machine",
+        description="By default each piston finishes its stroke and the array "
+                    "then moves to its resting position.")
+    stop.add_argument("--now", action="store_true",
+                      help="drop the run bits at once; pistons stay where they are")
+    resting = stop.add_mutually_exclusive_group()
+    resting.add_argument("--park", action="store_true",
+                         help="move to the resting position afterwards")
+    resting.add_argument("--no-park", action="store_true",
+                         help="leave the pistons where the stop catches them")
+    stop.set_defaults(run=_stop)
+
+    park = commands.add_parser("park", parents=[common],
+                               help="move the selection to its resting position")
+    park.set_defaults(run=_park)
+
+    speed = commands.add_parser("speed", parents=[common],
+                                help="change speed on a run that is going (mm/s)")
+    speed.add_argument("value", type=int)
+    speed.set_defaults(run=_speed)
+
+    stroke = commands.add_parser("stroke", parents=[common],
+                                 help="change stroke on a run that is going (mm)")
+    stroke.add_argument("value", type=int)
+    stroke.set_defaults(run=_stroke)
+
+    wait = commands.add_parser(
+        "wait", parents=[common],
+        help="wait for a prepare or run to finish and report how it went")
+    wait.add_argument("--timeout", type=float, default=120.0, metavar="SECONDS")
+    wait.set_defaults(run=_wait)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

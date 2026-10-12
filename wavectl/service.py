@@ -15,7 +15,7 @@ from __future__ import annotations
 import threading
 import time
 from logging import getLogger
-from typing import Callable, Dict, List, NamedTuple, Optional
+from typing import Callable, Dict, Optional
 
 from app import drive_status, params, paths, tags
 from app.plc import PlcError
@@ -23,7 +23,9 @@ from Model import MachineState, Model
 from modules.logging.log_utils import LOGGER_NAME
 from preset_options.PresetProcessor import PresetError, PresetProcessor
 from wavectl import live, pistons, settings
+from wavectl.jobs import Job, Refusal, Result
 from wavectl.journal import Journal, one_line
+from wavectl.motion import MotionOperations
 
 LOGGER = getLogger(LOGGER_NAME)
 
@@ -34,24 +36,12 @@ STARTUP_SECONDS = 30.0
 POLL_SECONDS = 0.05
 
 
-class Refusal(Exception):
-    """The request was understood and will not be done.
-
-    The text says why and what to do instead; it is the whole answer the
-    person or agent at the terminal gets, so it has to stand on its own.
-    """
-
-    def __init__(self, text: str, data: Optional[dict] = None) -> None:
-        Exception.__init__(self, text)
-        self.data = data or {}
+#: How long a command that is not waiting gives a job to fail straight away,
+#: so "preparing..." is not the answer to something refused a moment later.
+QUICK_FAILURE_SECONDS = 0.3
 
 
-class Result(NamedTuple):
-    text: str
-    data: dict
-
-
-class Service:
+class Service(MotionOperations):
     """One session's worth of operations on one model."""
 
     #: Operation name on the wire -> method name here.
@@ -66,6 +56,7 @@ class Service:
         "preset": "preset",
         "presets": "presets",
     }
+    OPERATIONS.update(MotionOperations.MOTION_OPERATIONS)
 
     def __init__(self, model: Model, mode: str, details: Optional[dict] = None) -> None:
         self.model = model
@@ -75,6 +66,10 @@ class Service:
         self.details = dict(details or {})
         self.journal = Journal()
         self._lock = threading.RLock()
+        #: The long operation under way, or the last one that finished.
+        self._job: Optional[Job] = None
+        #: When the continuous run in progress will be stopped (monotonic).
+        self._run_deadline: Optional[float] = None
 
     @property
     def plc(self):
@@ -142,6 +137,57 @@ class Service:
                 return False
             time.sleep(POLL_SECONDS)
 
+    # -- operations that take a while ---------------------------------------------
+
+    def _start_job(self, name: str, work: Callable[[Job], Result]) -> Job:
+        """Run ``work`` on a thread of its own, one such job at a time."""
+        with self._lock:
+            current = self._job
+            if current is not None and not current.done.is_set():
+                raise Refusal(
+                    "The {0} is still under way. Wait for it (wavectl wait) "
+                    "or stop it (wavectl stop).".format(current.name))
+            job = Job(name)
+            self._job = job
+
+        def run() -> None:
+            try:
+                result = work(job)
+                job.ok, job.text, job.data = True, result.text, result.data
+            except Refusal as exc:
+                job.ok, job.text, job.data = False, str(exc), exc.data
+            except PlcError as exc:
+                LOGGER.error("%s failed at the controller: %s", name, exc)
+                job.ok, job.text = False, "The controller did not answer: {0}".format(exc)
+            except Exception as exc:  # noqa: BLE001 - reported as the job's answer
+                LOGGER.exception("%s crashed", name)
+                job.ok, job.text = False, "The {0} failed unexpectedly: {1}: {2}".format(
+                    name, type(exc).__name__, exc)
+            finally:
+                job.under_way.set()
+                job.done.set()
+
+        threading.Thread(target=run, name="wavectl " + name, daemon=True).start()
+        return job
+
+    def _answer(self, job: Job, wait: bool, patience: float) -> Result:
+        """The reply for a job: its end if waiting, else how it is going."""
+        if wait:
+            if not job.done.wait(patience):
+                raise Refusal(
+                    "The {0} is still under way after {1:.0f} seconds. wavectl "
+                    "wait picks it up; wavectl stop halts it.".format(
+                        job.name, patience), {"job": job.name, "done": False})
+        else:
+            job.under_way.wait(patience)
+            job.done.wait(QUICK_FAILURE_SECONDS)
+            if not job.done.is_set():
+                return Result(job.interim or "{0} under way".format(job.name),
+                              {"job": job.name, "done": False})
+        if not job.ok:
+            raise Refusal(job.text, job.data)
+        return Result(job.text, job.data)
+
     # -- reading the machine -----------------------------------------------------
 
     def _read_piston(self, axis: int) -> dict:
@@ -182,6 +228,9 @@ class Service:
         else:
             mode = model._run_mode
             phrase = "running {0}".format(mode.value) if mode else "running"
+            deadline = self._run_deadline
+            if deadline is not None:
+                phrase += ", {0:.0f} s left".format(max(deadline - time.monotonic(), 0.0))
         if model._stopping.is_set():
             phrase += " (finishing the stroke)"
         elif model._parking.is_set():
