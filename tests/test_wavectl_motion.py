@@ -328,6 +328,23 @@ class TestWhenTheMachineDoesNotDoIt:
         assert not reply["ok"] and "Stop failed" in reply["text"]
         assert "stopped on attempt" in moving.handle("log", {"count": 40})["text"]
 
+    def test_a_stop_that_is_slow_to_start_resting_is_not_taken_for_a_failed_one(
+            self, moving):
+        # Between finishing the stroke and starting the resting move the
+        # model has, for a moment, nothing in progress. Stretch that moment.
+        halt = moving.model._halt_and_rest
+
+        def slow(park, waited):
+            time.sleep(0.4)
+            return halt(park, waited)
+
+        moving.model._halt_and_rest = slow
+        assert moving.handle("prepare")["ok"]
+        reply = moving.handle("run", {"seconds": 0.6, "wait": True})
+        assert reply["ok"], reply["text"]
+        assert "Pistons are at the bottom" in reply["text"]
+        assert "attempt" not in moving.handle("log", {"count": 40})["text"]
+
     def test_ending_the_session_during_a_stop_leaves_no_run_bit_high(self, monkeypatch):
         for name in ("BOOT_PULSE_SECONDS", "CLEAR_FAULT_SECONDS", "HOME_POLL_SECONDS"):
             monkeypatch.setattr(model_module, name, 0.05)

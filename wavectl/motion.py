@@ -423,6 +423,7 @@ class MotionOperations:
             self._until(over, seconds)
             lasted = time.monotonic() - began
             timed = model.state is MachineState.RUNNING and not model._stopping.is_set()
+            stopping_from = self.journal.mark()
             if timed:
                 self.journal.note("Run time of {0:g} s is up; stopping.".format(seconds))
                 # Not judged by what it returns: whether the machine stopped
@@ -432,13 +433,16 @@ class MotionOperations:
             self._run_deadline = None
 
         def settled_or_failed() -> bool:
-            # A stop that could not reach the controller gives up with the
-            # model still "running" and nothing left in progress. Waiting
-            # out the full rest time on that would be forty-five more
-            # seconds of a run nobody is stopping.
-            return self._at_rest() or (
-                model.state is MachineState.RUNNING and not model.busy
-                and not model._stopping.is_set() and not model._parking.is_set())
+            # A stop that could not reach the controller says so and gives
+            # up, with the model still "running". Waiting out the full rest
+            # time on that would be forty-five more seconds of a run nobody
+            # is stopping. Told by what the model reported, not by its
+            # flags: between finishing the stroke and starting the resting
+            # move there is a moment when none of them is set, and taking
+            # that for a failure sent a second stop that cancelled the park.
+            return self._at_rest() or any(
+                problem.startswith("Stop failed")
+                for problem in self.journal.problems_since(stopping_from))
 
         self._until(settled_or_failed, REST_SECONDS)
         self._make_sure_it_stopped()
