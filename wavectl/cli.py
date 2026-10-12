@@ -163,6 +163,33 @@ def _log(args) -> int:
     return _ask(args, "log", {"count": args.count, "full": args.full})
 
 
+# -- choosing what will move -----------------------------------------------------
+
+def _select(args) -> int:
+    return _ask(args, "select", {"pistons_text": args.pistons})
+
+
+def _set(args) -> int:
+    values = {}
+    for pair in args.values:
+        key, equals, value = pair.partition("=")
+        if not equals or not key or not value:
+            return _fail('"{0}" is not name=value, for example stroke=120 '
+                         "speed=150.".format(pair), args.json, status=1)
+        values[key] = value
+    return _ask(args, "set", {"values": values, "pistons_text": args.pistons})
+
+
+def _params(args) -> int:
+    return _ask(args, "params", {"pistons_text": args.pistons})
+
+
+def _preset(args) -> int:
+    if args.list or not args.name:
+        return _ask(args, "presets")
+    return _ask(args, "preset", {"name": args.name, "select": args.select})
+
+
 # -- the parser ----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -212,6 +239,38 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--all", action="store_true",
                         help="read all thirty drives, not only the selection")
     status.set_defaults(run=_status)
+
+    select = commands.add_parser(
+        "select", parents=[common], help="choose the pistons that will run",
+        description="Pistons are the numbers drawn on the tank, 1 to 30: "
+                    "1-9, 1,4,7, c1-3 (columns from the front), r1 (a row), "
+                    "all or none.")
+    select.add_argument("pistons")
+    select.set_defaults(run=_select)
+
+    setter = commands.add_parser(
+        "set", parents=[common], help="change parameters, e.g. stroke=120 speed=150",
+        description="Names: stroke, speed, accel, decel, jerk, dwell, p1, p2, "
+                    "profile, offset, rest (down, up or hold), or any full "
+                    "parameter name without its space, such as speed2.")
+    setter.add_argument("values", nargs="+", metavar="name=value")
+    setter.add_argument("--pistons", help="only these pistons of the selection")
+    setter.set_defaults(run=_set)
+
+    shown = commands.add_parser("params", parents=[common],
+                                help="every parameter the selection is set to")
+    shown.add_argument("--pistons", help="only these pistons of the selection")
+    shown.set_defaults(run=_params)
+
+    preset = commands.add_parser(
+        "preset", parents=[common], help="apply a saved preset to the selection",
+        description="The start of a preset's name is enough if it picks out "
+                    "one file.")
+    preset.add_argument("name", nargs="?")
+    preset.add_argument("--select", action="store_true",
+                        help="select the pistons the preset gives motion to")
+    preset.add_argument("--list", action="store_true", help="name the presets")
+    preset.set_defaults(run=_preset)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

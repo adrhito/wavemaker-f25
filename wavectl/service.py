@@ -17,11 +17,12 @@ import time
 from logging import getLogger
 from typing import Callable, Dict, List, NamedTuple, Optional
 
-from app import drive_status, params, tags
+from app import drive_status, params, paths, tags
 from app.plc import PlcError
 from Model import MachineState, Model
 from modules.logging.log_utils import LOGGER_NAME
-from wavectl import live, pistons
+from preset_options.PresetProcessor import PresetError, PresetProcessor
+from wavectl import live, pistons, settings
 from wavectl.journal import Journal, one_line
 
 LOGGER = getLogger(LOGGER_NAME)
@@ -59,6 +60,11 @@ class Service:
         "status": "status",
         "log": "log",
         "shutdown": "shutdown",
+        "select": "select",
+        "set": "set",
+        "params": "params",
+        "preset": "preset",
+        "presets": "presets",
     }
 
     def __init__(self, model: Model, mode: str, details: Optional[dict] = None) -> None:
@@ -285,3 +291,224 @@ class Service:
     def shutdown(self) -> Result:
         """Acknowledge; ``daemon`` ends the session once this reply is sent."""
         return Result("session ending", {})
+
+    # -- choosing what will move ---------------------------------------------------
+
+    def _refuse_while_moving(self, what: str) -> None:
+        """Selection and parameters are changed with the machine at rest.
+
+        The window lets an operator edit while the array runs, and deals with
+        the consequences one piston at a time. A command line has no way to
+        show that happening, so here the order is fixed: stop, change, run.
+        Speed and stroke have their own commands for changing mid-run.
+        """
+        if self.model._in_motion() or self.model.busy:
+            raise Refusal("The machine is {0}; stop it before changing {1}.".format(
+                self._state_phrase(), what))
+
+    def _chosen(self, pistons_text: Optional[str]) -> list:
+        """The motors a command applies to: the selection, or part of it."""
+        motors = dict((motor.axis, motor) for motor in self.model.all_motors)
+        if pistons_text is None:
+            return [motors[axis] for axis in sorted(motors, key=tags.display_number)]
+        wanted = pistons.parse(pistons_text)
+        outside = [axis for axis in wanted if axis not in motors]
+        if outside:
+            raise Refusal(
+                "Piston(s) {0} are not selected, so they have no parameters "
+                "to set. Selected: {1}.".format(
+                    pistons.describe(outside), pistons.describe(motors)))
+        return [motors[axis] for axis in sorted(wanted, key=tags.display_number)]
+
+    def _selection_line(self) -> str:
+        if not self.model.all_motors:
+            return "nothing selected | " + self._state_phrase()
+        return " | ".join([
+            "pistons " + pistons.describe(self.model.live_axes),
+            self._motion_phrase(), "rest " + self.model.rest_position,
+            self._state_phrase()])
+
+    def select(self, pistons_text: str) -> Result:
+        """Choose the pistons that will run. Replaces the previous choice.
+
+        Pistons kept from the previous selection keep their parameters; new
+        ones take the values the others share.
+        """
+        axes = pistons.parse(pistons_text)
+        self._refuse_while_moving("the selection")
+        # A piston dropped because it would not home is being asked for again
+        # or left out on purpose; either way the old note no longer applies.
+        self.model.dropped_axes = []
+        self.model.set_selection(axes)
+        return Result(self._selection_line(),
+                      {"pistons": pistons.shown(self.model.live_axes),
+                       "state": self.model.state.value})
+
+    def set(self, values: dict, pistons_text: Optional[str] = None) -> Result:
+        """Change parameters on the selection, or on some of its pistons.
+
+        Nothing is written to the controller here. The values go out at the
+        next prepare or run, exactly as they do from the window.
+        """
+        edit = settings.read(values)
+        self._refuse_while_moving("parameters")
+        model = self.model
+        motors = self._chosen(pistons_text)
+
+        if not motors:
+            # Nothing selected yet: these become what the next selection
+            # starts with, which is what the window's fields do too.
+            new = settings.changed(model.pending_params, edit)
+            for name, value in new.items():
+                model.set_pending_param(name, value)
+            if edit.rest is not None:
+                model.rest_position = edit.rest
+            return Result(
+                "nothing selected; the next selection starts with {0}".format(
+                    ", ".join("{0} {1}".format(n, v) for n, v in new.items())
+                    or "rest " + model.rest_position), {"values": new})
+
+        plans = []
+        refused: Dict[str, list] = {}
+        for motor in motors:
+            try:
+                plans.append((motor, settings.changed(motor.write_params, edit)))
+            except ValueError as exc:
+                refused.setdefault(str(exc), []).append(motor.axis)
+        if refused:
+            # All or nothing: half a selection on a new stroke is not a state
+            # anyone asked for.
+            raise Refusal("Nothing was changed. " + " ".join(
+                "Piston(s) {0}: {1}.".format(pistons.describe(axes), why)
+                for why, axes in refused.items()))
+
+        for motor, new in plans:
+            motor.update_params(new)
+        if any(new for _motor, new in plans):
+            model.mark_unprepared()
+        if edit.rest is not None:
+            model.rest_position = edit.rest
+
+        return Result(self._selection_line(), {
+            "pistons": pistons.shown(motor.axis for motor in motors),
+            "values": dict((str(tags.display_number(motor.axis)), new)
+                           for motor, new in plans),
+            "rest": model.rest_position})
+
+    def params(self, pistons_text: Optional[str] = None) -> Result:
+        """Every parameter the selection is set to."""
+        motors = self._chosen(pistons_text)
+        if not motors:
+            values = dict(self.model.pending_params)
+            return Result("nothing selected; a selection would start with: "
+                          + settings.summary(values), {"values": values})
+        values = {}
+        for spec in params.PARAMS:
+            seen = set(motor.write_params[spec.name] for motor in motors)
+            values[spec.name] = seen.pop() if len(seen) == 1 else None
+        return Result(
+            "pistons {0}: {1}".format(
+                pistons.describe(motor.axis for motor in motors),
+                settings.summary(values)),
+            {"values": values,
+             "by_piston": dict((str(tags.display_number(motor.axis)),
+                                dict(motor.write_params)) for motor in motors)})
+
+    # -- presets -------------------------------------------------------------------
+
+    @staticmethod
+    def _preset_files() -> list:
+        return sorted(paths.PRESET_DIR.glob("*.csv"), key=lambda p: p.name.lower())
+
+    def _find_preset(self, name: str):
+        """The file a preset name means.
+
+        The shipped presets have long descriptive names, so the start of one
+        is enough as long as it picks out exactly one file.
+        """
+        typed = str(name).strip()
+        direct = paths.PRESET_DIR / typed
+        for candidate in (direct, direct.with_name(direct.name + ".csv")):
+            if candidate.is_file():
+                return candidate
+        if typed and (len(typed) > 1 and typed[1] == ":" or "/" in typed or "\\" in typed):
+            raise Refusal("There is no preset file at {0}.".format(typed))
+        matches = [path for path in self._preset_files()
+                   if path.stem.lower().startswith(typed.lower())]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise Refusal('No preset starts with "{0}". See: wavectl preset --list'
+                          .format(typed))
+        raise Refusal('"{0}" could be any of: {1}.'.format(
+            typed, "; ".join(path.stem for path in matches)))
+
+    def presets(self) -> Result:
+        names = [path.stem for path in self._preset_files()]
+        return Result("; ".join(names) or "no presets", {"presets": names})
+
+    def preset(self, name: str, select: bool = False) -> Result:
+        """Apply a saved preset to the selection.
+
+        ``select`` first selects the pistons the preset itself gives motion
+        to, which is how a preset written for the front nine is run without
+        typing the nine.
+        """
+        self._refuse_while_moving("the preset")
+        path = self._find_preset(name)
+        try:
+            preset = PresetProcessor().load(str(path))
+        except PresetError as exc:
+            raise Refusal(str(exc)) from exc
+        model = self.model
+        moving = sorted(axis for axis, row in preset.rows.items()
+                        if preset._commands_motion(row))
+        if select:
+            if not moving:
+                raise Refusal(
+                    "{0} gives no piston a row of its own, so it does not say "
+                    "which pistons to run. Select them first.".format(path.stem))
+            model.dropped_axes = []
+            model.set_selection(moving)
+        if not model.all_motors:
+            hint = (" This preset moves pistons {0}; add --select to choose "
+                    "them.".format(pistons.describe(moving)) if moving else "")
+            raise Refusal("Nothing is selected to apply {0} to.{1}".format(
+                path.stem, hint))
+
+        applied, skipped, clamped = [], [], set()
+        for motor in model.all_motors:
+            values = preset.values_for(motor.axis)
+            if values is None:
+                skipped.append(motor.axis)
+                continue
+            # Out-of-range cells are held at the limit, as the Preset Options
+            # tab does: refusing the row threw away every other value in it.
+            safe = {}
+            for parameter, value in values.items():
+                spec = params.BY_NAME.get(parameter)
+                if spec is None:
+                    continue
+                held = value
+                if spec.minimum is not None and held < spec.minimum:
+                    held = spec.minimum
+                if spec.maximum is not None and held > spec.maximum:
+                    held = spec.maximum
+                if held != value:
+                    clamped.add("{0} {1} held at {2}".format(parameter, value, held))
+                safe[parameter] = held
+            motor.update_params(safe)
+            applied.append(motor.axis)
+        if not applied:
+            raise Refusal("{0} has no values for the selected pistons.".format(path.stem))
+        model.mark_unprepared()
+
+        parts = ["applied {0}".format(path.stem), self._selection_line()]
+        if skipped:
+            parts.append("no values for pistons " + pistons.describe(skipped))
+        if clamped:
+            parts.append("; ".join(sorted(clamped)))
+        return Result(" | ".join(parts), {
+            "preset": path.stem, "applied": pistons.shown(applied),
+            "skipped": pistons.shown(skipped), "clamped": sorted(clamped),
+            "warnings": list(preset.warnings)})
