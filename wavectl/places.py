@@ -64,3 +64,11 @@ def output_dir() -> Path:
 
 def mock_only() -> bool:
     return os.environ.get(MOCK_ONLY_VARIABLE, "") not in ("", "0")
+
+
+def shown(path: Path) -> str:
+    """A path as it is worth printing: from the checkout when it is inside it."""
+    try:
+        return str(Path(path).resolve().relative_to(paths.APP_DIR))
+    except ValueError:
+        return str(path)

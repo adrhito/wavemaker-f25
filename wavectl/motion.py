@@ -18,12 +18,12 @@ What this module adds is what a window gets from the person in front of it:
 from __future__ import annotations
 
 import time
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from app import tags
 from app.plc import PlcError
 from Model import MachineState, RunMode
-from wavectl import live, pistons
+from wavectl import live, pistons, sampling
 from wavectl.jobs import Job, Refusal, Result
 from wavectl.timing import (DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS, ONCE_SECONDS,
                             PREPARE_SECONDS, REST_SECONDS, START_SECONDS)
@@ -44,6 +44,7 @@ class MotionOperations:
         "speed": "speed",
         "stroke": "stroke",
         "wait": "wait",
+        "watch": "watch",
     }
 
     # -- checks made before anything is commanded --------------------------------
@@ -208,12 +209,14 @@ class MotionOperations:
 
     def run(self, mode: str = "continuous", seconds: Optional[float] = None,
             wait: Optional[bool] = None, patience: Optional[float] = None,
-            prepare: bool = False, ignore_warnings: bool = False) -> Result:
+            prepare: bool = False, ignore_warnings: bool = False,
+            sample_hz: Optional[float] = None) -> Result:
         """Run the selection: continuously for a set time, or once.
 
         A continuous run stops itself after ``seconds`` and rests the pistons,
         exactly as a Stop from the window would. One stroke and one curve end
-        by themselves.
+        by themselves. ``sample_hz`` records the pistons' positions to a file
+        from before the run bit goes up until they are at rest again.
         """
         model = self.model
         if mode not in _MODES:
@@ -248,13 +251,39 @@ class MotionOperations:
         if patience is None:
             patience = ((seconds + REST_SECONDS if continuous else ONCE_SECONDS)
                         + START_SECONDS + (PREPARE_SECONDS if prepare else 0.0))
+        note = "{0} run of pistons {1}, {2}".format(
+            mode, pistons.describe(model.live_axes), self._motion_phrase())
         if continuous:
-            job = self._start_job("run", lambda job: self._continuous_work(job, seconds))
+            job = self._start_job("run", lambda job: self._sampled(
+                sample_hz, note, lambda: self._continuous_work(job, seconds)))
         else:
             job = self._start_job(
                 "stroke" if run_mode is RunMode.SINGLE else "curve",
-                lambda job: self._once_work(job, run_mode))
+                lambda job: self._sampled(
+                    sample_hz, note, lambda: self._once_work(job, run_mode)))
         return self._answer(job, wait, patience)
+
+    def _sampled(self, hz: Optional[float], note: str,
+                 work: Callable[[], Result]) -> Result:
+        """Do ``work`` with the selected pistons' positions being recorded."""
+        if not hz:
+            return work()
+        sampler = sampling.Sampler(self.plc, self.model.live_axes, hz, note).start()
+        try:
+            result = work()
+        except Refusal as exc:
+            # A run that went wrong is the one whose positions matter most.
+            sampler.stop()
+            path = sampler.save()
+            raise Refusal("{0} | {1}".format(exc, sampler.summary(path)),
+                          dict(exc.data, samples=sampler.record(path))) from exc
+        except BaseException:
+            sampler.stop()
+            raise
+        sampler.stop()
+        path = sampler.save()
+        return Result("{0} | {1}".format(result.text, sampler.summary(path)),
+                      dict(result.data, samples=sampler.record(path)))
 
     def _continuous_work(self, job: Job, seconds: float) -> Result:
         model = self.model
@@ -434,3 +463,29 @@ class MotionOperations:
         if job is None:
             return Result("nothing has been started | " + self._state_phrase(), {})
         return self._answer(job, True, float(patience))
+
+    # -- watching ----------------------------------------------------------------------
+
+    def watch(self, seconds: float = 10.0, hz: float = sampling.DEFAULT_HZ,
+              pistons_text: Optional[str] = None) -> Result:
+        """Record piston positions to a file for a while. Reads only.
+
+        Works whatever the machine is doing and alongside a run, so it is how
+        to look at motion that is already under way.
+        """
+        seconds = float(seconds)
+        if not 0 < seconds <= sampling.MAX_SECONDS:
+            raise Refusal("Watch for between a moment and {0:.0f} seconds.".format(
+                sampling.MAX_SECONDS))
+        axes = (pistons.parse(pistons_text) if pistons_text is not None
+                else self.model.live_axes)
+        if not axes:
+            raise Refusal("Nothing is selected. Name the pistons to watch: "
+                          "wavectl watch --pistons 1-9")
+        sampler = sampling.Sampler(self.plc, axes, hz, self._state_phrase()).start()
+        try:
+            time.sleep(seconds)
+        finally:
+            sampler.stop()
+        path = sampler.save()
+        return Result(sampler.summary(path), sampler.record(path))

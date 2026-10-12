@@ -232,7 +232,8 @@ def _run(args) -> int:
         + (timing.PREPARE_SECONDS if args.prepare else 0.0))
     return _waited(args, "run", {
         "mode": mode, "seconds": seconds, "wait": wait, "prepare": args.prepare,
-        "ignore_warnings": args.ignore_warnings}, patience)
+        "ignore_warnings": args.ignore_warnings, "sample_hz": args.sample},
+        patience)
 
 
 def _stop_directly(args, ip, slot, because: str = "") -> int:
@@ -311,6 +312,12 @@ def _stroke(args) -> int:
 
 def _wait(args) -> int:
     return _waited(args, "wait", {}, args.timeout)
+
+
+def _watch(args) -> int:
+    return _ask(args, "watch", {"seconds": args.seconds, "hz": args.hz,
+                                "pistons_text": args.pistons},
+                seconds=args.seconds + timing.ANSWER_MARGIN_SECONDS)
 
 
 # -- the parser ----------------------------------------------------------------
@@ -442,6 +449,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="boot and home first if the pistons need it")
     run.add_argument("--ignore-warnings", action="store_true",
                      help="go ahead although a selected drive reports a fault")
+    run.add_argument("--sample", type=float, nargs="?", const=timing.SAMPLE_HZ,
+                     metavar="HZ",
+                     help="record piston positions to a file for the whole run "
+                          "(default %(const)g Hz); the answer names the file")
     run.set_defaults(run=_run)
 
     stop = commands.add_parser(
@@ -494,6 +505,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="wait for a prepare or run to finish and report how it went")
     wait.add_argument("--timeout", type=float, default=120.0, metavar="SECONDS")
     wait.set_defaults(run=_wait)
+
+    watch = commands.add_parser(
+        "watch", parents=[common],
+        help="record piston positions to a file for a while; reads only",
+        description="Works alongside a run. The file is CSV: seconds, then a "
+                    "column of millimetres per piston.")
+    watch.add_argument("--seconds", type=float, default=10.0)
+    watch.add_argument("--hz", type=float, default=timing.SAMPLE_HZ)
+    watch.add_argument("--pistons", help="which pistons (default: the selection)")
+    watch.set_defaults(run=_watch)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

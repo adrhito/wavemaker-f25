@@ -24,3 +24,5 @@ DEFAULT_RUN_SECONDS = 30.0
 #: Added to what the session was asked to wait, so its answer -- including
 #: "still under way" -- arrives before the command gives up on the connection.
 ANSWER_MARGIN_SECONDS = 20.0
+#: How often piston positions are recorded when no rate is given.
+SAMPLE_HZ = 10.0
