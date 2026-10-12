@@ -207,8 +207,15 @@ class TrialOperations:
                     exc, places.shown(kept.get("clip", target))), exc.data) from exc
 
             if recorder is not None:
-                # The wave is still on its way to the camera when the floor stops.
-                time.sleep(max(options["post"] - (time.monotonic() - sent), 0.0))
+                # The wave is still on its way to the camera when the floor
+                # stops. Counted from when the run bit went up, not from when
+                # the pulse was asked for: on the real controller the pulse's
+                # parameters are written first, a piston at a time.
+                since = time.monotonic() - sent
+                asserted = (fired.data.get("motion_timing") or {}).get("run_asserted_utc")
+                if asserted:
+                    since = time.time() - datetime.fromisoformat(asserted).timestamp()
+                time.sleep(max(options["post"] - since, 0.0))
                 clip = recorder.end()
                 if recorder.failure():
                     clip["failure"] = recorder.failure()

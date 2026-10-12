@@ -61,7 +61,12 @@ def _vision():
             "Using a camera needs NumPy and OpenCV, which this Python does "
             "not have ({0}). Install them with: python -m pip install -r "
             "requirements-vision.txt".format(exc)) from exc
-    from vision import calibration, camera, metrics, waterline
+    try:
+        from vision import calibration, camera, metrics, waterline
+    except ImportError as exc:
+        raise Unavailable(
+            "Using a camera needs the vision package, which this checkout "
+            "does not have ({0}).".format(exc)) from exc
 
     return cv2, numpy, calibration, camera, metrics, waterline
 

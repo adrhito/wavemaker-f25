@@ -201,6 +201,22 @@ class TestOnTheMovingMock:
         assert moving.handle("park")["ok"]
         assert len(moving.plc.writes_to(tags.MOTOR_BOOT)) == boots
 
+    def test_calibrating_everything_saves_homing_each_selection(self, moving):
+        reply = moving.handle("calibrate")
+        assert reply["ok"], reply["text"]
+        assert reply["text"] == "All 30 pistons are calibrated."
+        moving.handle("select", {"pistons_text": "10-12"})
+        assert "ready, still homed" in moving.handle("status")["text"]
+        boots = len(moving.plc.writes_to(tags.MOTOR_BOOT))
+        assert moving.handle("run", {"mode": "single"})["ok"]
+        assert len(moving.plc.writes_to(tags.MOTOR_BOOT)) == boots
+
+    def test_a_dropped_piston_is_reported_once(self, moving):
+        moving.plc.place(axis(2), 200.0)
+        moving.plc.wear(axis(2), 0.0)
+        assert "would not home" in moving.handle("prepare")["text"]
+        assert "would not home" not in moving.handle("prepare")["text"]
+
     def test_a_piston_that_will_not_home_is_dropped_and_named(self, moving):
         # A seized piston never reaches the home position, so never homes.
         moving.plc.place(axis(2), 200.0)

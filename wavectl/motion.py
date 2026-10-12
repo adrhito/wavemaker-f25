@@ -156,6 +156,10 @@ class MotionOperations:
         model = self.model
         mark = self.journal.mark()
         asked = pistons.describe(model.live_axes)
+        # The model only ever adds to this list, so without clearing it a
+        # piston dropped by an earlier prepare would be reported again by
+        # every later one.
+        model.dropped_axes = []
         if not model.prepare():
             raise Refusal(self._why(mark, "Prepare did not start."))
         if not self._until(lambda: not model.busy, PREPARE_SECONDS):
