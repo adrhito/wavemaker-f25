@@ -53,8 +53,8 @@ class SolitonDesigner:
             row=0, column=0, sticky="w")
         ttk.Label(
             header,
-            text="Choose a water-wave target, stage the floor, then fire one "
-            "upward pulse after the water settles.",
+            text="Set the wave height and water depth; the tab works out the "
+            "push. Stage the floor, then fire one pulse once the water settles.",
             style="Dim.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
@@ -80,6 +80,7 @@ class SolitonDesigner:
             "mm of motor travel; uncalibrated")
         ttk.Checkbutton(
             controls, variable=self.auto, command=self._changed,
+            style="Card.TCheckbutton",
             text="Work out width and floor lift from height, depth and the "
                  "selected pistons").grid(
                      row=5, column=0, columnspan=4, sticky="w",
@@ -304,12 +305,13 @@ class SolitonDesigner:
         target = trial.target
         self.summary.configure(
             text="Requested: {0:.0f} mm crest rise and {1:.0f} mm width at "
-                 "{2:.0f} mm water depth. Trial command: lift the floor "
-                 "{3} mm at {4} mm/s maximum; nominal travel about {5:.2f} s "
-                 "before acceleration and deceleration.".format(
+                 "{2:.0f} mm water depth. Pulse: lift the floor {3} mm at up "
+                 "to {4} mm/s, acceleration and deceleration {5} mm/s², jerk "
+                 "{6} mm/s³, S-curve; about {7:.2f} s.".format(
                      target.crest_height_mm, target.width_mm,
                      target.water_depth_mm, trial.floor_lift_mm,
-                     trial.speed_mm_s, trial.nominal_travel_seconds))
+                     trial.speed_mm_s, trial.accel_mm_s2, trial.jerk_mm_s3,
+                     trial.nominal_travel_seconds))
         notes = [auto_note] if auto_note else []
         if not target.width_matches_depth:
             notes.append(
@@ -319,9 +321,8 @@ class SolitonDesigner:
                     target.theoretical_width_mm))
         if trial.speed_limited:
             notes.append(
-                "The requested width calls for faster floor motion than the "
-                "{0} mm/s trial cap; this pulse will be broader/slower.".format(
-                    trial.speed_mm_s))
+                "This wave calls for faster floor motion than the trial caps "
+                "allow; this pulse will be broader/slower than the target.")
         if target.crest_height_mm / target.water_depth_mm > 0.3:
             notes.append(
                 "Crest rise is more than 30% of water depth; the first-order "

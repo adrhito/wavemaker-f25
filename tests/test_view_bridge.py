@@ -151,6 +151,7 @@ def test_soliton_tab_works_out_width_and_lift_from_height_and_depth(window):
             SolitaryTarget(80, tab.width.get(), 394), 9))
         assert all(w.instate(["disabled"])
                    for w in tab.width_widgets + tab.lift_widgets)
+        assert "jerk" in tab.summary.cget("text")
     finally:
         _select(window, [])
         tab.auto.set(True)
