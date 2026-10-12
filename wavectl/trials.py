@@ -141,13 +141,10 @@ class TrialOperations:
         self._refuse_unless_at_rest("a trial")
         self._refuse_if_driven()
         self._refuse_if_troubled(False)
-        if model.needs_homing and not prepare:
-            raise Refusal(
-                "Pistons {0} are not homed. wavectl prepare boots and homes "
-                "them first (about a minute; every selected piston moves), or "
-                "add --prepare to do both.".format(pistons.describe(model.live_axes)))
+        self._refuse_unless_homed(prepare)
 
-        options = {"settle": settle, "camera": camera_source, "rig": rig,
+        options = {"asked_at": self._interrupts, "pistons": tuple(model.live_axes),
+                   "settle": settle, "camera": camera_source, "rig": rig,
                    "still_mm": still_mm, "pre": pre, "post": post,
                    "station_mm": station_mm, "sample_hz": sample_hz,
                    "record_observation": record_observation}
@@ -174,6 +171,16 @@ class TrialOperations:
                     seen = recorder.open()
                 except camera.Unavailable as exc:
                     raise Refusal("{0} Nothing was moved.".format(exc)) from exc
+
+            # Opening a camera takes seconds, with the machine at rest and
+            # nothing to tell a stop from a stop of nothing. Staging clears
+            # the model's own stop flag, so without this a stop sent in that
+            # time was answered and then ignored, and a selection changed in
+            # it was staged and fired with the lift worked out for the old one.
+            if (self._interrupts != options["asked_at"]
+                    or tuple(model.live_axes) != options["pistons"]):
+                raise Refusal("The trial was abandoned before anything moved: a "
+                              "stop or an edit arrived while the camera was opening.")
 
             self._stage_work(job, planned, note)
             job.reached("staged pistons {0}; firing when the water has "

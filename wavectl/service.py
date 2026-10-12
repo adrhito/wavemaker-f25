@@ -33,6 +33,8 @@ LOGGER = getLogger(LOGGER_NAME)
 
 #: Gap between looks at the model while waiting for it.
 POLL_SECONDS = 0.05
+#: How long an ending session waits for its own last stop to take hold.
+CLOSE_SECONDS = 5.0
 
 
 #: How long a command that is not waiting gives a job to fail straight away,
@@ -73,6 +75,10 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
         self._run_deadline: Optional[float] = None
         #: The soliton trial whose floor is staged and waiting to be fired.
         self._staged_trial = None
+        #: Counts every stop and every edit. A job that takes a while before
+        #: it moves anything notes this when it is asked for and checks it
+        #: again before it moves, so a stop sent in between is not lost.
+        self._interrupts = 0
 
     @property
     def plc(self):
@@ -104,17 +110,50 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
             self.journal.note("Mock wavemaker. Nothing physical will move.")
         self.model.start_monitoring()
 
+    def _interrupted(self) -> None:
+        with self._lock:
+            self._interrupts += 1
+
     def close(self) -> None:
         """Stop the machine and close the connection.
 
-        This is the window's own closing sequence, and it does switch off the
-        drives the session was holding: a piston left above the bottom of its
+        Ends with the window's own closing sequence, which switches off the
+        drives of the selected pistons: one left above the bottom of its
         travel may sink when the session ends. ``park`` first.
+
+        The model's shutdown is not enough by itself. A stop that is still
+        letting the pistons finish their stroke carries on after it, and goes
+        on to start the resting move, which raises Run_1 on a controller the
+        session has just walked away from. So the machine is stopped outright
+        first and waited for, and the command bits are written low once more
+        as the very last thing.
         """
+        model = self.model
+        plc = model.plc
         try:
-            self.model.shutdown()
+            model.stop(immediate=True, park=False)
+            self._until(self._at_rest, CLOSE_SECONDS)
         except Exception:  # noqa: BLE001 - the session is ending either way
+            LOGGER.exception("The session could not stop the machine as it ended.")
+        try:
+            model.shutdown()
+        except Exception:  # noqa: BLE001
             LOGGER.exception("The session did not shut the model down cleanly.")
+        try:
+            # The transport reconnects by itself for this last word.
+            failures = live.drop_bits(plc)
+            high = live.bits_high(plc)
+            if failures or high:
+                LOGGER.critical("Command bits may still be high as the session "
+                                "ends: %s %s", failures, high)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.critical("Could not confirm the command bits low as the "
+                            "session ended: %s", exc)
+        finally:
+            try:
+                plc.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- answering -------------------------------------------------------------
 
@@ -286,6 +325,13 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
             parts.append(troubled)
         elif rows:
             parts.append("drives ok")
+        if model.state is MachineState.HOMED:
+            lost = [row["piston"] for row in rows
+                    if row.get("homed") is False
+                    and tags.axis_from_display(row["piston"]) in selected]
+            if lost:
+                parts.append("DRIVES NO LONGER HOMED: {0}; prepare again".format(
+                    ", ".join(str(number) for number in lost)))
         floor = self._floor_phrase()
         if floor:
             parts.append(floor)
@@ -368,6 +414,7 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
         """
         axes = pistons.parse(pistons_text)
         self._refuse_while_moving("the selection")
+        self._interrupted()
         # A piston dropped because it would not home is being asked for again
         # or left out on purpose; either way the old note no longer applies.
         self.model.dropped_axes = []
@@ -384,6 +431,7 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
         """
         edit = settings.read(values)
         self._refuse_while_moving("parameters")
+        self._interrupted()
         model = self.model
         motors = self._chosen(pistons_text)
 
@@ -487,6 +535,7 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
         typing the nine.
         """
         self._refuse_while_moving("the preset")
+        self._interrupted()
         path = self._find_preset(name)
         try:
             preset = PresetProcessor().load(str(path))

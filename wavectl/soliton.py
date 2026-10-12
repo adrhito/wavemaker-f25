@@ -139,11 +139,7 @@ class SolitonOperations:
         self._refuse_unless_at_rest("staging")
         self._refuse_if_driven()
         self._refuse_if_troubled(False)
-        if model.needs_homing and not prepare:
-            raise Refusal(
-                "Pistons {0} are not homed. wavectl prepare boots and homes "
-                "them first (about a minute; every selected piston moves), or "
-                "add --prepare to do both.".format(pistons.describe(model.live_axes)))
+        self._refuse_unless_homed(prepare)
         job = self._start_job("staging", lambda job: self._stage_work(job, trial, note))
         return self._answer(job, wait, patience)
 
@@ -196,6 +192,7 @@ class SolitonOperations:
         mark = self.journal.mark()
         self._staged_trial = None          # one pulse per staging, as in the model
         shown = pistons.describe(model.live_axes)
+        earlier = model.last_soliton_record
         if before_pulse is not None:
             before_pulse()
         if not model.fire_soliton(trial, planned_station_mm=station_mm):
@@ -205,7 +202,11 @@ class SolitonOperations:
             raise Refusal("The pulse had not finished after {0:.0f} seconds; "
                           "see wavectl status.".format(PULSE_SECONDS))
 
+        # A pulse refused before it began leaves the model pointing at the
+        # record of the one before, which says "completed".
         path = model.last_soliton_record
+        if path is not None and path == earlier:
+            path = None
         record = {}
         if path is not None:
             try:

@@ -46,6 +46,12 @@ class TestPistonLists:
 
 
 class TestSessionFile:
+    @pytest.fixture(autouse=True)
+    def this_process_counts_as_a_session(self, monkeypatch):
+        # These claim the file in the test's own name, and the test runner is
+        # not a session. What is and is not one has its own tests below.
+        monkeypatch.setattr(sessionfile, "is_session", sessionfile.process_exists)
+
     def test_a_second_claim_is_refused_while_the_holder_lives(self):
         sessionfile.claim({"pid": os.getpid(), "mode": "mock"})
         with pytest.raises(sessionfile.Taken) as refused:
@@ -69,6 +75,34 @@ class TestSessionFile:
         sessionfile.claim({"pid": os.getpid(), "token": "secret"})
         if os.name == "posix":
             assert places.session_file().stat().st_mode & 0o077 == 0
+
+
+class TestWhatCountsAsASession:
+    def test_another_program_with_the_same_number_is_not_one(self):
+        # After a crash the number in a stale file is handed to something
+        # else. That something must not block a new session, or be killed.
+        assert sessionfile.process_exists(os.getpid())
+        assert not sessionfile.is_session(os.getpid())
+
+    def test_a_stale_file_naming_another_program_is_replaced(self):
+        sessionfile.claim({"pid": os.getpid(), "mode": "live"})
+        sessionfile.claim({"pid": os.getpid(), "mode": "mock"})
+        assert sessionfile.read()["mode"] == "mock"
+
+    def test_force_leaves_another_program_alone(self, capsys):
+        import subprocess
+        import sys
+
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            sessionfile.claim({"pid": bystander.pid, "mode": "mock", "port": 1,
+                               "token": "x", "started": "earlier"})
+            assert cli.main(["session", "stop", "--force"]) == 0
+            assert bystander.poll() is None          # still running
+            assert sessionfile.read() is None
+        finally:
+            bystander.kill()
+            bystander.wait()
 
 
 class TestJournal:
@@ -221,6 +255,7 @@ class TestTheSessionProcess:
         assert "already running" in capsys.readouterr().out
 
         pid = sessionfile.read()["pid"]
+        assert sessionfile.is_session(pid)
         assert cli.main(["session", "stop"]) == 0
         assert sessionfile.read() is None
         assert not sessionfile.process_exists(pid)

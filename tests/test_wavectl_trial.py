@@ -157,6 +157,39 @@ class TestWithTheDrawnTank:
         assert "Camera 7 did not open. Nothing was moved." in reply["text"]
         assert len(service.plc.history) == before
 
+    def test_a_stop_sent_while_the_camera_opens_is_not_lost(self, service, monkeypatch):
+        pytest.importorskip("cv2")
+        assert service.handle("prepare")["ok"]
+
+        def slow_to_open(self):
+            # The operator stops the machine while the camera is still opening.
+            assert service.handle("stop")["ok"]
+            return {"source": "0", "width": 1, "height": 1, "reported_fps": 1.0}
+
+        monkeypatch.setattr(camera.Recorder, "open", slow_to_open)
+        monkeypatch.setattr(camera.Recorder, "close", lambda self: None)
+        pulses = run_writes(service).count(1)
+        reply = service.handle("trial", dict(WAVE, settle=0, camera_source="0"))
+        assert not reply["ok"]
+        assert "abandoned before anything moved" in reply["text"]
+        assert run_writes(service).count(1) == pulses
+
+    def test_a_selection_changed_while_the_camera_opens_is_not_fired(
+            self, service, monkeypatch):
+        pytest.importorskip("cv2")
+        assert service.handle("prepare")["ok"]
+
+        def slow_to_open(self):
+            assert service.handle("select", {"pistons_text": "10-12"})["ok"]
+            return {"source": "0", "width": 1, "height": 1, "reported_fps": 1.0}
+
+        monkeypatch.setattr(camera.Recorder, "open", slow_to_open)
+        monkeypatch.setattr(camera.Recorder, "close", lambda self: None)
+        boots = len(service.plc.writes_to(tags.MOTOR_BOOT))
+        reply = service.handle("trial", dict(WAVE, settle=0, camera_source="0"))
+        assert not reply["ok"] and "abandoned before anything moved" in reply["text"]
+        assert len(service.plc.writes_to(tags.MOTOR_BOOT)) == boots
+
     def test_the_drawn_wave_is_recorded_and_measured(self, service):
         pytest.importorskip("cv2")
         from vision.synthetic import SyntheticTank

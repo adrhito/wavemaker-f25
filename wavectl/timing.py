@@ -17,6 +17,12 @@ ONCE_SECONDS = 420.0
 #: Longest the pistons are given to come to rest after a stop: finishing the
 #: stroke, then the gentle move to the resting position.
 REST_SECONDS = 45.0
+#: The longest a stop waits for the pistons to stand still once the run bits
+#: are low, before answering that they have not.
+STILL_CAP_SECONDS = 30.0
+#: How long the end of a timed run keeps trying to stop a machine that will
+#: not stop, before giving up and saying so.
+INSIST_SECONDS = 300.0
 #: A continuous run may not be asked to last longer than this.
 MAX_RUN_SECONDS = 3600.0
 #: How long a continuous run lasts when no length is given.

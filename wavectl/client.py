@@ -17,6 +17,8 @@ from wavectl import places, sessionfile, wire
 #: How long to wait for the session to accept a connection. It is on this
 #: computer, so anything longer than a moment means it is not listening.
 CONNECT_SECONDS = 2.0
+#: How long a session is given to say that it is there at all.
+ALIVE_SECONDS = 3.0
 #: How long a quick request (status, a parameter) may take to be answered.
 QUICK_SECONDS = 20.0
 #: How long to wait for a new session to say it is ready. A real controller

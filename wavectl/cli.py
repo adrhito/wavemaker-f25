@@ -72,7 +72,7 @@ def _ask(args, operation: str, arguments: Optional[dict] = None,
 
 def _session_start(args) -> int:
     holder = sessionfile.read()
-    if holder is not None and sessionfile.process_exists(holder.get("pid")):
+    if holder is not None and sessionfile.is_session(holder.get("pid")):
         return _fail(
             "a session is already running (process {0}, since {1}). End it "
             "with: wavectl session stop".format(
@@ -98,12 +98,13 @@ def _session_stop(args) -> int:
         return _no_session(args.json)
     mode, pid = info.get("mode"), info.get("pid")
     try:
+        client.request("ping", seconds=client.ALIVE_SECONDS)
         reply = client.request("shutdown")
     except client.Silent as exc:
-        if not sessionfile.process_exists(pid):
+        if not sessionfile.is_session(pid):
             sessionfile.release()
-            gone = ("The session (process {0}) had already died; its session "
-                    "file is cleared.".format(pid))
+            gone = ("The session (process {0}) is gone; its session file is "
+                    "cleared.".format(pid))
             if mode == "live":
                 # However it died, it may not have dropped the run bits.
                 return _stop_directly(args, info.get("ip"), info.get("slot"), gone)
@@ -116,15 +117,24 @@ def _session_stop(args) -> int:
     if reply is not None and not asked and not args.force:
         return _show(reply, args.json)
     if asked and _wait_for_exit(pid, END_SECONDS):
-        return _fail(
-            "session ended; run bits dropped and its drives switched off, so "
-            "a piston left above the bottom of travel may have sunk."
-            if mode == "live" else "session ended.", args.json, mode, status=0)
+        if mode != "live":
+            return _fail("session ended.", args.json, mode, status=0)
+        # Not taken on trust: the session has gone, so the run bits are
+        # written low and read back from here before saying they are.
+        return _stop_directly(
+            args, info.get("ip"), info.get("slot"),
+            "Session ended and the drives of its pistons switched off, so one "
+            "left above the bottom of travel may have sunk.")
     if not args.force:
         return _fail("the session (process {0}) was asked to end and has not "
                      "yet. Repeat with --force to end it anyway.".format(pid),
                      args.json, mode, status=1)
 
+    if not sessionfile.is_session(pid):
+        sessionfile.release()
+        return _fail("process {0} is not a wavectl session, so it was left "
+                     "alone; the stale session file is cleared.".format(pid),
+                     args.json, mode, status=0)
     # Asked nicely first, so the session gets the chance to drop the run bits
     # and close its connection itself.
     for sent in (signal.SIGTERM, getattr(signal, "SIGKILL", signal.SIGTERM)):
@@ -257,9 +267,16 @@ def _stop(args) -> int:
                               args.slot if args.slot is not None else info.get("slot"))
     park = True if args.park else False if args.no_park else None
     try:
+        # Asked first whether it is there at all. A stop may take most of a
+        # minute to answer, because it waits for the pistons to come to
+        # rest; a session that is alive but hung would be waited on for all
+        # of that, with the machine still running, before this command took
+        # over. This way it is three seconds.
+        client.request("ping", seconds=client.ALIVE_SECONDS)
         reply = client.request(
             "stop", {"now": args.now, "park": park},
-            timing.REST_SECONDS + timing.ANSWER_MARGIN_SECONDS)
+            timing.REST_SECONDS + timing.STILL_CAP_SECONDS
+            + timing.ANSWER_MARGIN_SECONDS)
     except client.NoSession:
         return _fail("No session, so nothing started here is driving the "
                      "machine. If something else left a run going, drop it "
@@ -350,7 +367,8 @@ def _soliton_observe(args) -> int:
     return _ask(args, "soliton_observe", {
         "crest_rise_mm": args.crest_rise, "crest_to_trough_mm": args.crest_to_trough,
         "width_mm": args.width, "station_mm": args.station_mm,
-        "notes": args.notes, "record": args.record})
+        "notes": args.notes,
+        "record": os.path.abspath(args.record) if args.record else None})
 
 
 def _trial(args) -> int:

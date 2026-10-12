@@ -23,10 +23,16 @@ from typing import Callable, Dict, Optional
 from app import tags
 from app.plc import PlcError
 from Model import MachineState, RunMode
+from logging import getLogger
+
+from modules.logging.log_utils import LOGGER_NAME
 from wavectl import live, pistons, sampling
 from wavectl.jobs import Job, Refusal, Result
-from wavectl.timing import (DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS, ONCE_SECONDS,
-                            PREPARE_SECONDS, REST_SECONDS, START_SECONDS)
+from wavectl.timing import (DEFAULT_RUN_SECONDS, INSIST_SECONDS, MAX_RUN_SECONDS,
+                            ONCE_SECONDS, PREPARE_SECONDS, REST_SECONDS,
+                            START_SECONDS, STILL_CAP_SECONDS)
+
+LOGGER = getLogger(LOGGER_NAME)
 
 _MODES = {"continuous": RunMode.CONTINUOUS, "single": RunMode.SINGLE,
           "curve": RunMode.CURVE}
@@ -38,6 +44,9 @@ STILL_POLL_SECONDS = 0.1
 STILL_READINGS = 3
 #: The least time the pistons are given to stop moving before saying they have not.
 STILL_SECONDS = 5.0
+#: How far from where it was sent a piston may be and still count as parked:
+#: the model's own arrival tolerance, and a little for the last of the move.
+REST_TOLERANCE_MM = 8.0
 
 
 def _mm(value: float) -> str:
@@ -116,6 +125,36 @@ class MotionOperations:
             "wavectl prepare writes this session's selection again.".format(
                 pistons.describe(theirs), pistons.describe(ours)))
 
+    def _homed(self) -> bool:
+        """Whether the selected pistons are homed. Asks the drives every time.
+
+        The model's own ``needs_homing`` answers from its state alone once
+        that state is HOMED. A drive that has since lost its reference -- an
+        emergency stop, a power cycle -- goes unnoticed there, and the run
+        that follows drives pistons that do not know where they are.
+
+        When the drives disagree with the model, the model is taken out of
+        HOMED, so that its own next prepare homes them rather than trusting
+        itself.
+        """
+        model = self.model
+        if model._already_homed():
+            return True
+        if model.state is MachineState.HOMED:
+            self.journal.note("The drives of pistons {0} no longer all report "
+                              "homed; they must be prepared again.".format(
+                                  pistons.describe(model.live_axes)))
+            model.mark_unprepared()
+        return False
+
+    def _refuse_unless_homed(self, allow_prepare: bool) -> None:
+        if self._homed() or allow_prepare:
+            return
+        raise Refusal(
+            "Pistons {0} are not homed. wavectl prepare boots and homes them "
+            "first (about a minute; every selected piston moves), or add "
+            "--prepare to do both.".format(pistons.describe(self.model.live_axes)))
+
     def _why(self, mark: int, otherwise: str) -> str:
         """What the model said went wrong since ``mark``."""
         problems = self.journal.problems_since(mark)
@@ -136,7 +175,7 @@ class MotionOperations:
                 return None
         return places
 
-    def _come_to_rest(self) -> Optional[float]:
+    def _come_to_rest(self, cap: Optional[float] = None) -> Optional[float]:
         """Wait for the selected pistons to stop moving. Returns how long it took.
 
         The model calls the machine stopped once the run bits are low, and
@@ -154,6 +193,8 @@ class MotionOperations:
         could not be read.
         """
         limit = max(self.model._stroke_seconds(STILL_SECONDS), STILL_SECONDS)
+        if cap is not None:
+            limit = min(limit, cap)
         began = time.monotonic()
         previous = self._positions()
         quiet = 0
@@ -265,11 +306,13 @@ class MotionOperations:
         if not self._until(lambda: not model.busy, PREPARE_SECONDS):
             raise Refusal("Still calibrating after {0:.0f} seconds.".format(
                 PREPARE_SECONDS))
+        # Judged by the model's own closing sentence. Its list of pistons
+        # that would not home is no guide: a piston warned about for standing
+        # still early in homing stays on it after it has gone on to home.
         said = self.journal.last_status_since(mark) or "calibration ended"
-        stuck = pistons.shown(model.unhomed_axes)
-        if stuck or "calibrated" not in said:
-            raise Refusal(self._why(mark, said), {"would_not_home": stuck})
-        return Result(said, {"would_not_home": []})
+        if said.startswith("All 30 pistons are calibrated"):
+            return Result(said, {"calibrated": tags.MOTOR_COUNT})
+        raise Refusal(said if "calibrated" in said else self._why(mark, said))
 
     # -- run -------------------------------------------------------------------------
 
@@ -300,14 +343,8 @@ class MotionOperations:
         self._refuse_unless_at_rest("a run")
         self._refuse_if_driven()
         self._refuse_if_troubled(ignore_warnings)
-        if model.needs_homing:
-            if not prepare:
-                raise Refusal(
-                    "Pistons {0} are not homed. wavectl prepare boots and homes "
-                    "them first (about a minute; every selected piston moves), "
-                    "or add --prepare to do both.".format(
-                        pistons.describe(model.live_axes)))
-        elif model.state is MachineState.HOMED and not model._live_motors_stale:
+        self._refuse_unless_homed(prepare)
+        if model.state is MachineState.HOMED and not model._live_motors_stale:
             self._refuse_if_selection_differs()
 
         if wait is None:
@@ -372,22 +409,50 @@ class MotionOperations:
         self._run_deadline = began + seconds
         job.reached("running pistons {0} continuously for {1:g} s, then stopping "
                     "by itself | {2}".format(shown, seconds, self._motion_phrase()))
+        lagged = set()
+
+        def over() -> bool:
+            # The model forgets its stragglers when the run ends, so they are
+            # collected while it is going.
+            lagged.update(model.lagging_axes)
+            return (model.state is not MachineState.RUNNING
+                    or model._stopping.is_set())
+
         try:
             # Ends early if anything else stops the machine first.
-            self._until(lambda: model.state is not MachineState.RUNNING
-                        or model._stopping.is_set(), seconds)
+            self._until(over, seconds)
             lasted = time.monotonic() - began
             timed = model.state is MachineState.RUNNING and not model._stopping.is_set()
             if timed:
                 self.journal.note("Run time of {0:g} s is up; stopping.".format(seconds))
-                if not model.stop():
-                    raise Refusal("STOP FAILED at the end of the run. " + self._why(
-                        mark, "Use the physical stop and check the connection."))
+                # Not judged by what it returns: whether the machine stopped
+                # is read from the run bits themselves, below.
+                model.stop()
         finally:
             self._run_deadline = None
-        rested = self._until(self._at_rest, REST_SECONDS)
+
+        def settled_or_failed() -> bool:
+            # A stop that could not reach the controller gives up with the
+            # model still "running" and nothing left in progress. Waiting
+            # out the full rest time on that would be forty-five more
+            # seconds of a run nobody is stopping.
+            return self._at_rest() or (
+                model.state is MachineState.RUNNING and not model.busy
+                and not model._stopping.is_set() and not model._parking.is_set())
+
+        self._until(settled_or_failed, REST_SECONDS)
+        self._make_sure_it_stopped()
+        rested = self._until(self._at_rest, STILL_SECONDS)
 
         extent = self.journal.extent()
+        strokes = dict((motor.axis, abs(motor.write_params["Position 2"]
+                                        - motor.write_params["Position 1"]))
+                       for motor in model.all_motors)
+        if lasted >= 3.0:
+            # Long enough for the monitor to have seen a stroke or two.
+            lagged.update(axis for axis, (low, top) in extent.items()
+                          if strokes.get(axis, 0) >= 25
+                          and top - low < 0.35 * strokes[axis])
         parts = ["ran pistons {0} for {1:.0f} s".format(shown, lasted) if timed
                  else "run on pistons {0} was stopped after {1:.0f} s".format(shown, lasted)]
         if extent:
@@ -402,12 +467,49 @@ class MotionOperations:
                 "bits_high": high,
                 "seen_mm": dict((str(tags.display_number(axis)), [round(low, 1), round(high_, 1)])
                                 for axis, (low, high_) in extent.items())}
+        data["barely_moved"] = pistons.shown(lagged)
         problems = self.journal.problems_since(mark)
         if high:
             problems.append("{0} still high after the stop.".format(" and ".join(high)))
+        if lagged:
+            problems.append("Piston(s) {0} did not cover their stroke.".format(
+                pistons.describe(lagged)))
         if problems:
             raise Refusal(" | ".join(parts + problems), data)
         return Result(" | ".join(parts), data)
+
+    def _make_sure_it_stopped(self) -> None:
+        """Keep stopping until the run bits read low. For the end of a timed run.
+
+        A run started here has to end here: nothing else is watching it. One
+        stop that failed -- the controller not answering for a few seconds as
+        the time ran out -- used to leave Run_2 high with the session
+        believing the run was over, and nothing ever tried again.
+        """
+        model = self.model
+        deadline = time.monotonic() + INSIST_SECONDS
+        tried = 0
+        while True:
+            try:
+                high, unread = live.bits_high(self.plc), None
+            except PlcError as exc:
+                high, unread = None, str(exc)
+            if high == [] and model.state is not MachineState.RUNNING:
+                if tried:
+                    self.journal.note("The machine stopped on attempt {0}.".format(tried + 1))
+                return
+            if time.monotonic() >= deadline:
+                raise Refusal(
+                    "THE RUN COULD NOT BE STOPPED after {0:.0f} seconds of "
+                    "trying: {1}. Use the physical stop.".format(
+                        INSIST_SECONDS, unread or
+                        "{0} still read high".format(" and ".join(high or ["a run bit"]))),
+                    {"bits_high": high})
+            tried += 1
+            LOGGER.critical("Stop attempt %s at the end of a timed run: %s", tried,
+                            unread or "run bits %s still high" % (high,))
+            model.stop(immediate=True, park=False)
+            time.sleep(2.0)
 
     def _once_work(self, job: Job, run_mode: RunMode) -> Result:
         model = self.model
@@ -424,8 +526,12 @@ class MotionOperations:
         problems = self.journal.problems_since(mark)
         if problems:
             raise Refusal(" ".join(problems))
-        return Result("{0} | {1}".format(said, self._resting_place()),
-                      {"state": model.state.value})
+        where = self._resting_place()
+        if "cancelled" in said or "barely moved" in said or not said.startswith("Ran a"):
+            # The model says these in its status bar, not as a problem, and
+            # none of them is the stroke that was asked for.
+            raise Refusal("{0} | {1}".format(said, where))
+        return Result("{0} | {1}".format(said, where), {"state": model.state.value})
 
     # -- stop ------------------------------------------------------------------------
 
@@ -444,6 +550,7 @@ class MotionOperations:
         """
         model = self.model
         mark = self.journal.mark()
+        self._interrupted()
         if park is None and (self._at_rest() or now):
             # The model rests the pistons after any stop from HOMED, moving
             # or not. Asked to stop a machine that is standing still, or to
@@ -460,7 +567,8 @@ class MotionOperations:
             raise Refusal("Stop was sent, but {0} still read high. Use the "
                           "physical stop.".format(" and ".join(high)),
                           {"bits_high": high})
-        still = self._come_to_rest() is not None or not model.all_motors
+        still = (self._come_to_rest(STILL_CAP_SECONDS) is not None
+                 or not model.all_motors)
         final = self._positions()
         further = 0.0
         if at_stop and final and len(at_stop) == len(final):
@@ -492,10 +600,11 @@ class MotionOperations:
             raise Refusal("The resting position is set to hold, which means "
                           "stay put. Choose one first: wavectl set rest=down")
         self._refuse_if_driven()
-        if model.needs_homing:
+        if not self._homed():
             raise Refusal("Pistons {0} are not homed, so they cannot be moved "
                           "yet: wavectl prepare".format(
                               pistons.describe(model.live_axes)))
+        self._interrupted()
         mark = self.journal.mark()
         if model.state is not MachineState.HOMED:
             # Still homed, but an edit took the model out of HOMED and it
@@ -511,9 +620,26 @@ class MotionOperations:
         if not self._until(self._at_rest, REST_SECONDS):
             raise Refusal("The pistons were still moving to rest after {0:.0f} "
                           "seconds; see wavectl status.".format(REST_SECONDS))
-        return Result("{0} | {1}".format(
-            self.journal.last_status_since(mark) or "at rest", self._resting_place()),
-            {"state": model.state.value})
+        said = self.journal.last_status_since(mark) or "at rest"
+        where = self._resting_place()
+        # The model reports a resting move that fell short in its status bar
+        # and carries on. Here it is the whole of what was asked for, so the
+        # positions are checked against where each piston was sent.
+        short = []
+        for motor in model.all_motors:
+            try:
+                off = abs(motor.read_position(self.plc) - model._rest_target(motor))
+            except (PlcError, TypeError, ValueError):
+                off = None
+            if off is None or off > REST_TOLERANCE_MM:
+                short.append(motor.axis)
+        if short:
+            raise Refusal("Piston(s) {0} did not reach the resting position. "
+                          "{1} | {2}".format(pistons.describe(short), said, where),
+                          {"short": pistons.shown(short)})
+        # Lowered on purpose, so it is no longer a floor being held up.
+        model._soliton_floor_raised = False
+        return Result("{0} | {1}".format(said, where), {"state": model.state.value})
 
     # -- changes while running ---------------------------------------------------------
 

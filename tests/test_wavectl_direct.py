@@ -51,6 +51,8 @@ class _Controller(SimulatedPlc):
 def controller(monkeypatch):
     monkeypatch.delenv("WAVECTL_MOCK_ONLY")
     monkeypatch.setattr(live, "PlcClient", _Controller)
+    # These leave session files in the test runner's own name.
+    monkeypatch.setattr(sessionfile, "is_session", sessionfile.process_exists)
     _Controller.made = []
     _Controller.begins_with = {tags.RUN_CONTINUOUS: 1}
     _Controller.stuck = ()
@@ -130,13 +132,43 @@ class TestStopWhenTheSessionCannotBeAsked:
         assert "tried directly" in capsys.readouterr().out
 
 
+class TestAHungSession:
+    """Alive, holding its port open, and answering nothing."""
+
+    @pytest.fixture
+    def hung(self, monkeypatch):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(5)
+        sessionfile.claim({"pid": os.getpid(), "mode": "live",
+                           "ip": "192.168.1.77", "slot": 2, "token": "x",
+                           "port": listener.getsockname()[1], "started": "earlier"})
+        monkeypatch.setattr(client, "ALIVE_SECONDS", 0.4)
+        yield
+        listener.close()
+
+    def test_stop_takes_over_in_seconds_not_a_minute(self, controller, hung, capsys):
+        import time
+
+        began = time.monotonic()
+        assert cli.main(["stop"]) == 0
+        assert time.monotonic() - began < 5
+        assert controller.made[0].read(tags.RUN_CONTINUOUS) == 0
+        assert "did not answer" in capsys.readouterr().out
+
+    def test_session_stop_does_not_kill_it_unasked(self, controller, hung, capsys):
+        assert cli.main(["session", "stop"]) == 2
+        assert sessionfile.read() is not None
+        assert "--force" in capsys.readouterr().out
+
+
 class TestEndingADeadSession:
     def test_a_dead_live_session_has_its_run_bits_dropped(self, controller, capsys):
         leave_session("live", NOBODY)
         assert cli.main(["session", "stop"]) == 0
         assert sessionfile.read() is None
         assert controller.made[0].read(tags.RUN_CONTINUOUS) == 0
-        assert "already died" in capsys.readouterr().out
+        assert "is gone" in capsys.readouterr().out
 
     def test_a_dead_mock_session_is_just_cleared(self, controller, capsys):
         leave_session("mock", NOBODY)

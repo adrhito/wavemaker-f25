@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -78,6 +79,26 @@ def process_exists(pid) -> bool:
     return True
 
 
+def is_session(pid) -> bool:
+    """Whether the process with this number is a wavectl session.
+
+    A process number says little by itself: after a crash or a restart the
+    number in a stale session file is handed to something else, which a
+    second session would then be refused on account of, and which
+    ``session stop --force`` would kill.
+    """
+    if not process_exists(pid):
+        return False
+    if sys.platform == "win32":
+        return True   # no cheap way to ask; never killed on its strength, see cli
+    try:
+        shown = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="],
+                               capture_output=True, text=True, timeout=5).stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return True   # cannot tell, so assume the file is telling the truth
+    return "wavectl.daemon" in shown
+
+
 def _write(path: Path, info: dict, exclusive: bool) -> None:
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     # Owner-only: the file carries the token that lets a client command the
@@ -104,7 +125,7 @@ def claim(info: dict) -> None:
             return
         except FileExistsError:
             holder = read()
-            if holder is not None and process_exists(holder.get("pid")):
+            if holder is not None and is_session(holder.get("pid")):
                 raise Taken(holder) from None
             try:
                 path.unlink()

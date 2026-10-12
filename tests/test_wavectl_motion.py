@@ -264,6 +264,90 @@ class TestOnTheMovingMock:
         assert pistons.shown(moving.model.live_axes) == [1, 3]
 
 
+class TestDrivesThatLoseTheirReference:
+    """An emergency stop or a power cycle clears the drives' homed bits."""
+
+    def lose(self, moving):
+        for a in moving.model.live_axes:
+            moving.plc.pistons[a].homed = False
+        time.sleep(0.05)          # let the mock publish it
+
+    def test_run_notices_although_the_model_still_says_homed(self, moving):
+        assert moving.handle("prepare")["ok"]
+        self.lose(moving)
+        assert "DRIVES NO LONGER HOMED: 1, 2, 3" in moving.handle("status")["text"]
+        before = len(moving.plc.writes_to(tags.RUN_SINGLE))
+        reply = moving.handle("run", {"mode": "single"})
+        assert not reply["ok"] and "not homed" in reply["text"]
+        assert len(moving.plc.writes_to(tags.RUN_SINGLE)) == before
+        assert "needs homing" in moving.handle("status")["text"]
+
+    def test_park_and_soliton_stage_notice_too(self, moving):
+        assert moving.handle("prepare")["ok"]
+        self.lose(moving)
+        assert "not homed" in moving.handle("park")["text"]
+        assert "not homed" in moving.handle(
+            "soliton_stage", {"crest_mm": 30, "depth_mm": 150, "lift_mm": 40})["text"]
+
+    def test_with_prepare_allowed_they_are_homed_again(self, moving):
+        assert moving.handle("prepare")["ok"]
+        self.lose(moving)
+        boots = len(moving.plc.writes_to(tags.MOTOR_BOOT))
+        reply = moving.handle("run", {"mode": "single", "prepare": True})
+        assert reply["ok"], reply["text"]
+        assert len(moving.plc.writes_to(tags.MOTOR_BOOT)) > boots
+
+
+class TestWhenTheMachineDoesNotDoIt:
+    def test_a_piston_that_does_not_reach_rest_fails_the_park(self, moving, monkeypatch):
+        monkeypatch.setattr(model_module, "PARK_SECONDS", 1.0)
+        assert moving.handle("prepare")["ok"]
+        moving.plc.wear(axis(2), 0.0)                     # seized
+        reply = moving.handle("park")
+        assert not reply["ok"]
+        assert "Piston(s) 2 did not reach the resting position" in reply["text"]
+
+    def test_a_timed_run_keeps_trying_until_the_run_bit_is_low(self, moving):
+        from app.plc import PlcError
+
+        assert moving.handle("prepare")["ok"]
+        sim, real_write = moving.plc, moving.plc.write
+        deaf_until = [0.0]
+
+        def write(tag, value):
+            if tag == tags.RUN_CONTINUOUS and value == 0 and time.monotonic() < deaf_until[0]:
+                raise PlcError("no answer from the controller")
+            return real_write(tag, value)
+
+        sim.write = write
+        assert moving.handle("run", {"seconds": 1.0})["ok"]
+        deaf_until[0] = time.monotonic() + 4.0            # deaf as the time runs out
+        reply = moving.handle("wait", {"patience": 60})
+        assert sim.read(tags.RUN_CONTINUOUS) == 0         # it did stop in the end
+        assert moving.model.state is not MachineState.RUNNING
+        assert not reply["ok"] and "Stop failed" in reply["text"]
+        assert "stopped on attempt" in moving.handle("log", {"count": 40})["text"]
+
+    def test_ending_the_session_during_a_stop_leaves_no_run_bit_high(self, monkeypatch):
+        for name in ("BOOT_PULSE_SECONDS", "CLEAR_FAULT_SECONDS", "HOME_POLL_SECONDS"):
+            monkeypatch.setattr(model_module, name, 0.05)
+        monkeypatch.setattr(sim_module, "HOME_SECONDS", 0.05)
+        sim = SimulatedMachine(tick=0.005)
+        service = Service(Model(transport=sim, is_live=False, simulate=True), "mock")
+        service.open()
+        service.handle("select", {"pistons_text": "1-3"})
+        # A long slow stroke, so the stop is still waiting for its end.
+        service.handle("set", {"values": {"stroke": "350", "speed": "60"}})
+        assert service.handle("prepare")["ok"]
+        assert service.handle("run", {"seconds": 60})["ok"]
+        assert service.model.stop()                       # finishing the stroke...
+        service.close()                                   # ...when the session ends
+        time.sleep(1.5)                                   # anything left over would act now
+        for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS, tags.RUN_CURVE, tags.HOME_BUTTON):
+            assert sim.read(tag) == 0, tag
+        assert sim.writes_to(tags.RUN_SINGLE)[-1] == 0
+
+
 @pytest.fixture
 def session(capsys):
     assert cli.main(["session", "start", "--mock", "--fast"]) == 0

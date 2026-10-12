@@ -131,6 +131,27 @@ class TestStagingAndFiring:
         assert all(abs(seen - staged["data"]["lift_mm"]) <= 3 for seen in travel.values())
 
 
+    def test_parking_after_a_pulse_ends_floor_held_raised(self, service):
+        assert service.handle("soliton_stage", dict(WAVE, prepare=True))["ok"]
+        assert service.handle("soliton_fire")["ok"]
+        assert "floor held raised" in service.handle("status")["text"]
+        assert service.handle("park")["ok"]
+        assert "floor held raised" not in service.handle("status")["text"]
+
+    def test_a_refused_pulse_does_not_answer_with_the_last_ones_record(self, service):
+        assert service.handle("soliton_stage", dict(WAVE, prepare=True))["ok"]
+        first = service.handle("soliton_fire")
+        assert first["ok"]
+        assert service.handle("soliton_stage", WAVE)["ok"]
+        # Knock the floor off its staged position, so the model refuses to fire.
+        for a in service.model.live_axes:
+            service.plc.place(a, 300.0)
+        second = service.handle("soliton_fire")
+        assert not second["ok"]
+        assert second["data"].get("record") != first["data"]["record"]
+        assert second["data"].get("pulse_status") != "completed"
+
+
 class TestObservations:
     def test_a_measurement_goes_on_the_last_pulse(self, service):
         assert service.handle("soliton_stage", dict(WAVE, prepare=True))["ok"]
