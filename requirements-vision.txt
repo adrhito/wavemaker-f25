@@ -1,0 +1,5 @@
+# For the camera measurement under vision/ and tools/vision_*.py only.
+# The wavemaker application itself needs none of this and must keep starting
+# on the lab's Windows 7 computer without it.
+numpy>=1.26
+opencv-python>=4.9
