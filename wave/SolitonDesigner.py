@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import math
-from tkinter import Canvas, IntVar, StringVar, TclError, Toplevel, messagebox, ttk
+from tkinter import (BooleanVar, Canvas, IntVar, StringVar, TclError, Toplevel,
+                     messagebox, ttk)
 
 from app import soliton_calibration, soliton_records, tags
-from app.solitons import MAX_TRIAL_LIFT_MM, SolitaryTarget, SolitonTrial
+from app.solitons import (MAX_TRIAL_LIFT_MM, SolitaryTarget, SolitonTrial,
+                          volume_lift_mm)
 from Model import MachineState, Model
 from modules.widgets import RoundedButton
 from style import theme
@@ -35,6 +37,12 @@ class SolitonDesigner:
         self.depth = IntVar(value=150)
         self.lift = IntVar(value=60)
         self.station = StringVar(value="")
+        # On by default: the operator gives height and depth, and the tab
+        # works out the soliton's width and the plate travel that carries it.
+        # Without this the tab was only a slower route to Operate's settings.
+        self.auto = BooleanVar(value=True)
+        self._applying = False
+        self._auto_count = None
         self._suggestion = None
         self._suggestion_key = None
         self._calibration_after_id = None
@@ -62,12 +70,20 @@ class SolitonDesigner:
 
         self._control(controls, 0, "TARGET CREST RISE", self.crest, 10, 150,
                       "mm above still water")
-        self._control(controls, 1, "TARGET WIDTH", self.width, 300, 5000,
-                      "mm along the tank, at half height")
+        self.width_widgets = self._control(
+            controls, 1, "TARGET WIDTH", self.width, 300, 5000,
+            "mm along the tank, at half height")
         self._control(controls, 2, "STILL-WATER DEPTH", self.depth, 50, 500,
                       "mm; measure for each trial")
-        self._control(controls, 3, "FLOOR LIFT", self.lift, 1, MAX_TRIAL_LIFT_MM,
-                      "mm of motor travel; uncalibrated")
+        self.lift_widgets = self._control(
+            controls, 3, "FLOOR LIFT", self.lift, 1, MAX_TRIAL_LIFT_MM,
+            "mm of motor travel; uncalibrated")
+        ttk.Checkbutton(
+            controls, variable=self.auto, command=self._changed,
+            text="Work out width and floor lift from height, depth and the "
+                 "selected pistons").grid(
+                     row=5, column=0, columnspan=4, sticky="w",
+                     pady=(theme.TIGHT, 0))
         ttk.Label(controls, text="MEASUREMENT STATION",
                   style="CardDim.TLabel").grid(
                       row=4, column=0, sticky="w", pady=(theme.TIGHT, 0))
@@ -132,14 +148,15 @@ class SolitonDesigner:
     def _control(self, parent, row, label, variable, minimum, maximum, detail):
         ttk.Label(parent, text=label, style="CardDim.TLabel").grid(
             row=row, column=0, sticky="w", pady=(theme.TIGHT, 0))
-        ttk.Scale(parent, from_=minimum, to=maximum, variable=variable).grid(
-            row=row, column=1, sticky="ew", padx=theme.GAP,
-            pady=(theme.TIGHT, 0))
-        ttk.Entry(parent, textvariable=variable, width=8).grid(
-            row=row, column=2, sticky="w", pady=(theme.TIGHT, 0))
+        scale = ttk.Scale(parent, from_=minimum, to=maximum, variable=variable)
+        scale.grid(row=row, column=1, sticky="ew", padx=theme.GAP,
+                   pady=(theme.TIGHT, 0))
+        entry = ttk.Entry(parent, textvariable=variable, width=8)
+        entry.grid(row=row, column=2, sticky="w", pady=(theme.TIGHT, 0))
         ttk.Label(parent, text=detail, style="CardDim.TLabel").grid(
             row=row, column=3, sticky="w", padx=(theme.GAP, 0),
             pady=(theme.TIGHT, 0))
+        return scale, entry
 
     def _trial(self) -> SolitonTrial:
         self._station_mm()  # Reject a malformed optional station before staging.
@@ -221,12 +238,53 @@ class SolitonDesigner:
                 self._calibration_key() != self._suggestion_key):
             self.result.configure(text="Recheck measured trials before applying a lift.")
             return
+        # A measured lift replaces the worked-out one, so stop recalculating.
+        self.auto.set(False)
         self.lift.set(self._suggestion.floor_lift_mm)
         self.result.configure(
             text="Measured lift suggestion applied. Stage the floor again with "
                  "these settings before firing.")
 
+    def _selected_count(self) -> int:
+        return len(self.model.live_axes) if self.model.sets else 0
+
+    def _apply_auto(self):
+        """Fill in width and lift from height, depth and the selection.
+
+        Returns a note for the operator, or None.  Writing the variables fires
+        their traces, so ``_applying`` keeps that from re-entering.
+        """
+        for widget in self.width_widgets + self.lift_widgets:
+            widget.state(["disabled"] if self.auto.get() else ["!disabled"])
+        if not self.auto.get():
+            self._auto_count = None
+            return None
+        count = self._selected_count()
+        self._auto_count = count
+        try:
+            crest = float(self.crest.get())
+            depth = float(self.depth.get())
+            rough = SolitaryTarget(crest, 1, depth)
+        except (ValueError, TypeError, TclError):
+            return None  # _trial reports the bad entry.
+        width = int(round(rough.theoretical_width_mm))
+        target = SolitaryTarget(crest, width, depth)
+        wanted = volume_lift_mm(target, count)
+        lift = max(1, min(int(round(wanted)), MAX_TRIAL_LIFT_MM))
+        self._applying = True
+        try:
+            if self.width.get() != width:
+                self.width.set(width)
+            if self.lift.get() != lift:
+                self.lift.set(lift)
+        finally:
+            self._applying = False
+        return None
+
     def _changed(self) -> None:
+        if self._applying:
+            return
+        auto_note = self._apply_auto()
         try:
             trial = self._trial()
         except ValueError as exc:
@@ -244,7 +302,7 @@ class SolitonDesigner:
                      target.crest_height_mm, target.width_mm,
                      target.water_depth_mm, trial.floor_lift_mm,
                      trial.speed_mm_s, trial.nominal_travel_seconds))
-        notes = []
+        notes = [auto_note] if auto_note else []
         if not target.width_matches_depth:
             notes.append(
                 "At this depth and height, first-order solitary-wave theory "

@@ -119,3 +119,57 @@ def test_tab_routing_matches_the_notebook_order(window):
         assert window.tabControl.index(window.tabControl.select()) == position
         # The tab at this position is the one the router would act on.
         assert tab is order[position]
+
+
+# -- the Soliton tab's automatic mode -----------------------------------------
+
+def _select(window, numbers):
+    from app import tags
+
+    model = window.model
+    for motor_set in list(model.sets):
+        model.remove_set(motor_set)
+    model.set_selection([tags.axis_from_display(n) for n in numbers])
+    if numbers:
+        model.create_set()
+
+
+def test_soliton_tab_works_out_width_and_lift_from_height_and_depth(window):
+    from app.solitons import SolitaryTarget, volume_lift_mm
+
+    tab = window.soliton
+    try:
+        _select(window, range(1, 10))
+        tab.auto.set(True)
+        tab.depth.set(394)
+        tab.crest.set(80)
+        window.root.update()
+        target = SolitaryTarget(80, 1, 394)
+        assert tab.width.get() == round(target.theoretical_width_mm)
+        assert tab.lift.get() == pytest.approx(240, abs=2)
+        assert tab.lift.get() == round(volume_lift_mm(
+            SolitaryTarget(80, tab.width.get(), 394), 9))
+        assert all(w.instate(["disabled"])
+                   for w in tab.width_widgets + tab.lift_widgets)
+    finally:
+        _select(window, [])
+        tab.auto.set(True)
+
+
+def test_soliton_tab_follows_the_selection_and_warrs_values(window):
+    tab = window.soliton
+    try:
+        _select(window, range(1, 10))
+        tab.auto.set(False)
+        tab._changed()
+        tab.lift.set(100)
+        tab.width.set(1500)
+        tab.refresh(window.model.state)
+        assert tab.lift.get() == 100
+        assert tab.width.get() == 1500
+        assert all(not w.instate(["disabled"])
+                   for w in tab.width_widgets + tab.lift_widgets)
+    finally:
+        _select(window, [])
+        tab.auto.set(True)
+        tab._changed()
