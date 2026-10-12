@@ -13,6 +13,13 @@ gentle 150 mm/s by default -- and parks it afterwards.
 
     python tools/live_one_stroke_probe.py
     python tools/live_one_stroke_probe.py --piston 5 --stroke 120
+    python tools/live_one_stroke_probe.py --piston 1 2 3     three together
+    python tools/live_one_stroke_probe.py --mock             no PLC, no motion
+
+Several pistons run the same stroke together and each is judged on its own.
+One stroke ends by itself, which is why this is also the first thing to run
+over a new link to the controller: if the link drops half way, nothing is
+left running that needs a second command to stop it.
 """
 
 from __future__ import annotations
@@ -47,21 +54,27 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ip", default="192.168.1.1")
     parser.add_argument("--slot", type=int, default=1)
-    parser.add_argument("--piston", type=int, default=5)
+    parser.add_argument("--piston", type=int, nargs="+", default=[5])
+    parser.add_argument("--mock", action="store_true",
+                        help="rehearse on the simulated machine; contacts nothing")
     parser.add_argument("--low", type=int, default=0)
     parser.add_argument("--stroke", type=int, default=120)
     parser.add_argument("--speed", type=int, default=150)
     args = parser.parse_args(argv)
 
-    axis = tags.axis_from_display(args.piston)
+    axes = {shown: tags.axis_from_display(shown) for shown in args.piston}
     high = args.low + args.stroke
-    record = {"piston": args.piston, "low": args.low, "high": high,
-              "speed": args.speed}
+    record = {"pistons": args.piston, "low": args.low, "high": high,
+              "speed": args.speed, "mock": args.mock}
 
-    client = PlcClient(args.ip, args.slot)
+    if args.mock:
+        from app.simulator import SimulatedMachine
+        client = SimulatedMachine()
+    else:
+        client = PlcClient(args.ip, args.slot)
     model = None
     try:
-        if not client.connect():
+        if not args.mock and not client.connect():
             print("Controller not reachable.")
             return 2
         if any(client.read(t) for t in
@@ -70,12 +83,19 @@ def main(argv=None) -> int:
                   "machine. Nothing attempted.")
             return 1
 
-        record["before"] = health(client, axis)
-        print("piston {0}: {1}".format(args.piston, record["before"]))
+        record["before"] = {shown: health(client, axis) for shown, axis in axes.items()}
+        for shown, state in record["before"].items():
+            print("piston {0}: {1}".format(shown, state))
+        troubled = {shown: state["problems"] for shown, state in record["before"].items()
+                    if state["problems"]}
+        if troubled:
+            print("These drives already report a problem; nothing attempted: "
+                  "{0}".format(troubled))
+            return 1
 
-        model = Model(transport=client, is_live=True)
+        model = Model(transport=client, is_live=not args.mock)
         model.register_bridge(NullBridge())
-        model.set_selection([axis])
+        model.set_selection(list(axes.values()))
         model.create_set("One stroke probe")
         for motor in model.all_motors:
             motor.set_param("Position 1", args.low)
@@ -94,8 +114,11 @@ def main(argv=None) -> int:
         if model.state is not MachineState.HOMED:
             print("prepare ended in {0}".format(model.state))
             return 1
-        record["after_prepare"] = health(client, axis)
-        print("prepared at {0} mm".format(record["after_prepare"]["position_mm"]))
+        record["after_prepare"] = {shown: health(client, axis)
+                                   for shown, axis in axes.items()}
+        print("prepared at {0} mm".format(
+            {shown: state["position_mm"]
+             for shown, state in record["after_prepare"].items()}))
 
         # Sample throughout, on this thread, while the run happens on another.
         samples = []
@@ -120,27 +143,19 @@ def main(argv=None) -> int:
         while time.time() - started < budget:
             samples.append({
                 "at": round(time.time() - started, 3),
-                "mm": round(params.to_mm(client.read(
-                    tags.axis_field(axis, tags.ACTUAL_POSITION))), 3),
+                "mm": {shown: round(params.to_mm(client.read(
+                    tags.axis_field(axis, tags.ACTUAL_POSITION))), 3)
+                    for shown, axis in axes.items()},
                 "run_1": bool(client.read(tags.RUN_SINGLE)),
             })
             time.sleep(0.05)
         done.wait(timeout=10.0)
 
         record["samples"] = samples
-        record["after"] = health(client, axis)
-
-        start_mm = samples[0]["mm"]
-        peak = max(s["mm"] for s in samples)
-        trough = min(s["mm"] for s in samples)
-        end = samples[-1]["mm"]
+        record["after"] = {shown: health(client, axis) for shown, axis in axes.items()}
         held = [s["at"] for s in samples if s["run_1"]]
 
         print("\n--- what happened ---")
-        print("started at   {0:.1f} mm".format(start_mm))
-        print("furthest out {0:.1f} mm  (commanded {1})".format(peak, high))
-        print("lowest       {0:.1f} mm".format(trough))
-        print("ended at     {0:.1f} mm".format(end))
         if held:
             print("Run_1 held    {0:.1f} s (from {1:.1f} to {2:.1f})".format(
                 held[-1] - held[0], held[0], held[-1]))
@@ -154,16 +169,28 @@ def main(argv=None) -> int:
         # because the piston began at 350 mm on a stroke of 0 to 150.
         # Position 1 (--low) is the top here and Position 2 the bottom.
         tolerance = max(args.stroke * 0.1, 3.0)
-        reached_top = any(abs(s["mm"] - args.low) <= tolerance for s in samples)
-        ended_bottom = abs(end - high) <= tolerance
-        record["reached_top"] = reached_top
-        record["ended_at_bottom"] = ended_bottom
-        print("reached the top ({0} mm): {1}".format(args.low, reached_top))
-        print("ended at the bottom ({0} mm): {1}".format(high, ended_bottom))
-        print("\nVERDICT: One stroke went {0}".format(
-            "UP AND BACK DOWN -- a full cycle"
-            if reached_top and ended_bottom else
-            "HALF A CYCLE -- it never reached the top, or did not come down"))
+        record["verdicts"] = {}
+        for shown in axes:
+            path = [s["mm"][shown] for s in samples]
+            reached_top = any(abs(mm - args.low) <= tolerance for mm in path)
+            ended_bottom = abs(path[-1] - high) <= tolerance
+            record["verdicts"][shown] = {
+                "reached_top": reached_top, "ended_at_bottom": ended_bottom}
+            print("\npiston {0}".format(shown))
+            print("  started at   {0:.1f} mm".format(path[0]))
+            print("  furthest out {0:.1f} mm  (commanded {1})".format(max(path), high))
+            print("  lowest       {0:.1f} mm".format(min(path)))
+            print("  ended at     {0:.1f} mm".format(path[-1]))
+            print("  reached the top ({0} mm): {1}".format(args.low, reached_top))
+            print("  ended at the bottom ({0} mm): {1}".format(high, ended_bottom))
+            print("  VERDICT: One stroke went {0}".format(
+                "UP AND BACK DOWN -- a full cycle"
+                if reached_top and ended_bottom else
+                "HALF A CYCLE -- it never reached the top, or did not come down"))
+        problems = {shown: state["problems"] for shown, state in record["after"].items()
+                    if state["problems"]}
+        if problems:
+            print("\nDrive problems after the stroke: {0}".format(problems))
     finally:
         for tag in (tags.RUN_SINGLE, tags.RUN_CONTINUOUS,
                     tags.RUN_CURVE, tags.HOME_BUTTON):
