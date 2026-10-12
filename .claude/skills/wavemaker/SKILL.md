@@ -184,23 +184,37 @@ piston 1 wants looking at mechanically before anything else.
 
 ## Known machine behaviour: stopping and switching off
 
-Measured through `wavectl` on 12 October 2026, pistons 1 to 3, 60 mm stroke
-at 150 mm/s, positions recorded at 30 Hz:
+Measured through `wavectl` on 12 October 2026, positions recorded at 25 to
+30 Hz. `wavectl/README.md` has the table of what was run.
 
 - **Dropping Run_2 does not freeze a piston.** It finishes the move it is
-  on and holds there. A stop sent at 44 to 49 mm was followed by 0.2 s of
-  travel to exactly 60.0 mm; another, sent near the top, by about 55 mm. A
-  third came while the pistons were still coming down from 350 mm to begin
-  the stroke, and they went on 115 mm to Position 1, nearly twice the
-  stroke. "Stopped" in the application means the run bits are low, so read
-  positions only after they have stopped changing.
-- **A drive that is switched off lets its piston sink.** Pistons held at
-  120 mm were de-energised by the application's motors-off sequence (run bits
-  low, fault clear pulsed, Live_Motors cleared) and came to rest at 126, 260
-  and 151 mm. From 369 mm the same thing cost 0.6 mm. Which of the three
-  writes switches the drive off was not separated. Park before anything that
-  ends in motors-off, which includes closing the window.
-- Homing left these three at 350 mm, not at zero as the mock does.
+  on and holds there. On a 0 to 60 mm stroke at 150 mm/s, a stop sent at 44
+  to 49 mm was followed by 0.2 s of travel to exactly 60.0 mm; another, sent
+  near the top, by about 55 mm. Stops sent while the pistons were still
+  coming down from their resting place to begin the stroke were followed by
+  115 mm and 185 mm, more than the stroke itself. "Stopped" in the
+  application means the run bits are low, so read positions only after they
+  have stopped changing.
+- **Clear_Motor_Error switches off the drives that are selected.** Pistons
+  held at 120 mm were de-energised by the motors-off sequence (run bits low,
+  fault clear pulsed, Live_Motors cleared) and came to rest at 126, 260 and
+  151 mm; from 369 mm the same cost under a millimetre. Clearing Live_Motors
+  alone does not do it: preparing pistons 16 to 18 left the other 27 held
+  and enabled. Park before anything that ends in motors-off, which includes
+  closing the window.
+- **Motors-off at shutdown does not reliably switch drives off.** The
+  shutdown path pulses the fault clear with no length (the wait is cut
+  short on purpose) and then clears Live_Motors from axis 0 upwards. With
+  29 pistons selected, 25 drives went off and 4 stayed enabled: axes 0, 1,
+  2 and 6, the first to be deselected.
+- **Homing leaves pistons at 350 mm**, not at zero as the mock does, and
+  takes 31 to 45 s for three to nine pistons.
+- **Heat.** After about a minute of running that ended with 12 s of BIGGER
+  WAVE (350 mm at 500 mm/s), piston 8 reported Controller Hot. It and
+  piston 14 had both cleared once the array was parked.
+- **Soliton pulses arrive close to their nominal time.** Nine pistons,
+  80 mm at 53 mm/s: 2.56 s against 2.78 nominal. 150 mm at 293 mm/s: 1.02 s
+  against 0.96.
 
 ## Tools
 

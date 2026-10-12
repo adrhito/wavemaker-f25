@@ -367,8 +367,13 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
         return Result("\n".join(lines) or "nothing has happened yet", data)
 
     def shutdown(self) -> Result:
-        """Acknowledge; ``daemon`` ends the session once this reply is sent."""
-        return Result("session ending", {})
+        """Acknowledge; ``daemon`` ends the session once this reply is sent.
+
+        Says which pistons were selected, so the command that asked can look
+        at their drives once the session has gone.
+        """
+        return Result("session ending",
+                      {"pistons": pistons.shown(self.model.live_axes)})
 
     # -- choosing what will move ---------------------------------------------------
 

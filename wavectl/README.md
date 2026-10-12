@@ -32,8 +32,9 @@ and the model, and every other command is a small client that asks it to do
 something. The session outlives the terminal that started it. End it with
 `session stop` when the sitting is over; that drops the run bits and
 deselects every piston, as closing the window does. It also switches off the
-drives the session was holding, so a piston left above the bottom of its
-travel may sink under its own weight: `park` first.
+drives of some or all of its pistons, so one left above the bottom of its
+travel may sink under its own weight: `park` first. The answer says how
+many drives went off and which pistons are still held.
 
 There is one session per computer. Its file, `~/.wavectl/session.json`,
 refuses a second one, from this checkout or any other.
@@ -174,51 +175,69 @@ with `--record-observation`, and never from the mock or the drawn tank.
 
 ## What has been run on the machine
 
-On 12 October 2026, from the Mac, on pistons 1 to 3 with a 60 mm stroke at
-150 mm/s:
+On 12 October 2026, from the Mac, in seven stages of 211 checks. Three of
+the 211 missed, each because the check was stricter than the thing checked
+(one expected a different one of two valid refusals; two compared surveys of
+freshly homed pistons to a tenth of a millimetre).
 
-| Command | What happened |
-|---|---|
-| `survey -p` | Read the controller (a 1756-L82E) and all thirty drives in 0.3 s. |
-| `session start --live` | Up in 0.2 s. A survey before and after read the same position and drive state on all thirty pistons. |
-| `status`, `session info`, `log` | As on the mock. |
-| `select`, `set`, `params` | As on the mock. |
-| `prepare` | Booted and homed the three pistons in 31 and 45 s; they came to rest at 350 mm. |
-| `run --single --sample 25` | Down to 60 mm, up to the top of the stroke, back to 60.1 to 60.3 mm. Sampled at 24.9 Hz. |
-| `run --seconds 10 --sample 25`, `wait` | Twelve reversals, each piston covering 60.1 to 60.2 mm, then stopped itself with the run bits clear. |
-| `stop --now` mid-run, `watch` | Run bits low within 80 ms; the pistons then finished the move they were on. |
-| `stop` mid-run | Finished the stroke and parked at 369.7 mm, 3.9 s in all. |
-| `stop` at rest | Moved nothing. |
-| `park` | To 368.5 mm in under 3 s. |
-| `session stop` | Run bits clear, drives off, session file gone. |
+| Area | What was run | What happened |
+|---|---|---|
+| Reading | `survey`, `status` in every form, `--json`, `log`, `session info` | All thirty drives read in 0.3 s. |
+| Session | start, a second start, ending | Starts in 0.2 s and writes nothing: a survey before and after matched on all thirty pistons. |
+| Choosing | every form of `select`, `set`, `params`, `preset` and their refusals | Sixty-odd commands, and a survey before and after showed no piston moved and no drive changed state. |
+| Refusals | motion before homing; a selection holding a hot drive, and one holding the drive in fatal error | Refused by name, with nothing written. |
+| Homing | `prepare` on 3 and on 9 pistons, `--timeout` then `wait`, `calibrate` | 31 to 45 s. `calibrate` homed 29 and named piston 26. |
+| One stroke | 60, 200 and 350 mm at 150, 300 and 500 mm/s, nine pistons | Every piston within 0.3 mm of the stroke at both ends. |
+| Timed runs | 8 to 25 s, `--sample`, `--wait`, `wait`, a command line killed while waiting | Each stopped itself, parked and left the run bits clear. |
+| While running | `speed`, `stroke`, `watch`, twenty `status` calls, every edit | Speed and stroke took effect; edits were refused. |
+| Presets | BIGGER WAVE (full stroke, 500 mm/s), a travelling wave on three columns | Full stroke on all nine; columns of the travelling wave up to 156 mm apart. |
+| Stopping | `stop` and `stop --now` mid-run, at rest, `park`, `stop --direct` | Run bits low within 80 ms every time. |
+| A session lost mid-run | told to end, killed outright, frozen | It dropped the bits itself; `stop` took over in 0.09 s; `stop` took over in 3.1 s. |
+| Ending mid-stop | `session stop` 0.4 s after `stop` | Run bits clear, read back from outside. |
+| A piston that will not home | `prepare --ignore-warnings` on 25 to 27 | Piston 26 dropped and named; 25 and 27 homed and ran. |
+| Soliton | `plan`, `stage`, `fire --sample`, fire twice, an edit after staging | An 80 mm pulse in 2.56 s to 290.1 to 290.2 mm; a 150 mm pulse in 1.02 s. Held raised through a `stop`. |
+| Trial, no camera | 5 s settle; a `stop` during the wait | Staged, waited and fired; abandoned without firing. |
 
-Two things those runs taught, both now reflected in the code:
+What those runs taught, all now reflected in the code:
 
 - **Dropping the run bits does not freeze a piston.** Each drive finishes
   the move it is on. Recorded at 30 Hz, an immediate stop sent with the
   pistons at 44 to 49 mm of a 0 to 60 mm stroke was followed by 0.2 s more
-  travel to exactly 60.0 mm. Another, sent near the top, by about 55 mm. A
-  third, sent while the pistons were still coming down from their 350 mm
-  resting place to begin that stroke, by 115 mm, nearly twice the stroke.
-  `stop` therefore waits for the pistons to stand still before it says where
-  they are, and says how much further they went.
-- **Switching a drive off lets its piston sink.** The session at first
-  opened the way the window does, by clearing the machine. Pistons 1 to 3
-  were being held at 120 mm; that switched their drives off and they sank to
-  126, 260 and 151 mm. A session now writes nothing when it starts. Ending
-  one still switches its drives off. From 369 mm that cost a fraction of a
-  millimetre, so park first.
+  travel to exactly 60.0 mm. Others were followed by 55, 115 and 185 mm,
+  the last two more than the stroke that was running: the pistons were
+  still on their way onto it from where they had been resting. `stop`
+  therefore waits for the pistons to stand still before it says where they
+  are, and says how much further they went.
+- **The fault clear switches off the drives that are selected.** The
+  session at first opened the way the window does, by clearing the machine.
+  Pistons 1 to 3 were being held at 120 mm; their drives went off and they
+  sank to 126, 260 and 151 mm. A session now writes nothing when it starts.
+  Deselecting alone does not do it: preparing pistons 16 to 18 left the
+  other 27 held and enabled.
+- **Ending a session does not reliably switch its drives off.** It ends as
+  the window does, with a fault-clear pulse of no length. With 3 or 9
+  pistons selected that switched all of them off; with 29 it switched off
+  25 and left 4 holding. `session stop` reads the drives afterwards and
+  says how they were left.
+- **Sampling keeps up.** Three pistons at 50 Hz, nine at 41 Hz alongside a
+  run that was itself being sampled, all thirty at 23.5 Hz.
+- **The front nine got warm.** After about a minute of running that ended
+  with 12 s at full stroke and 500 mm/s, piston 8 reported Controller Hot,
+  as piston 14 had all day. Both had cleared once the array was parked.
 
-Not run on the machine: `preset`, `calibrate`, `speed`, `stroke`,
-`stop --direct`, `session stop --force`, and everything under `soliton`,
-`trial` and `camera`.
+Not run on the machine: `run --curve`, `soliton observe`, `session stop
+--force` on anything but a frozen session, and anything with a camera.
+`camera` was tried and refused by macOS: the program that starts the
+session has not been given permission to use the camera.
 
 ## Not yet proven
 
 - **No real camera has been through `trial` or `camera`.** They have been run
-  only against the drawn tank. Expect the first sitting to turn up something:
-  the camera permission belongs to whichever program started the session, the
-  phone's real frame rate, whether an mp4 at full size keeps up.
+  only against the drawn tank. The first attempt on the Mac got no further
+  than macOS refusing the camera: permission belongs to whichever program
+  started the session, and has to be given under System Settings, Privacy &
+  Security, Camera. After that, expect the first sitting to turn up more:
+  the phone's real frame rate, whether an mp4 at full size keeps up.
 - **Clip timing.** `vision` takes a clip's times from the frame rate in its
   header. That rate is measured from the pictures as they arrive rather than
   taken from the camera's word, and the answer warns when the two disagree or

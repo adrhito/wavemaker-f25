@@ -120,11 +120,16 @@ def _session_stop(args) -> int:
         if mode != "live":
             return _fail("session ended.", args.json, mode, status=0)
         # Not taken on trust: the session has gone, so the run bits are
-        # written low and read back from here before saying they are.
-        return _stop_directly(
-            args, info.get("ip"), info.get("slot"),
-            "Session ended and the drives of its pistons switched off, so one "
-            "left above the bottom of travel may have sunk.")
+        # written low and read back from here, and its pistons' drives are
+        # read, before anything is said about either.
+        try:
+            ok, text = live.after_session(
+                info.get("ip") or live.DEFAULT_IP,
+                live.DEFAULT_SLOT if info.get("slot") is None else info.get("slot"),
+                (reply.get("data") or {}).get("pistons") or [])
+        except live.Unreachable as exc:
+            ok, text = False, "{0} Use the physical stop.".format(exc)
+        return _fail("Session ended. " + text, args.json, mode, status=0 if ok else 1)
     if not args.force:
         return _fail("the session (process {0}) was asked to end and has not "
                      "yet. Repeat with --force to end it anyway.".format(pid),

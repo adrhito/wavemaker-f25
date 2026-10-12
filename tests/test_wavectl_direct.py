@@ -177,6 +177,27 @@ class TestEndingADeadSession:
         assert controller.made == []
 
 
+class TestAfterASessionEnds:
+    def test_it_says_which_drives_went_off_and_which_are_still_holding(self, controller):
+        healthy = (1 << 11) | 0x33
+        controller.begins_with = {
+            tags.RUN_SINGLE: 1,
+            tags.axis_field(tags.axis_from_display(1), tags.STATUS_WORD): 1 << 11,
+            tags.axis_field(tags.axis_from_display(2), tags.STATUS_WORD): healthy,
+            tags.axis_field(tags.axis_from_display(3), tags.STATUS_WORD): healthy,
+        }
+        ok, text = live.after_session("192.168.1.1", 1, [1, 2, 3])
+        assert ok
+        assert "all read low" in text
+        assert "Of its 3 pistons, 1 have their drives off and 2 are still held (2, 3)" in text
+        assert controller.made[0].read(tags.RUN_SINGLE) == 0
+
+    def test_a_bit_that_will_not_drop_is_a_failure(self, controller):
+        controller.stuck = (tags.RUN_CONTINUOUS,)
+        ok, text = live.after_session("192.168.1.1", 1, [])
+        assert not ok and "physical stop" in text
+
+
 class TestSurvey:
     def test_it_reads_and_writes_nothing(self, controller, capsys):
         controller.begins_with = {

@@ -173,6 +173,43 @@ def stop_directly(ip: str = DEFAULT_IP, slot: int = DEFAULT_SLOT) -> Tuple[bool,
     return True, "{0} written low at {1}; all read low".format(names, ip)
 
 
+def after_session(ip: str, slot: int, shown: List[int]) -> Tuple[bool, str]:
+    """Make sure of the machine once a session has gone, and say how it was left.
+
+    Writes the command bits low and reads them back, then reads the drives of
+    the pistons the session had selected. Ending a session pulses the fault
+    clear, which switches drives off -- but as the window's own closing
+    sequence does it, the pulse has no length, and on 12 October 2026 it
+    switched off 25 of 29 selected drives and left 4 holding. So how many
+    went off is read, not assumed.
+    """
+    client = connect(ip, slot)
+    try:
+        failures = drop_bits(client)
+        high = bits_high(client)
+        rows = [read_drive(client, tags.axis_from_display(number))
+                for number in sorted(shown)]
+    finally:
+        client.close()
+    names = ", ".join(name for name, _tag in COMMAND_BITS)
+    if failures or high:
+        return False, ("Could not confirm the command bits low at {0}: {1}. "
+                       "Use the physical stop.".format(
+                           ip, "; ".join(failures) or " and ".join(high) + " read high"))
+    text = "{0} written low at {1}; all read low".format(names, ip)
+    if rows:
+        held = [row["piston"] for row in rows if row.get("enabled")]
+        off = len(rows) - len(held)
+        if held:
+            text += ". Of its {0} pistons, {1} have their drives off and {2} are still held ({3})".format(
+                len(rows), off, len(held), ", ".join(str(number) for number in held))
+        else:
+            text += ". All {0} of its pistons have their drives off".format(len(rows))
+        if off:
+            text += "; one whose drive went off above the bottom of travel may have sunk"
+    return True, text
+
+
 def survey(ip: str = DEFAULT_IP, slot: int = DEFAULT_SLOT) -> dict:
     """Read the command bits and all thirty drives. Writes nothing."""
     client = connect(ip, slot)
