@@ -182,6 +182,24 @@ is the answer to "why does the wave fall apart on a long run". Any fix has to
 re-phase the axes periodically rather than trust them to stay together, and
 piston 1 wants looking at mechanically before anything else.
 
+## Known machine behaviour: stopping and switching off
+
+Measured through `wavectl` on 12 October 2026, pistons 1 to 3, 60 mm stroke
+at 150 mm/s, positions recorded at 30 Hz:
+
+- **Dropping Run_2 does not freeze a piston.** It finishes the leg it is on
+  and holds at that end of the stroke. A stop sent at 44 to 49 mm was
+  followed by 0.2 s of travel to exactly 60.0 mm; another, sent near the top,
+  by about 55 mm. "Stopped" in the application means the run bits are low,
+  so read positions only after they have stopped changing.
+- **A drive that is switched off lets its piston sink.** Pistons held at
+  120 mm were de-energised by the application's motors-off sequence (run bits
+  low, fault clear pulsed, Live_Motors cleared) and came to rest at 126, 260
+  and 151 mm. From 369 mm the same thing cost 0.6 mm. Which of the three
+  writes switches the drive off was not separated. Park before anything that
+  ends in motors-off, which includes closing the window.
+- Homing left these three at 350 mm, not at zero as the mock does.
+
 ## Tools
 
 | Tool | What it does |

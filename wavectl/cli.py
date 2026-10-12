@@ -116,7 +116,10 @@ def _session_stop(args) -> int:
     if reply is not None and not asked and not args.force:
         return _show(reply, args.json)
     if asked and _wait_for_exit(pid, END_SECONDS):
-        return _fail("session ended.", args.json, mode, status=0)
+        return _fail(
+            "session ended; run bits dropped and its drives switched off, so "
+            "a piston left above the bottom of travel may have sunk."
+            if mode == "live" else "session ended.", args.json, mode, status=0)
     if not args.force:
         return _fail("the session (process {0}) was asked to end and has not "
                      "yet. Repeat with --force to end it anyway.".format(pid),

@@ -31,7 +31,9 @@ So `session start` leaves one process running that holds the PLC connection
 and the model, and every other command is a small client that asks it to do
 something. The session outlives the terminal that started it. End it with
 `session stop` when the sitting is over; that drops the run bits and
-deselects every piston, as closing the window does.
+deselects every piston, as closing the window does. It also switches off the
+drives the session was holding, so a piston left above the bottom of its
+travel may sink under its own weight: `park` first.
 
 There is one session per computer. Its file, `~/.wavectl/session.json`,
 refuses a second one, from this checkout or any other.
@@ -44,9 +46,11 @@ refuses a second one, from this checkout or any other.
 2. **Look first.** `wavectl/wm survey` reads the run bits and all thirty
    drives over a connection of its own and writes nothing. It needs no session.
 3. **Start live.** `session start --live` refuses if a run bit is already
-   high, because that means something else is driving the controller. It then
-   does what the window does on opening: drops the run bits, pulses the fault
-   clear, deselects every piston. Nothing moves.
+   high, because that means something else is driving the controller.
+   Otherwise it writes nothing: the first thing sent to the controller is
+   whatever the first command asks for. (The window clears the machine as it
+   opens. A session does not, because that switches off any drive that is
+   holding a piston up; see "What has been run on the machine".)
 
 The session file stops a second `wavectl` session. It does not stop the
 window application or a script under `tools/`, which know nothing about it.
@@ -74,7 +78,7 @@ Pistons are the numbers drawn on the tank, 1 to 30: `1-9`, `1,4,7`, `c1-3`
 | `run --seconds 30` | Run continuously, then stop and rest. Answers once it is running; `--wait` answers when it is over. |
 | `run --single` / `--curve` | One stroke, or one curve. Answers with how far the pistons went. |
 | `run ... --sample [HZ]` | Also record piston positions to a CSV for the whole run. |
-| `stop` | Finish the stroke, then move to rest. `--now` drops the run bits at once and leaves the pistons where they are. |
+| `stop` | Finish the stroke, then move to rest. `--now` drops the run bits at once and commands nothing more; each piston still finishes the leg it is on. The answer waits until they are standing still and says where. |
 | `stop --direct` | Write the run bits low on a new connection, whoever raised them. Needs no session. |
 | `park` | Move the selection to its resting position. |
 | `speed 300`, `stroke 200` | Change a run that is already going. |
@@ -100,6 +104,7 @@ Exit status: 0 done, 1 refused or failed, 2 no session to ask.
   homing and say so. Run `prepare`, or add `--prepare`.
 - **Move on a stop.** `stop` on a machine that is standing still moves
   nothing. Use `park` to send the pistons to rest.
+- **Write on starting.** A session reads when it starts and nothing else.
 - **Join in.** Before motion it refuses if a run bit is high that this
   session did not raise, if a selected drive reports a fault
   (`--ignore-warnings` overrides that one), or if the controller's selection
@@ -115,8 +120,11 @@ bits low. `session stop --force` does the same after killing the process.
 `stop --direct` does it regardless of who raised them.
 
 A session killed outright cannot drop its own run bits, so after anything
-abrupt run `wavectl/wm stop` before walking away. The physical stop is still
-the physical stop.
+abrupt run `wavectl/wm stop` before walking away.
+
+Dropping the run bits is all any of these can do, and it does not freeze the
+pistons: each completes the leg it is on, up to a whole stroke further. The
+physical stop is still the physical stop.
 
 ## A soliton trial
 
@@ -162,6 +170,42 @@ What a trial writes:
 The measurement is reported and saved beside the clip. It is entered in the
 trial's own record, where `app/soliton_calibration.py` would use it, only
 with `--record-observation`, and never from the mock or the drawn tank.
+
+## What has been run on the machine
+
+On 12 October 2026, from the Mac, on pistons 1 to 3 with a 60 mm stroke at
+150 mm/s:
+
+| Command | What happened |
+|---|---|
+| `survey -p` | Read the controller (a 1756-L82E) and all thirty drives in 0.3 s. |
+| `session start --live`, `status`, `session info` | Session up and answering. This was the earlier start, which cleared the machine as the window does; see below. |
+| `select`, `set`, `params` | As on the mock. |
+| `prepare` | Booted and homed the three pistons in 45 s; they came to rest at 350 mm. |
+| `run --single --sample 25` | Down to 60 mm, up to the top of the stroke, back to 60.1 to 60.3 mm. Sampled at 24.9 Hz. |
+| `run --seconds 10 --sample 25`, `wait` | Twelve reversals, each piston covering 60.1 to 60.2 mm, then stopped itself with the run bits clear. |
+| `stop --now` mid-run, `watch` | Run bits low within 80 ms. |
+| `stop` at rest | Moved nothing. |
+| `park` | To 368.5 mm in under 3 s. |
+| `session stop` | Run bits clear, drives off, session file gone. |
+
+Two things that run taught, both now reflected in the code:
+
+- **Dropping the run bits does not freeze a piston.** Recorded at 30 Hz, an
+  immediate stop sent with the pistons at 44 to 49 mm of a 0 to 60 mm stroke
+  was followed by 0.2 s more travel to exactly 60.0 mm; in another run they
+  went about 55 mm further. Each drive finishes the leg it is on. `stop`
+  therefore waits for the pistons to stand still before it says where they
+  are, and says how much further they went.
+- **Switching a drive off lets its piston sink.** The session used to open
+  the way the window does, by clearing the machine. Pistons 1 to 3 were
+  being held at 120 mm; that switched their drives off and they sank to 126,
+  260 and 151 mm. A session now writes nothing when it starts. Ending one
+  still switches its drives off, from 369 mm that cost 0.6 mm, so park first.
+
+Not run on the machine: `preset`, `calibrate`, `speed`, `stroke`, a `stop`
+that rests the pistons after a run, `stop --direct`, `session stop --force`,
+and everything under `soliton`, `trial` and `camera`.
 
 ## Not yet proven
 

@@ -127,6 +127,43 @@ class TestStoppingAtRest:
         assert still.handle("wait")["text"].startswith("nothing has been started")
 
 
+class TestWhereThePistonsCameToRest:
+    """On the array a piston finishes its leg after the run bits drop."""
+
+    def test_stop_now_waits_for_them_and_says_how_much_further_they_went(
+            self, still, model, monkeypatch):
+        coasting = iter([[40.0] * 3, [48.0] * 3, [55.0] * 3, [59.0] * 3])
+        monkeypatch.setattr(still, "_positions", lambda: next(coasting, [60.0] * 3))
+        model._set_state(MachineState.RUNNING)
+        reply = still.handle("stop", {"now": True})
+        assert reply["ok"], reply["text"]
+        assert ("pistons at 60 mm, after finishing the leg they were on "
+                "(up to 20 mm more)") in reply["text"]
+        assert "run bits clear" in reply["text"]
+        assert reply["data"]["moved_after_stop_mm"] == 20.0
+        assert reply["data"]["standing_still"] is True
+
+    def test_pistons_that_never_stop_are_shouted(self, still, model, monkeypatch):
+        import itertools
+
+        from wavectl import motion
+
+        monkeypatch.setattr(motion, "STILL_SECONDS", 0.5)
+        climbing = itertools.count()
+        monkeypatch.setattr(still, "_positions",
+                            lambda: [float(next(climbing))] * 3)
+        model._set_state(MachineState.RUNNING)
+        reply = still.handle("stop", {"now": True})
+        assert reply["ok"]            # the run bits did drop
+        assert "STILL MOVING" in reply["text"] and "physical stop" in reply["text"]
+        assert reply["data"]["standing_still"] is False
+
+    def test_a_position_just_above_zero_is_not_minus_zero(self):
+        from wavectl.motion import _mm
+
+        assert _mm(-0.03) == "0" and _mm(59.6) == "60" and _mm(-17.6) == "-18"
+
+
 class TestOnTheMovingMock:
     def test_prepare_homes_and_says_where_the_pistons_are(self, moving):
         reply = moving.handle("prepare")

@@ -113,7 +113,9 @@ def read_drive(transport, axis: int) -> dict:
         row["unreadable"] = str(exc)
         return row
     row.update({
-        "mm": round(position, 1),
+        # Adding zero turns the "-0.0" a piston resting at the top reads as
+        # into "0.0".
+        "mm": round(position, 1) + 0.0,
         "homed": drive_status.is_homed(status),
         "enabled": bool(status & 1),
         "problems": drive_status.problems(warn, status),

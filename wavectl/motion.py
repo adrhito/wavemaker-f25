@@ -31,6 +31,19 @@ from wavectl.timing import (DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS, ONCE_SECONDS,
 _MODES = {"continuous": RunMode.CONTINUOUS, "single": RunMode.SINGLE,
           "curve": RunMode.CURVE}
 
+#: Two readings of a piston this close together, in mm, count as not moving.
+STILL_MM = 0.3
+#: Gap between those readings, and how many in a row make "standing still".
+STILL_POLL_SECONDS = 0.1
+STILL_READINGS = 3
+#: The least time the pistons are given to stop moving before saying they have not.
+STILL_SECONDS = 5.0
+
+
+def _mm(value: float) -> str:
+    """Whole millimetres, without the "-0" a position just above zero rounds to."""
+    return "{0:d}".format(int(round(value)))
+
 
 class MotionOperations:
     """The motion half of :class:`wavectl.service.Service`."""
@@ -113,20 +126,67 @@ class MotionOperations:
                 self.model._current_command)
         return otherwise
 
-    def _where(self) -> str:
-        """Where the selected pistons are standing, in a few words."""
+    def _positions(self) -> Optional[list]:
+        """Where each selected piston is, or None if one cannot be read."""
         places = []
         for motor in self.model.all_motors:
             try:
                 places.append(motor.read_position(self.plc))
             except (PlcError, TypeError, ValueError):
-                return "positions unreadable"
+                return None
+        return places
+
+    def _come_to_rest(self) -> Optional[float]:
+        """Wait for the selected pistons to stop moving. Returns how long it took.
+
+        The model calls the machine stopped once the run bits are low, and
+        the pistons are not. Measured on the array on 12 October 2026, on
+        pistons 1 to 3 with a 60 mm stroke at 150 mm/s: after an immediate
+        stop each piston carried on to the end of the leg it was on, 0.2 s
+        and 15 mm later in one run and about 55 mm later in another. An
+        answer that read the positions as soon as the bits dropped said
+        "between 1 and 5 mm" of pistons that came to rest at 60.
+
+        So where the pistons are is read only once it has stopped changing.
+        Returns None if they were still moving when the wait ran out, or
+        could not be read.
+        """
+        limit = max(self.model._stroke_seconds(STILL_SECONDS), STILL_SECONDS)
+        began = time.monotonic()
+        previous = self._positions()
+        quiet = 0
+        while time.monotonic() - began < limit:
+            time.sleep(STILL_POLL_SECONDS)
+            now = self._positions()
+            if (previous is not None and now is not None
+                    and len(previous) == len(now)
+                    and all(abs(a - b) <= STILL_MM for a, b in zip(previous, now))):
+                quiet += 1
+                if quiet >= STILL_READINGS:
+                    return max(time.monotonic() - began
+                               - STILL_READINGS * STILL_POLL_SECONDS, 0.0)
+            else:
+                quiet = 0
+            previous = now
+        return None
+
+    def _where(self) -> str:
+        """Where the selected pistons are standing, in a few words."""
+        places = self._positions()
+        if places is None:
+            return "positions unreadable"
         if not places:
             return "no pistons selected"
         low, high = min(places), max(places)
         if high - low <= 2.0:
-            return "pistons at {0:.0f} mm".format((low + high) / 2.0)
-        return "pistons between {0:.0f} and {1:.0f} mm".format(low, high)
+            return "pistons at {0} mm".format(_mm((low + high) / 2.0))
+        return "pistons between {0} and {1} mm".format(_mm(low), _mm(high))
+
+    def _resting_place(self) -> str:
+        """Wait for the pistons to stand still, then say where they are."""
+        if self._come_to_rest() is None and self.model.all_motors:
+            return "{0}, STILL MOVING".format(self._where())
+        return self._where()
 
     # -- prepare -------------------------------------------------------------------
 
@@ -173,7 +233,7 @@ class MotionOperations:
         if model.dropped_axes:
             parts.append("piston(s) {0} would not home and were dropped (asked "
                          "for {1})".format(pistons.describe(model.dropped_axes), asked))
-        parts.append(self._where())
+        parts.append(self._resting_place())
         troubled = model.check_drives(model.live_axes)
         if troubled:
             parts.append("; ".join("piston {0}: {1}".format(
@@ -329,9 +389,9 @@ class MotionOperations:
         parts = ["ran pistons {0} for {1:.0f} s".format(shown, lasted) if timed
                  else "run on pistons {0} was stopped after {1:.0f} s".format(shown, lasted)]
         if extent:
-            parts.append("seen between {0:.0f} and {1:.0f} mm".format(
-                min(low for low, _high in extent.values()),
-                max(high for _low, high in extent.values())))
+            parts.append("seen between {0} and {1} mm".format(
+                _mm(min(low for low, _high in extent.values())),
+                _mm(max(high for _low, high in extent.values()))))
         parts.append(self.journal.last_status_since(mark) or "stopped")
         if not rested:
             parts.append("still coming to rest")
@@ -362,7 +422,7 @@ class MotionOperations:
         problems = self.journal.problems_since(mark)
         if problems:
             raise Refusal(" ".join(problems))
-        return Result("{0} | {1}".format(said, self._where()),
+        return Result("{0} | {1}".format(said, self._resting_place()),
                       {"state": model.state.value})
 
     # -- stop ------------------------------------------------------------------------
@@ -372,9 +432,13 @@ class MotionOperations:
 
         By default each piston finishes the stroke it is on and the array
         then moves to its resting position, as the window's Stop does.
-        ``now`` drops the run bits at once and leaves the pistons where they
-        are. Never queued behind anything: it is answered while a prepare or
-        a run is still holding its own request open.
+        ``now`` drops the run bits at once and commands nothing further. That
+        is not the same as the pistons freezing: on this machine each one
+        completes the leg it is on first (see :meth:`_come_to_rest`), so the
+        answer waits for them and says how much further they went.
+
+        Never queued behind anything: it is answered while a prepare or a run
+        is still holding its own request open.
         """
         model = self.model
         mark = self.journal.mark()
@@ -387,18 +451,34 @@ class MotionOperations:
             raise Refusal("STOP FAILED. {0}".format(self._why(
                 mark, "The controller did not acknowledge it. Use the "
                       "physical stop and check the connection.")))
+        at_stop = self._positions()
         rested = self._until(self._at_rest, REST_SECONDS)
         high = live.bits_high(self.plc)
         if high:
             raise Refusal("Stop was sent, but {0} still read high. Use the "
                           "physical stop.".format(" and ".join(high)),
                           {"bits_high": high})
-        parts = [self.journal.last_status_since(mark) or "stopped", self._where(),
-                 self._state_phrase()]
+        still = self._come_to_rest() is not None or not model.all_motors
+        final = self._positions()
+        further = 0.0
+        if at_stop and final and len(at_stop) == len(final):
+            further = max(abs(a - b) for a, b in zip(at_stop, final))
+
+        parts = [self.journal.last_status_since(mark) or "stopped", "run bits clear"]
+        if not still:
+            parts.append("{0}, STILL MOVING: use the physical stop if that is "
+                         "not expected".format(self._where()))
+        elif now and further >= 1.0:
+            parts.append("{0}, after finishing the leg they were on (up to "
+                         "{1} mm more)".format(self._where(), _mm(further)))
+        else:
+            parts.append(self._where())
+        parts.append(self._state_phrase())
         if not rested:
             parts.append("still coming to rest; see wavectl status")
-        return Result(" | ".join(parts), {"state": model.state.value,
-                                          "bits_high": high, "at_rest": rested})
+        return Result(" | ".join(parts), {
+            "state": model.state.value, "bits_high": high, "at_rest": rested,
+            "standing_still": still, "moved_after_stop_mm": round(further, 1)})
 
     def park(self) -> Result:
         """Move the selected pistons to their resting position."""
@@ -430,7 +510,7 @@ class MotionOperations:
             raise Refusal("The pistons were still moving to rest after {0:.0f} "
                           "seconds; see wavectl status.".format(REST_SECONDS))
         return Result("{0} | {1}".format(
-            self.journal.last_status_since(mark) or "at rest", self._where()),
+            self.journal.last_status_since(mark) or "at rest", self._resting_place()),
             {"state": model.state.value})
 
     # -- changes while running ---------------------------------------------------------

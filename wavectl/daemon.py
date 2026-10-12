@@ -192,7 +192,7 @@ def run(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGTERM, end)
         signal.signal(signal.SIGINT, end)
 
-        where = ("controller {0} at {1}".format(
+        where = ("controller {0} at {1}; nothing has been written to it".format(
                      service.details["controller"] or "(unnamed)", args.ip)
                  if args.live else "simulated wavemaker; nothing physical will move")
         logger.info("wavectl %s session started (process %s): %s.",

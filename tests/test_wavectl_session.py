@@ -136,13 +136,23 @@ class TestStatus:
         reply = Service(model, "mock").handle("launch")
         assert not reply["ok"] and "launch" in reply["text"]
 
-    def test_startup_leaves_the_machine_clear(self, model, plc):
+    def test_starting_a_session_writes_nothing(self, model, plc):
+        # The window clears the machine as it opens, which switches off any
+        # drive that was holding a piston up. A session only reads.
+        plc.write(tags.live_motor(29), 1)
+        plc.clear_history()
         service = Service(model, "live")
         service.open()
-        assert plc.writes_to(tags.RUN_CONTINUOUS) == [0]
-        assert all(plc.read(tags.live_motor(axis)) == 0
-                   for axis in range(tags.MOTOR_COUNT))
+        assert plc.history == []
+        assert plc.read(tags.live_motor(29)) == 1
+        assert "Nothing was written" in service.handle("log")["text"]
         model.stop_monitoring()
+
+    def test_a_piston_resting_at_the_top_is_not_minus_zero(self, model, plc):
+        from wavectl import live
+
+        plc.write(tags.axis_field(3, tags.ACTUAL_POSITION), -400)   # -0.04 mm
+        assert str(live.read_drive(plc, 3)["mm"]) == "0.0"
 
 
 class _Driven(SimulatedPlc):

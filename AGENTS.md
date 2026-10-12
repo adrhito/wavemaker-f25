@@ -47,9 +47,12 @@ wavectl/wm session stop                   # always, when the sitting is over
 - A continuous run always has a length and the session stops it. `run`, `soliton stage` and `trial` refuse to home on their own account: run `prepare`, or pass `--prepare`.
 - Before motion a command refuses, with nothing written, if a run bit is high that the session did not raise, if a selected drive reports a fault, or if the controller's selection is no longer the session's. Do not work round a refusal; find out what else touched the controller. `--ignore-warnings` is for a drive fault that preparing is meant to clear, and for nothing else.
 - If the session dies or hangs, `wavectl/wm stop` writes the run bits low on a connection of its own. Run it after anything abrupt.
+- Dropping the run bits does not freeze a piston: measured on 12 October 2026, each one finished the leg it was on, up to about 55 mm more on a 60 mm stroke. `stop --now` waits for them and reports where they came to rest. Plan on a full stroke of further travel after any stop.
+- Switching a drive off lets its piston sink under its own weight (120 mm to as low as 260 mm in that same sitting). Starting a session writes nothing for that reason. Ending one switches its drives off, so `park` before `session stop` unless the pistons are meant to be left where they are.
+- `survey`, `session`, `select`, `set`, `prepare`, `run --single`, `run --seconds`, `stop --now`, `park`, `watch` and `--sample` have been run on the array, on pistons 1 to 3 only. Nothing under `soliton`, `trial` or `camera` has, nor `stop --direct`. `wavectl/README.md` has the list.
 - Commands that outlast a tool's timeout take `--no-wait`; `wavectl/wm wait` then gives the outcome. `--json` gives any reply in full.
 - Evidence is written under `logs/wavectl/` (position samples), `analytics/soliton-trials/` (the application's own pulse records) and `analytics/vision/` (clips and what was read from them). Report those paths, not the samples.
-- `trial` and `camera` have only been run against the mock and `vision`'s drawn tank. Treat their first use with a real camera as a test of them.
+- `trial` and `camera` have only been run against the mock and `vision`'s drawn tank. Treat their first use with a real camera, and the first soliton pulse fired through `wavectl`, as tests of them.
 - When changing `wavectl/`: operations call `Model` commands and never write a run bit or a parameter themselves, apart from `live.stop_directly`, which only ever writes the command bits low. Add tests beside the others in `tests/test_wavectl_*.py`.
 
 ## Commit practice

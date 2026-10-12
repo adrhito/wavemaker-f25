@@ -31,9 +31,6 @@ from wavectl.trials import TrialOperations
 
 LOGGER = getLogger(LOGGER_NAME)
 
-#: How long a session waits for the model's own startup before giving up. On
-#: the machine that is the fault-clearing pulse, five seconds, plus the reads.
-STARTUP_SECONDS = 30.0
 #: Gap between looks at the model while waiting for it.
 POLL_SECONDS = 0.05
 
@@ -84,25 +81,36 @@ class Service(MotionOperations, SolitonOperations, TrialOperations):
     # -- lifecycle -------------------------------------------------------------
 
     def open(self) -> None:
-        """Bring the machine to its known resting state, as the window does.
+        """Attach to the machine. Writes nothing.
 
-        On the real controller this drops the run bits, pulses the fault
-        clear and deselects every piston. Nothing moves.
+        The window clears the machine as it opens: it drops the run bits,
+        pulses the fault clear and deselects every piston. That was this
+        session's first act too, until it was tried on the array on 12
+        October 2026. Pistons 1 to 3 were being held at 120 mm by their
+        drives; the fault clear and deselect switched those drives off, and
+        the pistons sank to 126, 260 and 151 mm under their own weight.
+
+        Nothing that sequence does is needed here. The session has already
+        refused to start if a run bit was high, and preparing selects, clears
+        faults and boots on its own account. So a session now starts by
+        reading, and the first thing written to the controller is whatever
+        the first command asks for.
         """
         self.model.register_bridge(self.journal)
-        mark = self.journal.mark()
-        if not self.model.startup():
-            raise Refusal("The model was busy before the session began.")
-        if not self._until(lambda: not self.model.busy, STARTUP_SECONDS):
-            raise Refusal("The machine did not finish starting up within "
-                          "{0:.0f} seconds.".format(STARTUP_SECONDS))
-        problems = self.journal.problems_since(mark)
-        if problems:
-            raise Refusal("Startup failed. " + " ".join(problems))
+        if self.mode == "live":
+            self.model._check_position_scale()
+            self.journal.note("Attached to the controller. Nothing was written.")
+        else:
+            self.journal.note("Mock wavemaker. Nothing physical will move.")
         self.model.start_monitoring()
 
     def close(self) -> None:
-        """Stop the machine and close the connection."""
+        """Stop the machine and close the connection.
+
+        This is the window's own closing sequence, and it does switch off the
+        drives the session was holding: a piston left above the bottom of its
+        travel may sink when the session ends. ``park`` first.
+        """
         try:
             self.model.shutdown()
         except Exception:  # noqa: BLE001 - the session is ending either way
