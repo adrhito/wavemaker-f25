@@ -149,8 +149,12 @@ def test_soliton_tab_works_out_width_and_lift_from_height_and_depth(window):
         assert tab.lift.get() == pytest.approx(240, abs=2)
         assert tab.lift.get() == round(volume_lift_mm(
             SolitaryTarget(80, tab.width.get(), 394), 9))
-        assert all(w.instate(["disabled"])
+        window.root.update()
+        # Only height and depth are shown; the worked-out rows are hidden.
+        assert all(not w.winfo_manager()
                    for w in tab.width_widgets + tab.lift_widgets)
+        assert "1780 mm width" in tab.summary.cget("text")
+        assert "lift the floor 240 mm" in tab.summary.cget("text")
         assert "jerk" in tab.summary.cget("text")
     finally:
         _select(window, [])
@@ -190,7 +194,7 @@ def test_soliton_tab_manual_mode_keeps_the_operators_values(window):
         tab.refresh(window.model.state)
         assert tab.lift.get() == 100
         assert tab.width.get() == 1500
-        assert all(not w.instate(["disabled"])
+        assert all(w.winfo_manager() == "grid"
                    for w in tab.width_widgets + tab.lift_widgets)
     finally:
         _select(window, [])

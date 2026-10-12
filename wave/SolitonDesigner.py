@@ -81,8 +81,8 @@ class SolitonDesigner:
         ttk.Checkbutton(
             controls, variable=self.auto, command=self._changed,
             style="Card.TCheckbutton",
-            text="Work out width and floor lift from height, depth and the "
-                 "selected pistons").grid(
+            text="Work out width and floor lift for me (untick to set them "
+                 "by hand)").grid(
                      row=5, column=0, columnspan=4, sticky="w",
                      pady=(theme.TIGHT, 0))
         ttk.Label(controls, text="MEASUREMENT STATION",
@@ -147,17 +147,17 @@ class SolitonDesigner:
         root.add(self.tab, text="  Soliton  ")
 
     def _control(self, parent, row, label, variable, minimum, maximum, detail):
-        ttk.Label(parent, text=label, style="CardDim.TLabel").grid(
-            row=row, column=0, sticky="w", pady=(theme.TIGHT, 0))
+        name = ttk.Label(parent, text=label, style="CardDim.TLabel")
+        name.grid(row=row, column=0, sticky="w", pady=(theme.TIGHT, 0))
         scale = ttk.Scale(parent, from_=minimum, to=maximum, variable=variable)
         scale.grid(row=row, column=1, sticky="ew", padx=theme.GAP,
                    pady=(theme.TIGHT, 0))
         entry = ttk.Entry(parent, textvariable=variable, width=8)
         entry.grid(row=row, column=2, sticky="w", pady=(theme.TIGHT, 0))
-        ttk.Label(parent, text=detail, style="CardDim.TLabel").grid(
-            row=row, column=3, sticky="w", padx=(theme.GAP, 0),
-            pady=(theme.TIGHT, 0))
-        return scale, entry
+        note = ttk.Label(parent, text=detail, style="CardDim.TLabel")
+        note.grid(row=row, column=3, sticky="w", padx=(theme.GAP, 0),
+                  pady=(theme.TIGHT, 0))
+        return name, scale, entry, note
 
     def _trial(self) -> SolitonTrial:
         self._station_mm()  # Reject a malformed optional station before staging.
@@ -255,8 +255,13 @@ class SolitonDesigner:
         Returns a note for the operator, or None.  Writing the variables fires
         their traces, so ``_applying`` keeps that from re-entering.
         """
+        # Worked-out values are not controls, so their rows are hidden rather
+        # than shown greyed out; the summary below still states both.
         for widget in self.width_widgets + self.lift_widgets:
-            widget.state(["disabled"] if self.auto.get() else ["!disabled"])
+            if self.auto.get():
+                widget.grid_remove()
+            else:
+                widget.grid()
         if not self.auto.get():
             self._auto_count = None
             return None
