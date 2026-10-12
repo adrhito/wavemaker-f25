@@ -365,6 +365,13 @@ def _trial(args) -> int:
         patience)
 
 
+def _camera(args) -> int:
+    return _ask(args, "camera", {
+        "camera_source": args.source,
+        "rig": os.path.abspath(args.rig) if args.rig else None,
+        "seconds": args.seconds}, seconds=args.seconds + 40.0)
+
+
 # -- the parser ----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -656,6 +663,19 @@ def build_parser() -> argparse.ArgumentParser:
                        help="record the floor's positions through the pulse")
     trial.add_argument("--no-wait", action="store_true")
     trial.set_defaults(run=_trial)
+
+    look = commands.add_parser(
+        "camera", parents=[common],
+        help="open the camera as a trial would and say what it gives",
+        description="Moves nothing. Run it before the first trial of a "
+                    "sitting: it is the session that opens the camera, so "
+                    "this is where a missing permission or a rig out of view "
+                    "shows up.")
+    look.add_argument("source", metavar="N",
+                      help='camera number, or "synthetic" for the drawn tank')
+    look.add_argument("--rig", metavar="PATH")
+    look.add_argument("--seconds", type=float, default=3.0)
+    look.set_defaults(run=_camera)
 
     log = commands.add_parser("log", parents=[common],
                               help="the last things the machine reported")

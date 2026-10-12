@@ -48,7 +48,50 @@ MIN_WATCHED_SECONDS = 3.0
 class TrialOperations:
     """The trial half of :class:`wavectl.service.Service`."""
 
-    TRIAL_OPERATIONS: Dict[str, str] = {"trial": "trial"}
+    TRIAL_OPERATIONS: Dict[str, str] = {"trial": "trial", "camera": "camera_check"}
+
+    def camera_check(self, camera_source: str, rig: Optional[str] = None,
+                     seconds: float = 3.0) -> Result:
+        """Open the camera as a trial would, and say what it gives.
+
+        Moves nothing. It is the session process that opens the camera in a
+        trial, so this is where to find out that it has not been allowed to,
+        or that the rig's markers are out of view, before the floor is staged.
+        """
+        seconds = min(max(float(seconds), 1.0), 30.0)
+        recorder = camera.Recorder(camera_source, rig)
+        try:
+            seen = recorder.open()
+            time.sleep(seconds)
+            rate = recorder.rate()
+            movement = recorder.restlessness_mm()
+            picture = recorder.save_picture(
+                places.output_dir() / "camera-{0}.png".format(
+                    datetime.now().strftime("%Y%m%d-%H%M%S")))
+            failure = recorder.failure()
+        except camera.Unavailable as exc:
+            raise Refusal(str(exc)) from exc
+        finally:
+            recorder.close()
+        if failure:
+            raise Refusal("Camera {0} opened, but {1}.".format(camera_source, failure))
+        parts = ["camera {0}: {1} x {2}, {3:.1f} pictures a second".format(
+            camera_source, seen["width"], seen["height"], rate)]
+        if recorder.rig is not None:
+            error = seen.get("marker_error_mm")
+            parts.append("rig found, {0}{1:.2f} mm a pixel".format(
+                "marker error {0:.2f} mm, ".format(error) if error is not None else "",
+                seen["mm_per_pixel"]))
+            parts.append("surface moving {0:.2f} mm".format(movement)
+                         if movement is not None else "surface not read yet")
+        else:
+            parts.append("no rig given, so nothing was measured")
+        if picture is not None:
+            parts.append("picture " + places.shown(picture))
+        return Result(" | ".join(parts), dict(
+            seen, achieved_fps=round(rate, 2),
+            still_movement_mm=round(movement, 3) if movement is not None else None,
+            picture=str(picture) if picture is not None else None))
 
     def trial(self, crest_mm: float, depth_mm: float,
               width_mm: Optional[float] = None, lift_mm: Optional[int] = None,

@@ -133,6 +133,7 @@ class Recorder:
         self._clip: Optional[Path] = None
         self._header_fps = 0.0
         self._stamps = []
+        self._latest = None
         self._failed: Optional[str] = None
 
     @property
@@ -159,9 +160,9 @@ class Recorder:
                 index = int(self.source)
             except ValueError:
                 raise Unavailable(
-                    '--camera takes a camera number, or "synthetic" for the '
+                    'A camera is named by its number, or "synthetic" for the '
                     "drawn tank; not {0!r}. tools/vision_preview.py --list "
-                    "names the numbers.".format(self.source)) from None
+                    "says which number is which.".format(self.source)) from None
             if self.rig_path:
                 try:
                     self.rig = calibration.Rig.load(Path(self.rig_path))
@@ -211,6 +212,7 @@ class Recorder:
                 self._failed = "the camera stopped giving pictures"
                 return
             with self._lock:
+                self._latest = frame
                 self._arrivals.append(now)
                 while self._arrivals and now - self._arrivals[0] > RATE_WINDOW_SECONDS:
                     self._arrivals.popleft()
@@ -251,6 +253,23 @@ class Recorder:
 
     def failure(self) -> Optional[str]:
         return self._failed
+
+    def save_picture(self, path: Path) -> Optional[Path]:
+        """Write the newest picture, with the surface drawn on it if it was read."""
+        cv2, _numpy, _calibration, _camera, _metrics, _waterline = _vision()
+        with self._lock:
+            frame = None if self._latest is None else self._latest.copy()
+        if frame is None:
+            return None
+        if self.reader is not None:
+            from vision import overlay
+
+            heights = self.reader.read(frame)
+            frame = overlay.draw(frame, self.rig, self.reader.view, self.reader,
+                                 heights, self.reader.view.markers_px, [])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), frame)
+        return path
 
     def launch(self) -> None:
         """Tell a drawn tank the pulse has gone. A real camera needs no telling."""

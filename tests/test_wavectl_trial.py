@@ -209,3 +209,22 @@ class TestWithTheDrawnTank:
         assert Path(reply["data"]["clip"]["clip"]).is_file()
         assert not [thread for thread in threading.enumerate()
                     if thread.name == "wavectl camera"]
+
+
+class TestCameraCheck:
+    def test_it_says_what_the_camera_gives_and_moves_nothing(self, service):
+        pytest.importorskip("cv2")
+        before = len(service.plc.history)
+        reply = service.handle("camera", {"camera_source": "synthetic",
+                                          "seconds": 3.0})
+        assert reply["ok"], reply["text"]
+        assert reply["text"].startswith("camera synthetic: 960 x 540, ")
+        assert "rig found" in reply["text"] and "surface moving 0.0" in reply["text"]
+        assert reply["data"]["achieved_fps"] == pytest.approx(20.0, rel=0.1)
+        assert Path(reply["data"]["picture"]).is_file()
+        assert len(service.plc.history) == before
+
+    def test_a_camera_that_is_not_a_number_is_explained(self, service):
+        pytest.importorskip("cv2")
+        reply = service.handle("camera", {"camera_source": "front"})
+        assert not reply["ok"] and "named by its number" in reply["text"]
