@@ -186,10 +186,17 @@ piston 1 wants looking at mechanically before anything else.
 
 | Tool | What it does |
 |---|---|
+| `wavectl/wm` | The command line for driving the array: a session process holds the connection, and each command answers on one line. Select, set, prepare, timed runs, stop, soliton trials. Start here rather than writing a new live script; see `wavectl/README.md`. |
 | `tools/live_survey.py` | Read-only. Status, warn, position, homed for pistons 1-12. Safe. |
 | `tools/live_sync_drift.py` | Runs a big-wave preset and measures cycle time and spread over the run. `--dry-run` contacts nothing. |
 | `tools/live_motion_campaign.py` | Staged home -> stroke -> speed -> wave -> stop-abuse, aborting on any new drive fault. |
 | `tools/make_presets.py` | Regenerates the shipped `Presets/*.csv` from `app/patterns.py`. |
+
+`wavectl` applies rules 2 to 4 itself: one session at a time, the run bits
+dropped when the session ends (and by `wavectl/wm stop` if it was killed
+before it could), and a refusal before motion when a run bit is already high
+or a selected drive reports a problem. Rehearse with
+`wavectl/wm session start --mock`.
 
 Prefer `--dry-run` first on anything new. Write evidence to
 `logs/verification/` as JSON; print a summary, not the raw samples.

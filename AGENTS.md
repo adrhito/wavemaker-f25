@@ -22,6 +22,36 @@ For water-height or soliton work, read `docs/CALIBRATION_NOTES.md`; piston strok
 - Add focused simulator tests for changes to motion, tags, limits, presets, threading, or UI state. Tests prove what the application sends and what the mock does; they do not prove how real drives respond.
 - Runtime logs and analytics are written beneath `logs/` and `analytics/`. Keep generated files, virtual environments, and local test artifacts out of commits.
 
+## Driving the array from a terminal: `wavectl`
+
+`wavectl/` is the command-line way to drive the machine, for work where the commands come from an agent or a script rather than a person at the window. Use it instead of writing another `tools/live_*.py` script, and read `wavectl/README.md` before the first live use.
+
+One long-lived session process holds the PLC connection and the `Model`; `wavectl/wm <command>` asks it to do one thing and answers on one line beginning `mock:` or `LIVE:`. It exists because `Model` trusts a homed bit only from the process that did the homing, so a command that started a new process each time would home on every call. Every operation ends in the same `Model` command the window uses, so the invariants below hold unchanged.
+
+```
+wavectl/wm session start --mock --fast    # rehearse; --live for the machine
+wavectl/wm survey                         # read-only look at the controller; needs no session
+wavectl/wm select 1-9                     # display numbers; c1-3 is the front three columns
+wavectl/wm set stroke=120 speed=150
+wavectl/wm prepare                        # boots and homes: about a minute, every selected piston moves
+wavectl/wm run --seconds 30 --sample      # stops and rests by itself; --single for one stroke
+wavectl/wm status                         # state, selection, run bits, drive faults
+wavectl/wm stop                           # --now halts at once; --direct needs no session
+wavectl/wm soliton stage --crest 40 --depth 406
+wavectl/wm soliton fire                   # or `trial`, which adds the wait for the water and the camera
+wavectl/wm session stop                   # always, when the sitting is over
+```
+
+- Rehearse any new sequence on the mock first. `WAVECTL_MOCK_ONLY=1` in the environment makes every route to the real controller fail before a socket opens; the test suite sets it.
+- One session per computer, enforced by `~/.wavectl/session.json`. That stops a second `wavectl` session, not the window application or a `tools/live_*.py` script: never start `--live` while either is running. A live session refuses to start if a run bit is already high.
+- A continuous run always has a length and the session stops it. `run`, `soliton stage` and `trial` refuse to home on their own account: run `prepare`, or pass `--prepare`.
+- Before motion a command refuses, with nothing written, if a run bit is high that the session did not raise, if a selected drive reports a fault, or if the controller's selection is no longer the session's. Do not work round a refusal; find out what else touched the controller. `--ignore-warnings` is for a drive fault that preparing is meant to clear, and for nothing else.
+- If the session dies or hangs, `wavectl/wm stop` writes the run bits low on a connection of its own. Run it after anything abrupt.
+- Commands that outlast a tool's timeout take `--no-wait`; `wavectl/wm wait` then gives the outcome. `--json` gives any reply in full.
+- Evidence is written under `logs/wavectl/` (position samples), `analytics/soliton-trials/` (the application's own pulse records) and `analytics/vision/` (clips and what was read from them). Report those paths, not the samples.
+- `trial` and `camera` have only been run against the mock and `vision`'s drawn tank. Treat their first use with a real camera as a test of them.
+- When changing `wavectl/`: operations call `Model` commands and never write a run bit or a parameter themselves, apart from `live.stop_directly`, which only ever writes the command bits low. Add tests beside the others in `tests/test_wavectl_*.py`.
+
 ## Commit practice
 
 - Make a concise, meaningful commit after each significant step of work in this project, including work requested in another chat. For substantial implementation or testing, make intermittent commits as milestones are completed instead of waiting until the end.
