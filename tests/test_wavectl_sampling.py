@@ -64,6 +64,17 @@ class TestSampler:
         assert Sampler(plc, [0], hz=1000).hz == 50.0
 
 
+    def test_files_go_where_wavectl_data_says(self, plc, tmp_path, monkeypatch):
+        from wavectl import places
+
+        monkeypatch.setenv("WAVECTL_DATA", str(tmp_path / "elsewhere"))
+        sampler = Sampler(plc, [0], hz=50).start()
+        time.sleep(0.05)
+        sampler.stop()
+        assert sampler.save().parent == tmp_path / "elsewhere" / "logs" / "wavectl"
+        assert places.output_dir() == tmp_path / "elsewhere" / "logs" / "wavectl"
+
+
 class TestWatch:
     def test_nothing_to_watch_is_refused(self, model):
         reply = Service(model, "mock").handle("watch", {"seconds": 0.1})

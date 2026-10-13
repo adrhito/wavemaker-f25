@@ -56,8 +56,15 @@ def use_data_override() -> None:
 
 
 def output_dir() -> Path:
-    """The folder for what a session writes, created if it is missing."""
-    folder = paths.LOG_DIR / "wavectl"
+    """The folder for what a session writes, created if it is missing.
+
+    Follows ``WAVECTL_DATA`` by itself, not only through
+    :func:`use_data_override`: the tests build sessions in-process without
+    calling that, and were leaving position samples and camera pictures in
+    the checkout's own ``logs/``.
+    """
+    override = os.environ.get(DATA_VARIABLE)
+    folder = (Path(override) / "logs" if override else paths.LOG_DIR) / "wavectl"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
