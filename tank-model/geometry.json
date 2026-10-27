@@ -1,0 +1,83 @@
+{
+  "_about": "UNC Joint Fluids Lab wave tank (Chapman Hall) and its 30-piston wavemaker. Every length in metres. Each value carries how it was obtained and how sure it is; edit a value here and everything downstream (volumes, wave model, 3D model, drawings) follows. See MEASUREMENTS.md for the working behind each number.",
+
+  "frame": {
+    "x": "along the channel axis, 0 at the channel mouth (inside face of the head's channel-side wall), positive toward the reservoir",
+    "y": "across the axis, 0 on the centreline",
+    "z": "up, 0 on the inside of the tank floor"
+  },
+
+  "channel": {
+    "length": {"value": 15.4, "range": [14.8, 16.2], "how": "photogrammetry, IMG_2468: rim-width perspective fit (horizon row 498, 43 deg pitch) from the platform edge to the reservoir face; lid joints come out evenly spaced at 0.75 m, which checks the fit"},
+    "width": {"value": 0.673, "range": [0.665, 0.68], "how": "tape, 26.5 in, measured by the operator (wavemaker-f25 app/solitons.py TANK_WIDTH_MM)"},
+    "depth_to_rim": {"value": 1.0, "range": [0.88, 1.15], "how": "photogrammetry, IMG_2465/2464: glass between rails = 0.68 x camera height, about one frame module"},
+    "frame_module": {"value": 1.07, "range": [1.0, 1.15], "how": "photogrammetry, IMG_2461/2465: post spacing from floor contact points"},
+    "lid_panel": {"value": 0.753, "range": [0.72, 0.78], "how": "photogrammetry, IMG_2468: spacing of the glass lid joints"}
+  },
+
+  "head": {
+    "_note": "The wide tank at the piston end. The channel leaves from the middle of its channel-side wall (a T, no turns). It holds the piston bank.",
+    "length_along_axis": {"value": 3.8, "range": [3.0, 5.2], "how": "estimate: must hold the 2.24 m bank plus open water behind it; IMG_2459/2460. Least certain dimension in the model"},
+    "width_across": {"value": 5.2, "range": [4.2, 6.3], "how": "photogrammetry, IMG_2461: four frame modules plus a part panel along its long side"},
+    "depth_to_rim": {"value": 1.0, "range": [0.88, 1.15], "how": "assumed equal to the channel: one rim height around the tank in IMG_2460/2462"}
+  },
+
+  "reservoir": {
+    "_note": "Tall blue dam-break column at the far end, behind a gate. Modelled only as a closed (reflecting) end wall for piston waves.",
+    "length_along_axis": {"value": 5.6, "range": [4.6, 6.8], "how": "photogrammetry, IMG_2466: face length / height above rim = 3.12, height from IMG_2468"},
+    "width": {"value": 0.75, "range": [0.67, 0.95], "how": "photogrammetry, IMG_2468: end face about 1.0 m outside the frame; inside assumed close to the channel"},
+    "height_above_channel_floor": {"value": 2.9, "range": [2.5, 3.4], "how": "IMG_2468: top 1.8 m above the channel rim; UNC Research quotes a 'three-meter water column'"}
+  },
+
+  "tank_floor_above_lab_floor": {
+    "value": 0.6,
+    "range": [0.5, 0.7],
+    "how": "photogrammetry, IMG_2465, standing camera height 1.45 m assumed"
+  },
+
+  "piston_bank": {
+    "_note": "30 pipes, 3 across the axis by 10 along it, standing in the head at the channel mouth. The bank is exactly channel-wide (3 x 224 mm = 673 mm). William's 'row n' is one group of three along the tank; in the code that is column n (display pistons 3n-2, 3n-1, 3n).",
+    "rows_across": 3,
+    "columns_along": 10,
+    "pitch_across": {"value": 0.2243, "how": "channel width / 3; the square base plates tile the bank"},
+    "pitch_along": {"value": 0.2243, "how": "assumed equal to pitch_across (square base plates, IMG_2459)"},
+    "near_end_x": {"value": 0.0, "how": "bank ends at the channel mouth (operator's description)"},
+    "pipe_top_height": {"value": 1.4224, "range": [1.4, 1.45], "how": "William, 26 Oct: the tops are level, 56 in above the tank floor (row 10's 51 in pipe on its 5 in bottom). IMG_2459 agrees: about 0.42 m of pipe stands above the deck at rim height"},
+    "row_bottoms": {"value": [0.8128, 0.7366, 0.6604, 0.5842, 0.508, 0.4318, 0.3556, 0.2794, 0.2032, 0.127], "formula": "row n bottom = 5 + 3 (10 - n) in above the tank floor; pipe length 21 + 3n in", "how": "William, 26 Oct ('roughly'): row 1 is a 24 in pipe with its bottom 32 in (813 mm) up, row 10 a 51 in pipe with its bottom 5 in (127 mm) up"},
+    "bottom_offset": {"value": 0.0, "range": [-0.04, 0.04], "how": "a shift added to every row bottom, for the 'roughly' in William's numbers; `wm.py calibrate --fit gain,bottom_offset` can fit it"},
+    "row_10_end": {"value": "channel", "how": "ASSUMED, ask William: which end of the bank the longest pipes (row 10, lowest bottoms) stand at, 'channel' or 'head'. Row n is taken to hold display pistons 3n-2..3n. The pipe bottoms then form a ramp falling toward the channel, which would steer the pushed water into it"},
+    "duct_side_walls": {"value": true, "how": "IMG_2459 shows stacked steel plates closing the long sides of the bank, so water under the bank leaves through its two ends (channel and head). Set false to let it out sideways too"},
+    "between_pipes_open": {"value": true, "how": "assumed: the gaps between neighbouring pipes (round pipes on a square pitch leave 25% of the footprint) are open water with a free surface, not sealed by the deck"}
+  },
+
+  "cylinder": {
+    "spec": "8 in NPS Schedule 10S welded stainless pipe, ASTM A312 TP304/304L (Felker), stencil on IMG_2458",
+    "outside_diameter": {"value": 0.2191, "how": "ASME B36.19M: 8.625 in"},
+    "wall": {"value": 0.00376, "how": "ASME B36.19M Sch 10S: 0.148 in"},
+    "bore": {"value": 0.21156, "how": "OD - 2 x wall = 8.329 in"},
+    "length": {"note": "per row: pipe_top_height - row bottom, 24 in (row 1) to 51 in (row 10)"}
+  },
+
+  "pistons": {
+    "drive": "LinMot linear motors on an Allen-Bradley ControlLogix PLC (wavemaker-f25)",
+    "position_mm": {"min": -20, "max": 370, "how": "app/params.py; -20 is the top of the travel, 370 the bottom; down pushes water out of the pipe (Model.py parking notes)"},
+    "drive_envelope_mm": [-57, 453],
+    "home_mm": 390,
+    "speed_max_mm_s": 900,
+    "accel_max_mm_s2": 20000,
+    "profiles": {"0": "Trapezoidal", "1": "Bestehorn", "2": "S-curve", "3": "Sine"},
+    "bestehorn_jerk_factor": {"value": 1.249, "how": "makes the model reproduce the measured 3.834 s cycle of BIGGER WAVE.csv (0-350 mm, 500 mm/s, 10000 mm/s2, jerk 2000, Bestehorn), .claude/skills/wavemaker/SKILL.md"},
+    "disc_face_at_0mm": {"value": 1.3, "range": [1.25, 1.36], "how": "ASSUMED, measure it: height of the disc face above the tank floor with the piston at 0 mm. Bounds: at the drive's -57 mm limit the disc must still be below the 1.422 m pipe top; at its 453 mm limit it must still be inside row 1's pipe (bottom 0.813 m). Only the length of trapped air depends on it"},
+    "park_mm": {"value": 370, "how": "wavemaker-f25 Model.py PARK_POSITION: after a stop the pistons rest at the bottom of travel (REST_DOWN is the default), so a run starts from 370 mm and the Prepare step lifts them to Position 1"}
+  },
+
+  "published": {
+    "capacity_gal": 13500,
+    "total_length_ft": [118, 120],
+    "total_length_m": 36,
+    "reservoir_height_ft": 27,
+    "weight_lb": 70000,
+    "chambers": 3,
+    "sources": ["https://research.unc.edu/story/young-punks-big-waves/", "https://dailytarheel.com/article/2010/11/uncs_new_wave_tank_will_help_with_experiments_interdisciplinary_studies", "https://collegearchive.unc.edu/?p=301", "https://grantome.com/grant/NSF/DMS-1229471", "https://mclaughlin.web.unc.edu/fluids-lab/", "https://tarheels.live/comp523teamp/?p=79"]
+  }
+}

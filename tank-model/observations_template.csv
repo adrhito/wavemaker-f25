@@ -1,0 +1,6 @@
+run_id,pistons,position1_mm,position2_mm,speed_mm_s,accel_mm_s2,jerk_mm_s3,profile,cycles,column_delay_s,depth_m,station_x_m,observed_height_mm,observed_crest_mm,observed_period_s,notes
+shallow-150,row8-10,220,370,900,20000,7500,1,3,0,0.3,1.5,,,,one row per run per station; rows 8-10 are the ones in the water at 0.30 m
+shallow-150,row8-10,220,370,900,20000,7500,1,3,0,0.3,5.0,,,,
+shallow-300,row8-10,70,370,900,20000,7500,1,3,0,0.3,5.0,,,,stroke longer than the 173 mm row-10 submergence: tells the two seal behaviours apart
+row10-300,row10,70,370,900,20000,7500,1,3,0,0.3,5.0,,,,one row alone
+all-200,all,170,370,900,20000,7500,1,3,0,0.4,5.0,,,,at 0.40 m rows 7-10 are wet

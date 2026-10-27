@@ -1,0 +1,65 @@
+newmtl floor
+Kd 0.5569 0.5843 0.6118
+d 1.000
+Ns 180
+
+newmtl glass
+Kd 0.7490 0.8902 0.9333
+d 0.160
+Ns 855
+
+newmtl frame
+Kd 0.5255 0.7137 0.9373
+d 1.000
+Ns 360
+
+newmtl steel
+Kd 0.7882 0.8000 0.8196
+d 0.550
+Ns 495
+
+newmtl plate
+Kd 0.6627 0.6784 0.7020
+d 1.000
+Ns 450
+
+newmtl side_plate
+Kd 0.6627 0.6784 0.7020
+d 0.300
+Ns 450
+
+newmtl disc
+Kd 0.1490 0.1490 0.1647
+d 1.000
+Ns 360
+
+newmtl motor
+Kd 0.1059 0.1059 0.1137
+d 1.000
+Ns 450
+
+newmtl water
+Kd 0.1647 0.4706 0.8392
+d 0.320
+Ns 810
+
+newmtl pipe_water
+Kd 0.1098 0.3608 0.6706
+d 0.750
+Ns 810
+
+newmtl reservoir
+Kd 0.2235 0.5294 0.8980
+d 1.000
+Ns 360
+
+newmtl gate
+Kd 0.3216 0.3176 0.3059
+d 1.000
+Ns 360
+
+newmtl lab_floor
+Kd 0.8941 0.8902 0.8706
+d 1.000
+Ns 90
+

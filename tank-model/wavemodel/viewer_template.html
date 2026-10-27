@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wave Tank Model</title>
+<style>
+  :root {
+    --bg: #eeeeea; --panel: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --line: #e4e3de;
+    --accent: #2a78d6; --dry: #eb6834; --chip: #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141413; --panel: #1f1f1e; --ink: #f0efec; --ink-2: #c3c2b7; --line: #383835;
+      --accent: #3987e5; --dry: #d95926; --chip: #2a2a28;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141413; --panel: #1f1f1e; --ink: #f0efec; --ink-2: #c3c2b7; --line: #383835;
+    --accent: #3987e5; --dry: #d95926; --chip: #2a2a28;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); overflow: hidden;
+         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  #view { position: fixed; inset: 0; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 318px; max-width: calc(100vw - 32px);
+           max-height: calc(100vh - 24px); overflow: auto; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .sub { color: var(--ink-2); margin: 0 0 12px; font-size: 12px; }
+  .ctl { margin: 0 0 12px; }
+  .ctl .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .ctl .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ctl .hint { color: var(--ink-2); font-size: 11.5px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--ink); padding: 4px 10px; font: inherit; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+  .row label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .views button { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 6px;
+                  padding: 3px 9px; font: inherit; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  th { text-align: right; color: var(--ink-2); font-weight: 500; padding: 2px 4px; border-bottom: 1px solid var(--line); }
+  td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .note { color: var(--ink-2); font-size: 11.5px; margin: 10px 0 0; }
+  .lbl { position: fixed; pointer-events: none; font-size: 11px; background: var(--panel); color: var(--ink);
+         padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap;
+         transform: translate(-50%, -50%); }
+  #err { position: fixed; bottom: 12px; right: 12px; color: var(--ink-2); font-size: 12px; }
+  @media (max-width: 600px) {
+    #panel { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 46vh; padding: 10px 12px; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+<div id="view"></div>
+<div id="panel">
+  <h1>UNC wave tank and piston bank</h1>
+  <p class="sub">Built from geometry.json. Drag to orbit, scroll to zoom, right-drag to pan.</p>
+  <div class="ctl">
+    <div class="top"><span>Still-water depth</span><span class="val" id="dv"></span></div>
+    <input type="range" id="depth" min="0.05" max="1.0" step="0.005">
+    <div class="hint" id="wetHint"></div>
+  </div>
+  <div class="ctl">
+    <div class="top"><span>Disc position</span><span class="val" id="pv"></span></div>
+    <input type="range" id="disc" min="-20" max="370" step="1">
+    <div class="hint">0 mm is the top, 370 mm the bottom (where the pistons park). Down pushes water out.</div>
+  </div>
+  <div class="row">Row 10 (longest pipes) at:
+    <span class="seg" id="endSeg"><button data-end="channel">channel end</button><button data-end="head">head end</button></span>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="showWater" checked> water</label>
+    <label><input type="checkbox" id="xray" checked> see-through pipes</label>
+    <label><input type="checkbox" id="showLabels" checked> labels</label>
+  </div>
+  <div class="row views">
+    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank</button>
+    <button data-view="side">Bank side-on</button><button data-view="channel">Down the channel</button>
+  </div>
+  <table>
+    <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Under water</th><th>Water in pipe</th><th>Air</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="note">mm. Air and water inside each pipe: air trapped when the water rose past the pipe bottom with
+    the disc parked at 370 mm, then the disc moved slowly to this position (tight seal). A row moves water only
+    when its bottom is under the still water. Motors, frame and stand are approximate.</p>
+</div>
+<div id="err"></div>
+<script>
+const DATA = /*DATA*/null;
+(function () {
+  if (!window.THREE || !THREE.OrbitControls) {
+    document.getElementById("err").textContent = "three.js did not load (offline?). The .glb and .obj files open in Blender.";
+    return;
+  }
+  const G = DATA.g;
+  const P0 = 101325, RG = 1000 * 9.81;
+  const state = { depth: DATA.start.depth, disc: DATA.start.disc_mm, end: G.row_10_end,
+                  water: true, xray: true, labels: true };
+
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 400);
+  camera.up.set(0, 0, 1);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8a84, 0.85));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+  sun.position.set(-8, -12, 18);
+  scene.add(sun);
+
+  const mats = {};
+  function mat(name, override) {
+    const key = name + (override || "");
+    if (mats[key]) return mats[key];
+    const [col, op, met, rough] = DATA.materials[name];
+    const m = new THREE.MeshStandardMaterial({
+      color: override === "wet" ? "#7fb2ee" : col, metalness: met, roughness: rough,
+      transparent: op < 1, opacity: op, side: THREE.DoubleSide, depthWrite: op >= 1 });
+    mats[key] = m;
+    return m;
+  }
+
+  function make(part, m) {
+    let geo, mesh;
+    if (part.kind === "box") {
+      geo = new THREE.BoxGeometry(part.s[0], part.s[1], part.s[2]);
+      mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(part.p[0], part.p[1], part.p[2]);
+    } else {
+      geo = new THREE.CylinderGeometry(part.r, part.r, part.h, 40, 1, part.kind === "tube");
+      mesh = new THREE.Mesh(geo, m);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(part.p[0], part.p[1], part.p[2] + part.h / 2);
+    }
+    mesh.name = part.name;
+    return mesh;
+  }
+
+  const tank = new THREE.Group();
+  DATA.tank.forEach(p => tank.add(make(p, mat(p.mat))));
+  scene.add(tank);
+  let bank = new THREE.Group(), water = new THREE.Group();
+  scene.add(bank, water);
+
+  function discZ(mm) { return G.disc_zero - mm / 1000; }
+  function inner(zb, h, zd) {               // tight seal, isothermal, from the park position
+    if (zb >= h) return null;
+    const zp = discZ(G.park_mm);
+    let C = P0 * (zp - zb);
+    if (zd < zp) C = Math.min(C, (P0 + RG * (h - zb)) * (zd - zb));
+    const B = P0 + RG * (h - zd);
+    const L = (-B + Math.sqrt(B * B + 4 * RG * C)) / (2 * RG);
+    return { z: zd - L, air: L };
+  }
+
+  function buildBank() {
+    scene.remove(bank);
+    bank = new THREE.Group();
+    const ro = G.od / 2, ri = G.bore / 2, zd = discZ(state.disc), h = state.depth;
+    DATA.pistons.forEach(p => {
+      const x = p.x[state.end], wet = p.bottom < h;
+      const pipeMat = state.xray ? mat("steel", wet ? "wet" : "") :
+        (mats["steel_solid" + wet] || (mats["steel_solid" + wet] = new THREE.MeshStandardMaterial({
+          color: wet ? "#7fb2ee" : "#c9ccd1", metalness: 0.25, roughness: 0.45, side: THREE.DoubleSide })));
+      bank.add(make({ kind: "tube", p: [x, p.y, p.bottom], r: ro, h: G.pipe_top - p.bottom }, pipeMat));
+      bank.add(make({ kind: "cyl", p: [x, p.y, zd - 0.01], r: ri * 0.995, h: 0.02 }, mat("disc")));
+      bank.add(make({ kind: "box", p: [x, p.y, G.pipe_top + 0.006], s: [G.pitch_along - 0.004, G.pitch_across - 0.004, 0.012] }, mat("plate")));
+      bank.add(make({ kind: "box", p: [x, p.y, G.pipe_top + 0.186], s: [0.06, 0.09, 0.348] }, mat("motor")));
+      const st = inner(p.bottom, h, zd);
+      if (st && st.z - p.bottom > 0.002)
+        bank.add(make({ kind: "cyl", p: [x, p.y, p.bottom], r: ri * 0.99, h: st.z - p.bottom }, mat("pipe_water")));
+    });
+    if (G.side_walls) {
+      [-1, 1].forEach(s => bank.add(make({ kind: "box", p: [(G.bank_x0 + G.bank_x1) / 2, s * (G.bank_width / 2 + 0.006), G.rim / 2],
+                                           s: [G.bank_x1 - G.bank_x0, 0.012, G.rim] }, mat("side_plate"))));
+    }
+    scene.add(bank);
+  }
+
+  function buildWater() {
+    scene.remove(water);
+    water = new THREE.Group();
+    const h = state.depth;
+    water.add(make({ kind: "box", p: [-G.head_length / 2, 0, h / 2], s: [G.head_length, G.head_width, h] }, mat("water")));
+    water.add(make({ kind: "box", p: [G.channel_length / 2, 0, h / 2], s: [G.channel_length, G.channel_width, h] }, mat("water")));
+    water.visible = state.water;
+    scene.add(water);
+  }
+
+  function table() {
+    const h = state.depth, zd = discZ(state.disc);
+    const rows = [];
+    let wet = [];
+    for (let r = 1; r <= 10; r++) {
+      const p = DATA.pistons.find(q => q.row === r);
+      const st = inner(p.bottom, h, zd);
+      const isWet = p.bottom < h;
+      if (isWet) wet.push(r);
+      const col = isWet ? "var(--accent)" : "var(--dry)";
+      rows.push(`<tr><td><span class="dot" style="background:${col}"></span>${r}</td><td>${3 * r - 2}-${3 * r}</td>` +
+        `<td>${Math.round(p.bottom * 1000)}</td><td>${isWet ? Math.round((h - p.bottom) * 1000) : "dry"}</td>` +
+        `<td>${st ? Math.round((st.z - p.bottom) * 1000) : "-"}</td><td>${Math.round((st ? st.air : zd - p.bottom) * 1000)}</td></tr>`);
+    }
+    document.getElementById("rows").innerHTML = rows.join("");
+    document.getElementById("wetHint").textContent = wet.length ?
+      `Rows ${wet[0]}${wet.length > 1 ? "-" + wet[wet.length - 1] : ""} reach the water and move it; the rest move only air.` :
+      "No pipe reaches the water: the pistons move only air.";
+    document.getElementById("dv").textContent = Math.round(h * 1000) + " mm";
+    document.getElementById("pv").textContent = Math.round(state.disc) + " mm";
+  }
+
+  // labels anchored in the model
+  const labels = [];
+  function label(text, fn) {
+    const el = document.createElement("div");
+    el.className = "lbl";
+    document.body.appendChild(el);
+    labels.push({ el, text, fn });
+  }
+  const L = G.channel_length, HL = G.head_length, HW = G.head_width;
+  label(() => `Head ${HL.toFixed(2)} x ${HW.toFixed(2)} m`, () => [-HL / 2, -HW / 2 - 0.25, G.rim]);
+  label(() => `Channel ${L.toFixed(1)} m x ${Math.round(G.channel_width * 1000)} mm`, () => [L * 0.45, 0, G.rim + 0.25]);
+  label(() => `Reservoir ${G.reservoir_height.toFixed(1)} m tall (gate shut)`, () => [L + G.reservoir_length / 2, 0, G.reservoir_height + 0.2]);
+  label(() => "Row 1", () => [DATA.pistons.find(p => p.row === 1).x[state.end], 0, G.pipe_top + 0.55]);
+  label(() => "Row 10", () => [DATA.pistons.find(p => p.row === 10).x[state.end], 0, G.pipe_top + 0.55]);
+  label(() => `Still water ${Math.round(state.depth * 1000)} mm`, () => [L * 0.2, G.channel_width / 2 + 0.1, state.depth]);
+  label(() => `Pipe tops ${Math.round(G.pipe_top * 1000)} mm`, () => [G.bank_x0 - 0.2, G.bank_width / 2 + 0.2, G.pipe_top]);
+  label(() => "Channel mouth x = 0", () => [0, -G.channel_width / 2 - 0.2, 0.05]);
+
+  const v = new THREE.Vector3();
+  function placeLabels() {
+    const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+    labels.forEach(l => {
+      if (!state.labels) { l.el.style.display = "none"; return; }
+      const [x, y, z] = l.fn();
+      v.set(x, y, z).project(camera);
+      if (v.z > 1) { l.el.style.display = "none"; return; }
+      l.el.style.display = "block";
+      l.el.textContent = l.text();
+      l.el.style.left = ((v.x + 1) / 2 * w) + "px";
+      l.el.style.top = ((1 - v.y) / 2 * h) + "px";
+    });
+  }
+
+  const VIEWS = {
+    all: { pos: [-HL - 5, -HW * 1.6, 7.5], at: [L * 0.35, 0, 0] },
+    bank: { pos: [1.2, -3.4, 1.7], at: [-1.1, 0, 0.55] },
+    side: { pos: [-1.1, -2.55, 0.75], at: [-1.1, 0, 0.72] },
+    channel: { pos: [-HL - 0.6, 0, 2.2], at: [L * 0.6, 0, 0.2] },
+  };
+  function go(name) {
+    const vw = VIEWS[name];
+    camera.position.set(...vw.pos);
+    controls.target.set(...vw.at);
+    controls.update();
+  }
+
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+
+  const depthIn = document.getElementById("depth"), discIn = document.getElementById("disc");
+  depthIn.value = state.depth;
+  discIn.value = state.disc;
+  depthIn.addEventListener("input", () => { state.depth = +depthIn.value; buildBank(); buildWater(); table(); });
+  discIn.addEventListener("input", () => { state.disc = +discIn.value; buildBank(); table(); });
+  const segBtns = document.querySelectorAll("#endSeg button");
+  function markEnd() { segBtns.forEach(b => b.classList.toggle("on", b.dataset.end === state.end)); }
+  segBtns.forEach(b => b.addEventListener("click", () => { state.end = b.dataset.end; markEnd(); buildBank(); }));
+  document.getElementById("showWater").addEventListener("change", e => { state.water = e.target.checked; water.visible = state.water; });
+  document.getElementById("xray").addEventListener("change", e => { state.xray = e.target.checked; buildBank(); });
+  document.getElementById("showLabels").addEventListener("change", e => { state.labels = e.target.checked; });
+  document.querySelectorAll(".views button").forEach(b => b.addEventListener("click", () => go(b.dataset.view)));
+
+  markEnd();
+  buildBank();
+  buildWater();
+  table();
+  resize();
+  go("bank");
+  (function loop() {
+    controls.update();
+    renderer.render(scene, camera);
+    placeLabels();
+    requestAnimationFrame(loop);
+  })();
+})();
+</script>
+</body>
+</html>
