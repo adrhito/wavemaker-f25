@@ -29,11 +29,12 @@ The tank is a T, with no turns:
   It is 1.08 m deep: the 42.5 in window height, taken as floor to rim. The
   backward wave from the pistons spreads out there.
 * **Piston bank**: 30 pipes of 8 in Sch 10S stainless (bore 211.6 mm), 3 across
-  the 673 mm channel width by 10 along it, standing in the head right at the
+  the 29.25 in (743 mm) channel width at a 9.75 in pitch and 10 along it (2.48 m),
+  standing in the head right at the
   channel mouth. Tops are level at 1422 mm (56 in) above the floor. Bottoms
   step down 3 in per row, from row 1 at 813 mm to row 10 at 127 mm. William's
   row n is display pistons 3n-2, 3n-1 and 3n.
-* **Channel**: 673 mm wide (taped) and 17.8 m long: 16 windows a side with beams
+* **Channel**: 29.25 in (743 mm) wide inside (taped) and 17.8 m long: 16 windows a side with beams
   alternating 4 and 5 in (William, 28 Oct), the window width assumed equal to the
   head's 39.25 in. It leaves from the middle of
   the head's channel-side wall.
@@ -157,15 +158,15 @@ channel end. Each cell is tight / leaky seal, in mm.
 
 | depth | pistons | 100 mm stroke | 200 mm | 350 mm |
 |---|---|---|---|---|
-| 0.30 m | all 30 (only rows 8-10 wet) | 36 / 29 | 74 / 46 | 119 / 45 |
-| 0.30 m | row 10 only | 15 / 15 | 31 / 29 | 49 / 29 |
-| 0.40 m | all 30 | 38 / 35 | 82 / 67 | 138 / 82 |
-| 0.50 m | all 30 | 41 / 40 | 93 / 83 | 161 / 120 |
-| 0.60 m | all 30 | 51 / 47 | 117 / 100 | 205 / 155 |
-| 0.70 m | all 30 | 50 / 48 | 114 / 105 | 201 / 170 |
+| 0.30 m | all 30 (only rows 8-10 wet) | 32 / 26 | 66 / 41 | 105 / 40 |
+| 0.30 m | row 10 only | 13 / 13 | 27 / 26 | 43 / 26 |
+| 0.40 m | all 30 | 33 / 31 | 71 / 59 | 119 / 72 |
+| 0.50 m | all 30 | 34 / 34 | 78 / 71 | 136 / 104 |
+| 0.60 m | all 30 | 43 / 40 | 101 / 87 | 181 / 138 |
+| 0.70 m | all 30 | 44 / 42 | 102 / 94 | 185 / 156 |
 
 If row 10 is at the head end instead, all 30 make a larger first wave in deeper water
-(+10% at 0.30 m up to +42% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
+(+19% at 0.30 m up to +43% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
 bottoms form a low roof there, which sends more of the flow back into the head.
 
 ## Files

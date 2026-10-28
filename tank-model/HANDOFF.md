@@ -72,6 +72,11 @@ are given the tank's blueprints, bring the model to the exact measurements:
   perspective fit. The 3D frame draws these beams. Capacity is 14,200 gal (1.05 of the
   published figure). The first wave moved +1-3%, and the gate's reflection now gets back
   to x = 5 m at 17.8 s instead of 15.0 s (0.30 m water).
+- **Channel width taped (28 Oct): 29.25 in inside**, not the 26.5 in in `app/solitons.py`. The
+  bank now fills it too: three pipes at a 9.75 in pitch (IMG_2459 shows about 26 mm between
+  pipes, which 9.75 in gives and 26.5 in / 3 would not), so the bank is 743 mm wide and 2.48 m
+  long. The first wave fell 8-16%: about 9% from spreading the same water over a wider
+  channel, and the rest from the longer bank. Capacity 14,500 gal (1.08 of the published).
 
 ## Still open (William)
 

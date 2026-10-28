@@ -59,9 +59,12 @@ taken to be display pistons 3n-2..3n, the application's column n. **Which end ro
 at is assumed**: the channel end, so the bottoms form a ramp falling toward the channel.
 It is a parameter until William confirms it.
 
-**Pitch: inferred.** Across the tank, 673/3 = 224.3 mm: the three pipes fill the
-channel width, and the square top plates in IMG_2459 tile the bank. Along the tank the
-pitch is assumed to be the same (square plates), which makes the bank 2.243 m long. Round
+**Pitch: inferred.** Across the tank, 29.25 in / 3 = 9.75 in (247.7 mm): the three pipes
+fill the channel width, and the square base plates in IMG_2459 tile the bank. The photo
+checks it: neighbouring pipes stand 1.08-1.12 diameters apart (237-245 mm), with about
+26 mm of daylight between them. The old 26.5 in channel width gave 224 mm, which would
+leave 5 mm. Along the tank the pitch is assumed to be the same (square plates), which
+makes the bank 2.48 m long. Tape one base plate to settle it. Round
 pipes on that square pitch leave 25% of the bank's footprint as gaps; the model treats
 the gaps as open water with a free surface.
 
@@ -99,7 +102,7 @@ discs parked:
 
 | dimension | value | range | how |
 |---|---|---|---|
-| channel width | 0.673 | 0.665-0.680 | **tape**: 26.5 in, measured by the operator (wavemaker-f25 `app/solitons.py`) |
+| channel width | 0.74295 | 0.740-0.746 | **tape**, William 28 Oct: 29.25 in inside, wall to wall where the water is. Replaces the 26.5 in in wavemaker-f25 `app/solitons.py` |
 | channel length | 17.774 | 16.94-18.01 | **count and beams from William (28 Oct), window width assumed.** Each side has 16 windows. The 15 beams between them alternate 4, 5, 4, ... 4 in (67 in), starting with 4 in at the head-end corner and ending at the corner with the reservoir. The window width is taken as the head's measured 39.25 in. The photos' post spacing (1.07 m, range 1.00-1.15) agrees with the 1.11 m that implies. Corners read like the head's: 16 x 39.25 + 67 + 2 x 2 3/8 = 699.75 in. Replaces the perspective fit of IMG_2468 (15.4 m), whose far end was always the least sure part |
 | channel rim (inside depth) | 1.0795 | 0.98-1.18 | assumed equal to the head's 42.5 in window height, since IMG_2460/2462 show one rim line round the tank. The photo estimate before 28 Oct was 1.00 m (IMG_2465/2464: the glass between the rails is 0.68 of the camera height) |
 | frame module (post spacing) | 1.07 | 1.00-1.15 | **photogrammetry**, IMG_2461/2465, from the posts' floor contact points. Superseded by the measured beams; kept as the check on the channel's assumed window width |
@@ -121,16 +124,18 @@ axis (William). The bank ends at the channel mouth (operator's description).
 UNC publishes 13,500 gal, 118-120 ft overall, and 70,000 lb. At the values above, filled
 to the brim, the model holds:
 
-* head + channel: 41.5 m³
+* head + channel: 42.8 m³
 * water inside the pipes: almost none (it is air)
 * reservoir: 12.2 m³
-* total: 53.7 m³ = 14,200 gal, or 1.05 of the published figure.
+* total: 55.0 m³ = 14,500 gal, or 1.08 of the published figure.
 
-Drawing every ranged dimension uniformly across its range gives 13,000-15,900 gal
-(5th to 95th percentile, median 14,400); 85% of draws reach 13,500. With the head
-measured (8.91 m by 3.04 m, 1.08 m deep) and the channel counted (16 windows, 17.8 m),
-the published 13,500 gal is matched to 5%, so it is most likely the tank filled to the
-brim, reservoir included. The photo-based
+Drawing every ranged dimension uniformly across its range gives 13,300-16,300 gal
+(5th to 95th percentile, median 14,800); 93% of draws reach 13,500. With the head
+measured (8.91 m by 3.04 m, 1.08 m deep) and the channel measured across (29.25 in)
+and counted along (16 windows, 17.8 m), the published 13,500 gal is matched to 8%, so
+it is most likely the tank filled to the brim, reservoir included. The reservoir
+(photo-only) and the channel's assumed window width are the likeliest to be a little
+large. The photo-based
 head (3.8 m by 5.2 m) and 1.00 m rim had given 11,000 gal. The reservoir is now the
 largest remaining uncertainty in the capacity (12,800-14,600 gal across its ranges). Before the trapped air and the stepped pipes were modelled, the pipes
 counted as full of water (265 gal) and the bank's whole footprint was dry above a

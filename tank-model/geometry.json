@@ -15,12 +15,12 @@
       "how": "William 28 Oct: 16 windows down each side, with beams between them alternating 4, 5, 4, ... 4 in from the head-end corner to the reservoir (15 beams, 67 in). The channel's window width is ASSUMED equal to the head's measured 39.25 in (the photos' post spacing, 1.07 m with range 1.00-1.15, agrees with the 1.11 m this implies); corners read like the head's. 16 x 39.25 + 67 + 2 x 2 3/8 = 699.75 in. Replaces the 15.4 m perspective fit of IMG_2468. Tape one channel window to settle it"
     },
     "width": {
-      "value": 0.673,
+      "value": 0.74295,
       "range": [
-        0.665,
-        0.68
+        0.73977,
+        0.74612
       ],
-      "how": "tape, 26.5 in, measured by the operator (wavemaker-f25 app/solitons.py TANK_WIDTH_MM)"
+      "how": "tape, William 28 Oct: the channel's inside width, wall to wall where the water is, 29.25 in. Replaces the 26.5 in in app/solitons.py TANK_WIDTH_MM"
     },
     "depth_to_rim": {
       "value": 1.0795,
@@ -160,16 +160,24 @@
     "how": "photogrammetry, IMG_2465, standing camera height 1.45 m assumed"
   },
   "piston_bank": {
-    "_note": "30 pipes, 3 across the axis by 10 along it, standing in the head at the channel mouth. The bank is exactly channel-wide (3 x 224 mm = 673 mm). William's 'row n' is one group of three along the tank; in the code that is column n (display pistons 3n-2, 3n-1, 3n).",
+    "_note": "30 pipes, 3 across the axis by 10 along it, standing in the head at the channel mouth. The bank is as wide as the channel (3 x 9.75 in = 29.25 in): its side plates line up with the channel walls. William's 'row n' is one group of three along the tank; in the code that is column n (display pistons 3n-2, 3n-1, 3n).",
     "rows_across": 3,
     "columns_along": 10,
     "pitch_across": {
-      "value": 0.2243,
-      "how": "channel width / 3; the square base plates tile the bank"
+      "value": 0.24765,
+      "range": [
+        0.237,
+        0.25
+      ],
+      "how": "channel width / 3 = 9.75 in: the square base plates tile the bank across the 29.25 in channel. IMG_2459 checks it: neighbouring pipes stand 1.08-1.12 diameters apart (237-245 mm) with about 26 mm between them; the old 26.5 in / 3 = 224 mm would leave 5 mm. Tape one base plate to confirm"
     },
     "pitch_along": {
-      "value": 0.2243,
-      "how": "assumed equal to pitch_across (square base plates, IMG_2459)"
+      "value": 0.24765,
+      "range": [
+        0.237,
+        0.25
+      ],
+      "how": "assumed equal to pitch_across (square base plates, IMG_2459, where the spacing along the front lane is 1.08-1.12 diameters)"
     },
     "near_end_x": {
       "value": 0.0,
