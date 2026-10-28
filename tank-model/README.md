@@ -33,7 +33,9 @@ The tank is a T, with no turns:
   channel mouth. Tops are level at 1422 mm (56 in) above the floor. Bottoms
   step down 3 in per row, from row 1 at 813 mm to row 10 at 127 mm. William's
   row n is display pistons 3n-2, 3n-1 and 3n.
-* **Channel**: 673 mm wide and about 15.4 m long, leaving from the middle of
+* **Channel**: 673 mm wide (taped) and 17.8 m long: 16 windows a side with beams
+  alternating 4 and 5 in (William, 28 Oct), the window width assumed equal to the
+  head's 39.25 in. It leaves from the middle of
   the head's channel-side wall.
 * **Reservoir**: the tall blue dam-break column behind a gate at the far end.
   For piston waves it is only a reflecting end wall.
@@ -155,15 +157,15 @@ channel end. Each cell is tight / leaky seal, in mm.
 
 | depth | pistons | 100 mm stroke | 200 mm | 350 mm |
 |---|---|---|---|---|
-| 0.30 m | all 30 (only rows 8-10 wet) | 36 / 29 | 73 / 46 | 117 / 45 |
-| 0.30 m | row 10 only | 15 / 15 | 31 / 29 | 48 / 29 |
-| 0.40 m | all 30 | 38 / 35 | 81 / 66 | 136 / 81 |
-| 0.50 m | all 30 | 40 / 39 | 90 / 81 | 157 / 118 |
-| 0.60 m | all 30 | 51 / 47 | 115 / 99 | 203 / 154 |
-| 0.70 m | all 30 | 49 / 48 | 113 / 104 | 199 / 168 |
+| 0.30 m | all 30 (only rows 8-10 wet) | 36 / 29 | 74 / 46 | 119 / 45 |
+| 0.30 m | row 10 only | 15 / 15 | 31 / 29 | 49 / 29 |
+| 0.40 m | all 30 | 38 / 35 | 82 / 67 | 138 / 82 |
+| 0.50 m | all 30 | 41 / 40 | 93 / 83 | 161 / 120 |
+| 0.60 m | all 30 | 51 / 47 | 117 / 100 | 205 / 155 |
+| 0.70 m | all 30 | 50 / 48 | 114 / 105 | 201 / 170 |
 
 If row 10 is at the head end instead, all 30 make a larger first wave in deeper water
-(+12% at 0.30 m up to +44% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
+(+10% at 0.30 m up to +42% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
 bottoms form a low roof there, which sends more of the flow back into the head.
 
 ## Files

@@ -75,14 +75,25 @@ def tank_parts(g: Geometry) -> List[Dict]:
                       0, g.head_depth))
         P.append(_box("channel %s wall (glass)" % nm, "glass", 0, L, min(s * b / 2, s * (b / 2 + t)),
                       max(s * b / 2, s * (b / 2 + t)), 0, rim))
-        # frame: top rail and posts every frame module (approximate)
+        # frame: top rail, and the beams William counted (28 Oct) between 16 windows of the assumed width,
+        # laid from the head-end corner; the corner beams are taken like the head's until measured
         yr = s * (b / 2 + t + 0.03)
         P.append(_box("channel %s top rail (frame, approx.)" % nm, "frame", 0, L, yr - 0.03, yr + 0.03, rim, rim + 0.08))
-        n = int(L // g.raw["channel"]["frame_module"]["value"]) + 1
-        for i in range(n + 1):
-            x = min(i * L / n, L - 0.04)
-            P.append(_box("channel %s post %d (frame, approx.)" % (nm, i), "frame", x, x + 0.06, yr - 0.03, yr + 0.03,
-                          lab, rim))
+        csw = g.raw["channel"].get("side_wall", {})
+        cwin = csw.get("window_width_in", 39.25) * 0.0254
+        cbeams = [w * 0.0254 for w in csw.get("beams_between_in", [])]
+        cinner = 2.375 * 0.0254
+        cface = 5.0 * 0.0254
+        spans = [("corner beam at the head", cinner - cface, cinner)]
+        x = cinner
+        for k in range(len(cbeams) + 1):
+            x += cwin
+            if k < len(cbeams):
+                spans.append(("beam %d (%.0f in)" % (k + 1, cbeams[k] / 0.0254), x, x + cbeams[k]))
+                x += cbeams[k]
+        spans.append(("corner beam at the reservoir", x, x + cface))
+        for nm2, xa, xb in spans:
+            P.append(_box("channel %s %s" % (nm, nm2), "frame", xa, xb, yr - 0.03, yr + 0.03, lab, rim))
     # the head's frame: steel beams on the back wall's measured bay (William, 28 Oct), the same bay down
     # the long sides (a photo count there). A beam straddles the glass; its outer flange and web sit
     # outside the water face.

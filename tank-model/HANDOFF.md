@@ -66,6 +66,12 @@ are given the tank's blueprints, bring the model to the exact measurements:
   42.5 in high, taken as a 1.08 m rim for the head and the channel. The 3D frame draws
   these beams. Capacity is now 13,700 gal against the published 13,500. The first wave
   moved about 1%; the later waves of a run moved -24% to +120%.
+- **Channel counted (28 Oct).** 16 windows a side, not 15. The beams between them alternate
+  4, 5, 4, ... 4 in from the head-end corner to the reservoir. The window width is assumed
+  equal to the head's 39.25 in, so the channel is 699.75 in (17.77 m), not the 15.4 m
+  perspective fit. The 3D frame draws these beams. Capacity is 14,200 gal (1.05 of the
+  published figure). The first wave moved +1-3%, and the gate's reflection now gets back
+  to x = 5 m at 17.8 s instead of 15.0 s (0.30 m water).
 
 ## Still open (William)
 
@@ -73,8 +79,9 @@ are given the tank's blueprints, bring the model to the exact measurements:
    Assumed: the channel end. It changes wave heights by 10-40%.
 2. Seal behaviour: bubbles from the pipe bottoms on every downstroke, or not. Up to
    2.6x at shallow depth.
-3. Tape: rim height (now inferred from the window height), channel length, the head's corner
-   beams, and the disc height at 0 mm (in order of how much each matters; see MEASUREMENTS.md).
+3. Tape: rim height (now inferred from the window height), one channel window's width (the
+   channel length rests on assuming it equals the head's 39.25 in), the corner beams, and the
+   disc height at 0 mm (in order of how much each matters; see MEASUREMENTS.md).
 4. The depths the lab actually runs, and the first measured wave heights, for
    `wm.py calibrate --compare`.
 

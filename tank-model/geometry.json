@@ -7,12 +7,12 @@
   },
   "channel": {
     "length": {
-      "value": 15.4,
+      "value": 17.7736,
       "range": [
-        14.8,
-        16.2
+        16.9418,
+        17.799
       ],
-      "how": "photogrammetry, IMG_2468: rim-width perspective fit (horizon row 498, 43 deg pitch) from the platform edge to the reservoir face; lid joints come out evenly spaced at 0.75 m, which checks the fit"
+      "how": "William 28 Oct: 16 windows down each side, with beams between them alternating 4, 5, 4, ... 4 in from the head-end corner to the reservoir (15 beams, 67 in). The channel's window width is ASSUMED equal to the head's measured 39.25 in (the photos' post spacing, 1.07 m with range 1.00-1.15, agrees with the 1.11 m this implies); corners read like the head's. 16 x 39.25 + 67 + 2 x 2 3/8 = 699.75 in. Replaces the 15.4 m perspective fit of IMG_2468. Tape one channel window to settle it"
     },
     "width": {
       "value": 0.673,
@@ -30,13 +30,37 @@
       ],
       "how": "assumed equal to the head's 42.5 in window height (one rim line round the tank in IMG_2460/2462). The photo estimate before 28 Oct was 1.00 m (IMG_2465/2464)"
     },
+    "side_wall": {
+      "windows": 16,
+      "window_width_in": 39.25,
+      "window_width_measured": false,
+      "beams_between_in": [
+        4,
+        5,
+        4,
+        5,
+        4,
+        5,
+        4,
+        5,
+        4,
+        5,
+        4,
+        5,
+        4,
+        5,
+        4
+      ],
+      "corners": "not measured yet: taken like the head's corner beams (2 3/8 in inner flange inside the water face)",
+      "how": "William 28 Oct: 16 windows, beams alternating 4 and 5 in starting with 4 in at the head-end corner, up to the corner where the channel meets the tall reservoir. Window width assumed from the head"
+    },
     "frame_module": {
       "value": 1.07,
       "range": [
         1.0,
         1.15
       ],
-      "how": "photogrammetry, IMG_2461/2465: post spacing from floor contact points"
+      "how": "photogrammetry, IMG_2461/2465: post spacing from floor contact points (superseded 28 Oct by side_wall: the measured beams with the assumed 39.25 in windows)"
     },
     "lid_panel": {
       "value": 0.753,
