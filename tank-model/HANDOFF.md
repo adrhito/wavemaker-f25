@@ -32,8 +32,8 @@ are given the tank's blueprints, bring the model to the exact measurements:
 ## Done
 
 - **Stepped pipes.** The single `outlet_height` and the duct under the bank are gone.
-  Each row of three has its own pipe bottom at 5 + 3(10 - n) in, with tops level at
-  1422 mm. The solver roofs the flow under each wet row at that row's bottom, and leaves
+  Each row of three has its own pipe bottom at 5 + 3(n - 1) in, with tops level at
+  1422 mm (row order corrected on 28 Oct, below). The solver roofs the flow under each wet row at that row's bottom, and leaves
   open water under dry rows. The source coupling uses the roof height where each
   piston's water leaves the bank toward the channel.
 - **Trapped air** (`wavemodel/air.py`). A row moves water only if its bottom is under
@@ -77,13 +77,21 @@ are given the tank's blueprints, bring the model to the exact measurements:
   pipes, which 9.75 in gives and 26.5 in / 3 would not), so the bank is 743 mm wide and 2.48 m
   long. The first wave fell 8-16%: about 9% from spreading the same water over a wider
   channel, and the rest from the longer bank. Capacity 14,500 gal (1.08 of the published).
+- **Row order corrected (28 Oct).** William: row 1 has the longest pipes and row 10 the
+  shortest, the reverse of the 26 Oct notes ("turn the thing 180°"). Row n's bottom is now
+  5 + 3(n - 1) in. Row 10 stays assumed at the channel end, so the long pipes moved from the
+  channel mouth to the far end of the bank, which is what the old "row 10 at the head end"
+  variant modelled. At 0.30 m rows 1-3 are the wet ones. All 30 with a 350 mm stroke now make
+  a 16-30% larger first wave at 5 m (125 mm at 0.30 m, 266 mm at 0.70 m, tight seal). The
+  sweep sets swap "row 10 only" for "row 1 only", and the end-effect chart compares rows 1-3.
 
 ## Still open (William)
 
-1. Which end row 10 (the longest pipes) is at, and whether pistons 28-30 are in it.
-   Assumed: the channel end. It changes wave heights by 10-40%.
+1. Which end the longest pipes (row 1) are at, and whether pistons 1-3 are in that row.
+   Assumed: the head end, with row 10 (the shortest) at the channel. It changes wave
+   heights by -21% to +49%.
 2. Seal behaviour: bubbles from the pipe bottoms on every downstroke, or not. Up to
-   2.6x at shallow depth.
+   3.6x at shallow depth.
 3. Tape: rim height (now inferred from the window height), one channel window's width (the
    channel length rests on assuming it equals the head's 39.25 in), the corner beams, and the
    disc height at 0 mm (in order of how much each matters; see MEASUREMENTS.md).

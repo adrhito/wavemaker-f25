@@ -3,8 +3,8 @@
 Everything is in metres (positions) and cubic metres (volumes). Piston
 numbering follows the wavemaker-f25 application: display pistons 1..30,
 three per column. Column n is William's "row n": the group of three whose
-pipe is 21 + 3n inches long, so row 1 has the shortest pipes and the highest
-bottoms, row 10 the longest and the lowest. Which end of the bank row 10 is
+pipe is 54 - 3n inches long, so row 1 has the longest pipes and the lowest
+bottoms, row 10 the shortest and the highest. Which end of the bank row 10 is
 at comes from geometry.json (piston_bank.row_10_end).
 """
 

@@ -32,8 +32,8 @@ The tank is a T, with no turns:
   the 29.25 in (743 mm) channel width at a 9.75 in pitch and 10 along it (2.48 m),
   standing in the head right at the
   channel mouth. Tops are level at 1422 mm (56 in) above the floor. Bottoms
-  step down 3 in per row, from row 1 at 813 mm to row 10 at 127 mm. William's
-  row n is display pistons 3n-2, 3n-1 and 3n.
+  step up 3 in per row, from row 1 (the longest pipes) at 127 mm to row 10 (the
+  shortest) at 813 mm. William's row n is display pistons 3n-2, 3n-1 and 3n.
 * **Channel**: 29.25 in (743 mm) wide inside (taped) and 17.8 m long: 16 windows a side with beams
   alternating 4 and 5 in (William, 28 Oct), the window width assumed equal to the
   head's 39.25 in. It leaves from the middle of
@@ -45,7 +45,7 @@ A disc with a rubber seal runs in the top of each pipe, with air trapped
 between the disc and the water (`wavemodel/air.py`). So:
 
 * **A row moves water only if its pipe bottom is under the still water.** At
-  0.30 m that is rows 8-10; at 0.40 m rows 7-10; at 0.60 m rows 4-10. The other
+  0.30 m that is rows 1-3; at 0.40 m rows 1-4; at 0.60 m rows 1-7. The other
   rows move only air. **Depth is an input to every command; it is never a
   constant.**
 * In a wet row the trapped air is a stiff spring: the water inside follows the
@@ -60,10 +60,10 @@ between the disc and the water (`wavemodel/air.py`). So:
     moves its full volume.
   * `leaky`: air leaks in past the seal on the upstroke. The water inside can
     then never rise above the outside level, so **each downstroke moves at most
-    the pipe bottom's submergence** before it vents. At 0.30 m that caps row 10
-    at 173 mm, row 9 at 97 mm and row 8 at 21 mm, whatever the stroke.
+    the pipe bottom's submergence** before it vents. At 0.30 m that caps row 1
+    at 173 mm, row 2 at 97 mm and row 3 at 21 mm, whatever the stroke.
 
-  To tell them apart: watch the row-10 pipe bottoms during a 300 mm stroke at
+  To tell them apart: watch the row-1 pipe bottoms during a 300 mm stroke at
   0.30 m. Bubbles on every downstroke mean `leaky`. A single measured wave
   height also settles it; see Calibration below.
 
@@ -87,7 +87,7 @@ table for that depth: wet or dry, submergence, trapped air, water inside each pi
 Predicted waves at stations along the channel (default 1, 3, 5, 8, 11 and 14 m from the
 mouth), with a per-row table of how much water each row really moves. Options:
 
-* `--pistons`: `all`, display numbers `1-30` or `1,4,7`, William's rows `row8-10`, or lanes
+* `--pistons`: `all`, display numbers `1-30` or `1,4,7`, William's rows `row1-3`, or lanes
   across the tank `lane2`. The older `c8-10` / `r2` forms still work.
 * `--seal tight|leaky`, `--row10-end channel|head`, and `--disc-zero` (disc height at
   0 mm) override what geometry.json says.
@@ -103,7 +103,7 @@ cnoidal waves (Ursell number > 26), where linear theory underpredicts the crests
 ```bash
 .venv/bin/python wm.py sweep                 # 0.30, 0.40, 0.50, 0.60 m; both seals; lab fast settings
 .venv/bin/python wm.py sweep --depth 0.30,0.40,0.50,0.60,0.70
-.venv/bin/python wm.py sweep --row10-end head --sets "all;row8-10" --speeds 300,900
+.venv/bin/python wm.py sweep --row10-end head --sets "all;row1-3" --speeds 300,900
 .venv/bin/python wm.py chart                 # wave height against stroke, from the sweep tables
 .venv/bin/python wm.py chart --speed 300
 ```
@@ -153,21 +153,23 @@ tight/channel 0.216 (rms log error).
 ## Results at a glance
 
 First wave, crest to trough, at 5 m. Lab fast settings, 900 mm/s commanded (the jerk
-limit holds the real peak speed to 155-567 mm/s for 50-350 mm strokes). Row 10 at the
-channel end. Each cell is tight / leaky seal, in mm.
+limit holds the real peak speed to 155-567 mm/s for 50-350 mm strokes). Row 10 (the
+shortest pipes) at the channel end, so the longest pipes (row 1) are at the head end.
+Each cell is tight / leaky seal, in mm.
 
 | depth | pistons | 100 mm stroke | 200 mm | 350 mm |
 |---|---|---|---|---|
-| 0.30 m | all 30 (only rows 8-10 wet) | 32 / 26 | 66 / 41 | 105 / 40 |
-| 0.30 m | row 10 only | 13 / 13 | 27 / 26 | 43 / 26 |
-| 0.40 m | all 30 | 33 / 31 | 71 / 59 | 119 / 72 |
-| 0.50 m | all 30 | 34 / 34 | 78 / 71 | 136 / 104 |
-| 0.60 m | all 30 | 43 / 40 | 101 / 87 | 181 / 138 |
-| 0.70 m | all 30 | 44 / 42 | 102 / 94 | 185 / 156 |
+| 0.30 m | all 30 (only rows 1-3 wet) | 35 / 23 | 75 / 33 | 125 / 35 |
+| 0.30 m | row 1 only | 8 / 8 | 18 / 17 | 29 / 18 |
+| 0.40 m | all 30 | 41 / 34 | 89 / 58 | 152 / 67 |
+| 0.50 m | all 30 | 45 / 42 | 102 / 79 | 176 / 103 |
+| 0.60 m | all 30 | 62 / 53 | 140 / 104 | 247 / 146 |
+| 0.70 m | all 30 | 64 / 59 | 149 / 123 | 266 / 182 |
 
-If row 10 is at the head end instead, all 30 make a larger first wave in deeper water
-(+19% at 0.30 m up to +43% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
-bottoms form a low roof there, which sends more of the flow back into the head.
+If the longest pipes are at the channel end instead (`--row10-end head`), all 30 make a
+smaller first wave in deeper water (-16% at 0.30 m down to -30% at 0.70 m for 350 mm).
+Their 127 mm bottoms then form a low roof at the mouth, which sends more of the flow
+back into the head. Before the row order was corrected on 28 Oct, that was the default.
 
 ## Files
 

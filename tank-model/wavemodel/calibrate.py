@@ -161,15 +161,15 @@ def compare(path, fit_params=("gain",)):
 def write_template(path):
     fast = [20000, 7500, 1]
     rows = [
-        ["shallow-150", "row8-10", 220, 370, 900] + fast + [3, 0, 0.30, 1.5, "", "", "",
-         "one row per run per station; rows 8-10 are the ones in the water at 0.30 m"],
-        ["shallow-150", "row8-10", 220, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "", ""],
-        ["shallow-300", "row8-10", 70, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "",
-         "stroke longer than the 173 mm row-10 submergence: tells the two seal behaviours apart"],
-        ["row10-300", "row10", 70, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "",
+        ["shallow-150", "row1-3", 220, 370, 900] + fast + [3, 0, 0.30, 1.5, "", "", "",
+         "one row per run per station; rows 1-3 are the ones in the water at 0.30 m"],
+        ["shallow-150", "row1-3", 220, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "", ""],
+        ["shallow-300", "row1-3", 70, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "",
+         "stroke longer than the 173 mm row-1 submergence: tells the two seal behaviours apart"],
+        ["row1-300", "row1", 70, 370, 900] + fast + [3, 0, 0.30, 5.0, "", "", "",
          "one row alone"],
         ["all-200", "all", 170, 370, 900] + fast + [3, 0, 0.40, 5.0, "", "", "",
-         "at 0.40 m rows 7-10 are wet"],
+         "at 0.40 m rows 1-4 are wet"],
     ]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)

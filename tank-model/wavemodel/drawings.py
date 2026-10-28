@@ -128,7 +128,7 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
             "Pipes: 8 in NPS Sch 10S, OD %s mm, bore %s mm (%.1f cm2 disc face).\n"
             "Blue: bottom under the %.2f m still water, the row moves water.\n"
             "Orange: bottom above it, the row moves only air.\n"
-            "Row 10 (longest pipes) drawn at the %s end - ASSUMED, ask William.\n"
+            "Row 10 (shortest pipes) drawn at the %s end - ASSUMED, ask William.\n"
             "Row n = display pistons 3n-2..3n."
             % (_mm(g.cylinder_od), "%.1f" % (1000 * g.cylinder_bore), g.bore_area * 1e4, depth, g.row_10_end),
             va="top", fontsize=7.5, color=INK)
@@ -223,11 +223,11 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
                     fontsize=6.3, color=INK_2)
     xl = min(g.column_x(1), g.column_x(g.columns)) - g.pitch_along / 2
     _dim(ax, (xa + 0.1, 0), (xa + 0.1, g.pipe_top), "pipe tops %s mm (56 in)" % _mm(g.pipe_top), off=(0, 0), ext=False)
-    c_lo = g.columns
+    c_lo = min(range(1, g.columns + 1), key=g.row_bottom)
     _dim(ax, (g.column_x(c_lo) + 0.13, 0), (g.column_x(c_lo) + 0.13, g.row_bottom(c_lo)), "5 in", off=(0, 0),
          ext=False, rot=0, fs=6.5)
     ax.text(xl, -0.13,
-            "Pipe bottoms (mm above the floor) step 3 in per row: 5 + 3(10 - n) in; pipe length 21 + 3n in.\n"
+            "Pipe bottoms (mm above the floor) step 3 in per row: 5 + 3(n - 1) in; pipe length 54 - 3n in.\n"
             "Dark bar: disc parked at %.0f mm; dotted: its travel up to 0 mm (top tick). "
             "Disc height at 0 mm = %s mm, ASSUMED: measure it.\n"
             "Blue inside a pipe: water under the trapped air with the disc parked; 'air' = air column length, mm.\n"

@@ -189,23 +189,23 @@
         1.4,
         1.45
       ],
-      "how": "William, 26 Oct: the tops are level, 56 in above the tank floor (row 10's 51 in pipe on its 5 in bottom). IMG_2459 agrees: about 0.42 m of pipe stands above the deck at rim height"
+      "how": "William, 26 Oct: the tops are level, 56 in above the tank floor (row 1's 51 in pipe on its 5 in bottom). IMG_2459 agrees: about 0.42 m of pipe stands above the deck at rim height"
     },
     "row_bottoms": {
       "value": [
-        0.8128,
-        0.7366,
-        0.6604,
-        0.5842,
-        0.508,
-        0.4318,
-        0.3556,
-        0.2794,
+        0.127,
         0.2032,
-        0.127
+        0.2794,
+        0.3556,
+        0.4318,
+        0.508,
+        0.5842,
+        0.6604,
+        0.7366,
+        0.8128
       ],
-      "formula": "row n bottom = 5 + 3 (10 - n) in above the tank floor; pipe length 21 + 3n in",
-      "how": "William, 26 Oct ('roughly'): row 1 is a 24 in pipe with its bottom 32 in (813 mm) up, row 10 a 51 in pipe with its bottom 5 in (127 mm) up"
+      "formula": "row n bottom = 5 + 3 (n - 1) in above the tank floor; pipe length 54 - 3n in",
+      "how": "William, 26 Oct ('roughly'), order corrected 28 Oct: row 1 is the longest, a 51 in pipe with its bottom 5 in (127 mm) up, and row 10 the shortest, a 24 in pipe with its bottom 32 in (813 mm) up. Until 28 Oct the model had them the other way round"
     },
     "bottom_offset": {
       "value": 0.0,
@@ -217,7 +217,7 @@
     },
     "row_10_end": {
       "value": "channel",
-      "how": "ASSUMED, ask William: which end of the bank the longest pipes (row 10, lowest bottoms) stand at, 'channel' or 'head'. Row n is taken to hold display pistons 3n-2..3n. The pipe bottoms then form a ramp falling toward the channel, which would steer the pushed water into it"
+      "how": "ASSUMED, ask William: which end of the bank row 10 (the shortest pipes, highest bottoms) stands at, 'channel' or 'head'; row 1, the longest, is at the other end. Row n is taken to hold display pistons 3n-2..3n. When William corrected the row order on 28 Oct ('turn it 180 degrees'), row 10 stayed at the channel end, so the longest pipes now stand at the head end and the pipe bottoms form a ramp rising toward the channel"
     },
     "duct_side_walls": {
       "value": true,
@@ -243,7 +243,7 @@
       "how": "OD - 2 x wall = 8.329 in"
     },
     "length": {
-      "note": "per row: pipe_top_height - row bottom, 24 in (row 1) to 51 in (row 10)"
+      "note": "per row: pipe_top_height - row bottom, 51 in (row 1) to 24 in (row 10)"
     }
   },
   "pistons": {
@@ -276,7 +276,7 @@
         1.25,
         1.36
       ],
-      "how": "ASSUMED, measure it: height of the disc face above the tank floor with the piston at 0 mm. Bounds: at the drive's -57 mm limit the disc must still be below the 1.422 m pipe top; at its 453 mm limit it must still be inside row 1's pipe (bottom 0.813 m). Only the length of trapped air depends on it"
+      "how": "ASSUMED, measure it: height of the disc face above the tank floor with the piston at 0 mm. Bounds: at the drive's -57 mm limit the disc must still be below the 1.422 m pipe top; at its 453 mm limit it must still be inside row 10's pipe (bottom 0.813 m). Only the length of trapped air depends on it"
     },
     "park_mm": {
       "value": 370,

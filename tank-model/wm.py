@@ -65,7 +65,7 @@ def cmd_volumes(a):
         wet = g.wet_columns(d)
         print("  %.2f m  %5.2f m3 %6.0f gal   %4.0f L  %3.0f gal   %s"
               % (d, v, v * GALLONS_PER_M3, dv * 1000, dv * GALLONS_PER_M3,
-                 ("rows %d-10" % wet[0] if wet[0] < 10 else "row 10") if wet else "none"))
+                 ("rows %d-%d" % (wet[0], wet[-1]) if len(wet) > 1 else "row %d" % wet[0]) if wet else "none"))
     print()
     print("The bank at %.3f m still water, discs parked at %.0f mm (row 10 at the %s end):" % (a.depth, g.park_mm, g.row_10_end))
     print("  row  pistons  pipe   bottom  under water   air below disc   water in pipe   air gauge   water follows disc")
@@ -172,10 +172,10 @@ def _plot(res, run, a):
 # William's rows (groups of three along the tank). Order sets each one's colour in the chart.
 SETS = {
     "all 30": "all",
-    "rows 8-10 (pistons 22-30)": "row8-10",
-    "rows 4-7 (pistons 10-21)": "row4-7",
     "rows 1-3 (pistons 1-9)": "row1-3",
-    "row 10 only (pistons 28-30)": "row10",
+    "rows 4-7 (pistons 10-21)": "row4-7",
+    "rows 8-10 (pistons 22-30)": "row8-10",
+    "row 1 only (pistons 1-3)": "row1",
     "middle lane (2, 5 ... 29)": "lane2",
 }
 
@@ -282,7 +282,7 @@ def main():
     def geom_args(p, depth_default=0.30):
         p.add_argument("--depth", default=depth_default, type=float, help="still-water depth, m")
         p.add_argument("--row10-end", choices=["channel", "head"],
-                       help="which end of the bank row 10 (longest pipes) is at; default from geometry.json")
+                       help="which end of the bank row 10 (shortest pipes) is at; default from geometry.json")
         p.add_argument("--disc-zero", type=float, help="disc face height above the floor at 0 mm, m")
 
     p = sub.add_parser("volumes")
@@ -303,7 +303,7 @@ def main():
         p.add_argument("--head-absorption", type=float, default=0.01)
         p.add_argument("--channel-damping", type=float, default=1.0)
         p.add_argument("--row10-end", choices=["channel", "head"],
-                       help="which end of the bank row 10 (longest pipes) is at; default from geometry.json")
+                       help="which end of the bank row 10 (shortest pipes) is at; default from geometry.json")
         p.add_argument("--disc-zero", type=float, help="disc face height above the floor at 0 mm, m")
 
     p = sub.add_parser("predict")

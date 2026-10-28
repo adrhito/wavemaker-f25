@@ -1,7 +1,7 @@
 """The air trapped between each piston's sealed disc and the water in its pipe.
 
-The pipes stand in the head with open bottoms, stepped from row 1 (highest)
-to row 10 (lowest), tops level. A disc with a rubber seal runs in the top of
+The pipes stand in the head with open bottoms, stepped from row 1 (lowest)
+to row 10 (highest), tops level. A disc with a rubber seal runs in the top of
 each pipe, and between the disc and the water there is air. So:
 
 * A row whose pipe bottom is above the still water moves only air.
