@@ -150,12 +150,12 @@ def wave_height_charts(results: Path, station: float = 5.0, speed: int = 900) ->
         axes[0].set_ylim(0, ymax * 1.1)
         h1 = [Line2D([], [], color=SERIES[i], lw=2, marker=MARKERS[i], ms=5, markeredgecolor=SURFACE,
                      label=labels[s]) for i, s in enumerate(("all", "row1-3"))]
-        h2 = [Line2D([], [], color=INK_2, lw=2, label="row 10 at the channel end, row 1 (longest) at the head end"),
-              Line2D([], [], color=INK_2, lw=2, ls=(0, (4, 2.5)), label="row 1 (longest) at the channel end")]
+        h2 = [Line2D([], [], color=INK_2, lw=2, label="row 1 (longest) at the head end, as built"),
+              Line2D([], [], color=INK_2, lw=2, ls=(0, (4, 2.5)), label="row 1 at the channel end, for comparison")]
         fig.legend(handles=h1 + h2, loc="upper left", ncol=4, bbox_to_anchor=(0.01, 0.995), fontsize=8.5,
                    handlelength=2.6)
-        fig.text(0.01, 0.005, "Tight seal, commanded %d mm/s, same settings as the main chart. Which end the "
-                 "longest pipes are at is not known yet; this is how much it matters." % speed, fontsize=7.5, color=INK_2)
+        fig.text(0.01, 0.005, "Tight seal, commanded %d mm/s, same settings as the main chart. William confirmed (28 Oct) "
+                 "that the longest pipes are at the head end; the dashed lines are the other way round." % speed, fontsize=7.5, color=INK_2)
         fig.tight_layout(rect=(0, 0.03, 1, 0.9))
         p = results / ("row10_end_effect_%dmms.png" % speed)
         fig.savefig(p, dpi=150)

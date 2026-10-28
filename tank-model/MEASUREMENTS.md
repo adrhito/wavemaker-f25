@@ -11,12 +11,11 @@ In order of how much each would tighten the model:
 
 | # | What | How | What it changes |
 |---|---|---|---|
-| 1 | **Which end the longest pipes are at** (row 1, lowest bottoms; row 10, the shortest, is at the other end). Are pistons 1-3 in row 1? | Look at the pipe bottoms through the glass, or ask whoever built it | Wave heights by -21% to +49%. The same stroke gives a 266 mm first wave at 5 m with the longest pipes at the head end (the model's assumption) and 185 mm with them at the channel end (all 30, 350 mm, 0.70 m). `results/row10_end_effect_900mms.png` |
-| 2 | **Does air vent on every stroke?** (not a tape measurement, but the biggest unknown) | 0.30 m of water, rows 1-3, 300 mm stroke: watch the row-1 pipe bottoms. Bubbles on every downstroke mean the seal lets air in (`--seal leaky`). None after the first stroke means `tight` | Up to 3.6x. All 30 at 0.30 m with a 350 mm stroke: 125 mm first wave at 5 m (tight) against 35 mm (leaky) |
-| 3 | **Rim height**: inside floor to the top of the glass, in the head and in the channel | Tape. Now taken from the head's 42.5 in window height, and the channel assumed the same | Capacity 12,800-14,000 gal across its range. Also checks that the pipe tops (1422 mm) stand about 0.42 m above the rim, as IMG_2459 suggests |
-| 4 | **Channel window width** (one window, end to end, as for the head's 39.25 in) | Tape | The channel length. It is now 16 windows and the measured 4/5 in beams, with the window width assumed equal to the head's. When the gate's reflection gets back to each station (17.8 s at 5 m in 0.30 m water; 16.9-18.0 m across the range): the window for measuring clean incident waves. Capacity ±300 gal |
-| 5 | **Head corners**: the four corner beams of the head (face width, and how much of each sits inside the water face) | Tape, as for the back wall | The head's inside length (8.79-8.93 m between the two ways of reading the corners). Small: under 1% on capacity, nothing on the first wave |
-| 6 | **Disc height at 0 mm** above the tank floor | Tank drained, piston at 0 mm: tape up the inside of a pipe from its open bottom to the disc face, then add that pipe's bottom height | Less than 1% on wave height (it only sets the length of trapped air); low priority. It also shows whether the disc can ever sit below the water |
+| 1 | **Does air vent on every stroke?** (not a tape measurement, but the biggest unknown) | 0.30 m of water, rows 1-3, 300 mm stroke: watch the row-1 pipe bottoms. Bubbles on every downstroke mean the seal lets air in (`--seal leaky`). None after the first stroke means `tight` | Up to 3.6x. All 30 at 0.30 m with a 350 mm stroke: 125 mm first wave at 5 m (tight) against 35 mm (leaky) |
+| 2 | **Rim height**: inside floor to the top of the glass, in the head and in the channel | Tape. Now taken from the head's 42.5 in window height, and the channel assumed the same | Capacity 12,800-14,000 gal across its range. Also checks that the pipe tops (1422 mm) stand about 0.42 m above the rim, as IMG_2459 suggests |
+| 3 | **Channel window width** (one window, end to end, as for the head's 39.25 in) | Tape | The channel length. It is now 16 windows and the measured 4/5 in beams, with the window width assumed equal to the head's. When the gate's reflection gets back to each station (17.8 s at 5 m in 0.30 m water; 16.9-18.0 m across the range): the window for measuring clean incident waves. Capacity ±300 gal |
+| 4 | **Head corners**: the four corner beams of the head (face width, and how much of each sits inside the water face) | Tape, as for the back wall | The head's inside length (8.79-8.93 m between the two ways of reading the corners). Small: under 1% on capacity, nothing on the first wave |
+| 5 | **Disc height at 0 mm** above the tank floor | Tank drained, piston at 0 mm: tape up the inside of a pipe from its open bottom to the disc face, then add that pipe's bottom height | Less than 1% on wave height (it only sets the length of trapped air); low priority. It also shows whether the disc can ever sit below the water |
 
 Also record the still-water depth of every run. It decides which rows reach the water,
 and the model takes it as an input; it is never a constant.
@@ -56,10 +55,12 @@ round the outside reading about 688 mm would confirm it.
 IMG_2459 agrees with the level tops: about two pipe diameters (0.42 m) of pipe stand
 above the deck plates at the rim. "Roughly" is carried as `bottom_offset`, ±40 mm on
 every bottom; calibration can fit it once there are runs at several depths. Row n is
-taken to be display pistons 3n-2..3n, the application's column n. **Which end row 10 is
-at is assumed**: the channel end. When the order was corrected, row 10 stayed there, so
-the longest pipes (row 1) now stand at the head end and the bottoms form a ramp rising
-toward the channel. It is a parameter (`row_10_end`) until William confirms it.
+taken to be display pistons 3n-2..3n, the application's column n (not confirmed).
+**Which end is which: William, 28 Oct.** The longest pipes (row 1) stand at the head
+end, away from the channel, and the shortest (row 10) at the channel mouth, so the
+bottoms form a ramp rising toward the channel. The other way round would change wave
+heights by -21% to +49% (`results/row10_end_effect_900mms.png`); `row_10_end` keeps it
+as a switch only for that comparison.
 
 **Pitch: inferred.** Across the tank, 29.25 in / 3 = 9.75 in (247.7 mm): the three pipes
 fill the channel width, and the square base plates in IMG_2459 tile the bank. The photo

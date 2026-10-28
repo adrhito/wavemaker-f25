@@ -128,7 +128,7 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
             "Pipes: 8 in NPS Sch 10S, OD %s mm, bore %s mm (%.1f cm2 disc face).\n"
             "Blue: bottom under the %.2f m still water, the row moves water.\n"
             "Orange: bottom above it, the row moves only air.\n"
-            "Row 10 (shortest pipes) drawn at the %s end - ASSUMED, ask William.\n"
+            "Row 10 (shortest pipes) drawn at the %s end.\n"
             "Row n = display pistons 3n-2..3n."
             % (_mm(g.cylinder_od), "%.1f" % (1000 * g.cylinder_bore), g.bore_area * 1e4, depth, g.row_10_end),
             va="top", fontsize=7.5, color=INK)
@@ -231,7 +231,7 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
             "Dark bar: disc parked at %.0f mm; dotted: its travel up to 0 mm (top tick). "
             "Disc height at 0 mm = %s mm, ASSUMED: measure it.\n"
             "Blue inside a pipe: water under the trapped air with the disc parked; 'air' = air column length, mm.\n"
-            "Row 10 drawn at the %s end (ASSUMED)."
+            "Row 10 drawn at the %s end."
             % (g.park_mm, _mm(g.disc_zero), g.row_10_end), fontsize=7, color=INK_2, va="top")
     ax.set_aspect("equal")
     ax.set_xlim(xa - 0.25, xb + 0.05)

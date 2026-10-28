@@ -217,7 +217,7 @@
     },
     "row_10_end": {
       "value": "channel",
-      "how": "ASSUMED, ask William: which end of the bank row 10 (the shortest pipes, highest bottoms) stands at, 'channel' or 'head'; row 1, the longest, is at the other end. Row n is taken to hold display pistons 3n-2..3n. When William corrected the row order on 28 Oct ('turn it 180 degrees'), row 10 stayed at the channel end, so the longest pipes now stand at the head end and the pipe bottoms form a ramp rising toward the channel"
+      "how": "William, 28 Oct: row 10 (the shortest pipes, highest bottoms) stands at the channel end and row 1 (the longest) at the head end, away from the channel, so the pipe bottoms form a ramp rising toward the channel. 'head' is kept only as a switch, to show what the other way round would give. Row n is taken to hold display pistons 3n-2..3n (not confirmed)"
     },
     "duct_side_walls": {
       "value": true,

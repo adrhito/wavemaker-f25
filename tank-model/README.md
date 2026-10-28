@@ -33,7 +33,8 @@ The tank is a T, with no turns:
   standing in the head right at the
   channel mouth. Tops are level at 1422 mm (56 in) above the floor. Bottoms
   step up 3 in per row, from row 1 (the longest pipes) at 127 mm to row 10 (the
-  shortest) at 813 mm. William's row n is display pistons 3n-2, 3n-1 and 3n.
+  shortest) at 813 mm. Row 1 is at the head end of the bank, row 10 at the channel
+  mouth (William, 28 Oct). William's row n is display pistons 3n-2, 3n-1 and 3n.
 * **Channel**: 29.25 in (743 mm) wide inside (taped) and 17.8 m long: 16 windows a side with beams
   alternating 4 and 5 in (William, 28 Oct), the window width assumed equal to the
   head's 39.25 in. It leaves from the middle of
@@ -130,24 +131,22 @@ metres, Y up, one named object per part. Motors, frame and stand are approximate
 ## Calibration loop
 
 1. `.venv/bin/python wm.py template` writes `observations_template.csv`. Its five
-   example runs were chosen to tell the seal behaviours and the row-10 end apart at
-   0.30 m and 0.40 m.
+   example runs were chosen to tell the seal behaviours apart at 0.30 m and 0.40 m.
 2. Do the runs. For each run and each station, fill in `observed_height_mm`: the
    first wave's crest-to-trough height at `station_x_m`, measured along the channel
    from its mouth. Enter the run's still-water depth `depth_m` every time. Leave a
    cell blank if you did not measure it.
 3. `.venv/bin/python wm.py calibrate observations.csv --compare` fits the overall
-   `gain` for every combination of seal (`tight` / `leaky`) and row-10 end
-   (`channel` / `head`). It ranks the four by how well they explain the runs and
-   prints observed against predicted for the best one. The result goes to
+   `gain` for both disc seals (`tight` / `leaky`). It ranks them by how well they
+   explain the runs and prints observed against predicted for the better one. The
+   bank's layout is not fitted: which end the longest pipes are at is confirmed. The result goes to
    `results/calibration.json`.
-4. Put what won into the model: `row_10_end` in geometry.json, and `--seal` / `--gain`
-   on later predictions. Fit more parameters once there are more runs:
+4. Put what won into the model: `--seal` / `--gain` on later predictions. Fit more parameters once there are more runs:
    `--fit gain,channel_damping` needs the same run seen at two stations;
    `--fit gain,bottom_offset` needs runs at several depths.
 
-A synthetic check of this loop recovered a planted gain of 0.8 exactly and picked out
-the planted seal and row-10 end. Scores: leaky/channel 0.001, leaky/head 0.136,
+A synthetic check of this loop, made when it still compared the two bank ends, recovered
+a planted gain of 0.8 exactly and picked out the planted seal and end. Scores: leaky/channel 0.001, leaky/head 0.136,
 tight/channel 0.216 (rms log error).
 
 ## Results at a glance
@@ -166,10 +165,10 @@ Each cell is tight / leaky seal, in mm.
 | 0.60 m | all 30 | 62 / 53 | 140 / 104 | 247 / 146 |
 | 0.70 m | all 30 | 64 / 59 | 149 / 123 | 266 / 182 |
 
-If the longest pipes are at the channel end instead (`--row10-end head`), all 30 make a
-smaller first wave in deeper water (-16% at 0.30 m down to -30% at 0.70 m for 350 mm).
-Their 127 mm bottoms then form a low roof at the mouth, which sends more of the flow
-back into the head. Before the row order was corrected on 28 Oct, that was the default.
+William confirmed on 28 Oct that the longest pipes are at the head end. Had they been at
+the channel end (`--row10-end head`, the model's layout before 28 Oct), all 30 would make
+a smaller first wave (-16% at 0.30 m down to -30% at 0.70 m for 350 mm): their 127 mm
+bottoms would form a low roof at the mouth, sending more of the flow back into the head.
 
 ## Files
 

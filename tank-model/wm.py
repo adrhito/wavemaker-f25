@@ -352,7 +352,7 @@ def main():
     p.add_argument("--seal", default="tight", choices=["tight", "leaky", "both"])
     p.add_argument("--row10-end", choices=["channel", "head"])
     p.add_argument("--compare", action="store_true",
-                   help="fit every seal x row-10-end combination and rank them by how well they explain the runs")
+                   help="fit both disc seals and rank them by how well they explain the runs")
     p.set_defaults(fn=cmd_calibrate)
     a = ap.parse_args()
     a.fn(a)

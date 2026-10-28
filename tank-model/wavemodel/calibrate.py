@@ -27,7 +27,8 @@ The fit adjusts, by least squares on log wave height, any of:
                    add later-wave data.
 and reports how well the model then explains each run, so systematic
 misfits (one depth, one piston set) stand out. `compare` repeats the fit for
-both disc seals and both ends of the bank for row 10, and ranks the four.
+both disc seals and ranks them. The bank's layout is not fitted: William
+confirmed which end the longest pipes are at (geometry.json).
 """
 
 from __future__ import annotations
@@ -144,12 +145,11 @@ def fit(path, fit_params=("gain",), seal: str = "tight", row_10_end: Optional[st
 
 
 def compare(path, fit_params=("gain",)):
-    """Fit all four seal x row-10-end combinations and rank them by rms error."""
+    """Fit both disc seals and rank them by rms error."""
     results = []
     for seal in ("tight", "leaky"):
-        for end in ("channel", "head"):
-            results.append(fit(path, fit_params, seal=seal, row_10_end=end))
-            print()
+        results.append(fit(path, fit_params, seal=seal))
+        print()
     results.sort(key=lambda r: r["rms_log"])
     print("ranked (best first):")
     for r in results:

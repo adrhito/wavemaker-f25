@@ -17,7 +17,7 @@ are given the tank's blueprints, bring the model to the exact measurements:
 1. In `geometry.json`, replace each estimate with the drawn value, narrow its `range`
    to the drawing's tolerance, and change `how` to name the drawing and sheet. That
    includes `row_bottoms` (per-row pipe bottoms), `pipe_top_height`, `pitch_along`,
-   `disc_face_at_0mm` and `row_10_end`. Update `MEASUREMENTS.md` to match; its first
+   and `disc_face_at_0mm`. Update `MEASUREMENTS.md` to match; its first
    table ranks which numbers move the predictions most.
 2. Where the drawings contradict the model's picture of the tank, change the code, not
    only the numbers. The T layout with the channel on the head's centre line, the square
@@ -79,17 +79,17 @@ are given the tank's blueprints, bring the model to the exact measurements:
   channel, and the rest from the longer bank. Capacity 14,500 gal (1.08 of the published).
 - **Row order corrected (28 Oct).** William: row 1 has the longest pipes and row 10 the
   shortest, the reverse of the 26 Oct notes ("turn the thing 180°"). Row n's bottom is now
-  5 + 3(n - 1) in. Row 10 stays assumed at the channel end, so the long pipes moved from the
-  channel mouth to the far end of the bank, which is what the old "row 10 at the head end"
-  variant modelled. At 0.30 m rows 1-3 are the wet ones. All 30 with a 350 mm stroke now make
+  5 + 3(n - 1) in. William then confirmed that row 10 is at the channel end and row 1 at the
+  head end, so the long pipes moved from the channel mouth to the far end of the bank,
+  which is what the old "row 10 at the head end" variant modelled. `calibrate --compare`
+  now fits only the seal, not the bank's end. At 0.30 m rows 1-3 are the wet ones. All 30 with a 350 mm stroke now make
   a 16-30% larger first wave at 5 m (125 mm at 0.30 m, 266 mm at 0.70 m, tight seal). The
   sweep sets swap "row 10 only" for "row 1 only", and the end-effect chart compares rows 1-3.
 
 ## Still open (William)
 
-1. Which end the longest pipes (row 1) are at, and whether pistons 1-3 are in that row.
-   Assumed: the head end, with row 10 (the shortest) at the channel. It changes wave
-   heights by -21% to +49%.
+1. Whether display pistons 1-3 are William's row 1 (assumed: row n is pistons 3n-2..3n).
+   It does not change a run of all 30, only which pistons a selection like `row1-3` means.
 2. Seal behaviour: bubbles from the pipe bottoms on every downstroke, or not. Up to
    3.6x at shallow depth.
 3. Tape: rim height (now inferred from the window height), one channel window's width (the
