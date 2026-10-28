@@ -83,14 +83,38 @@ def tank_parts(g: Geometry) -> List[Dict]:
             x = min(i * L / n, L - 0.04)
             P.append(_box("channel %s post %d (frame, approx.)" % (nm, i), "frame", x, x + 0.06, yr - 0.03, yr + 0.03,
                           lab, rim))
-    for i, x in enumerate(np.linspace(-HL, -0.06, 5)):
+    # the head's frame: steel beams on the back wall's measured bay (William, 28 Oct), the same bay down
+    # the long sides (a photo count there). A beam straddles the glass; its outer flange and web sit
+    # outside the water face.
+    bw = g.raw["head"].get("back_wall", {})
+    IN = 0.0254
+    face = bw.get("beam_face_in", 5.0) * IN
+    out = (bw.get("beam_flange_in", 2.375) + bw.get("beam_web_in", 0.25)) * IN
+    bay = (bw.get("window_clear_in", 35.0) * IN) + face
+    nb = int(bw.get("beams", 4))
+    yc = HW / 2 + out - face / 2                     # outermost beam centre
+    for j, y in enumerate(np.linspace(-yc, yc, nb)):
+        P.append(_box("head back beam %d" % j, "frame", -HL - t - 0.10, -HL - t, y - face / 2, y + face / 2,
+                      lab, g.head_depth))
+    # long sides (William, 28 Oct): windows of the measured width with the measured beams between them,
+    # laid from the back corner; the corner beams are taken like the back wall's until measured
+    sw = g.raw["head"].get("side_wall", {})
+    win = sw.get("window_width_in", 39.25) * IN
+    between = [b * IN for b in sw.get("beams_between_in", [5, 4, 5, 4, 5, 4, 5])]
+    inner = bw.get("beam_flange_in", 2.375) * IN           # corner beam's inner flange, inside the water face
+    spans = [("corner beam back", -HL + inner - face, -HL + inner)]
+    x = -HL + inner
+    for k in range(len(between) + 1):
+        x += win
+        if k < len(between):
+            spans.append(("beam %d (%.0f in)" % (k + 1, between[k] / IN), x, x + between[k]))
+            x += between[k]
+    spans.append(("corner beam front", x, x + face))
+    for nm, xa, xb in spans:
         for s in (-1, 1):
-            y = s * (HW / 2 + t + 0.03)
-            P.append(_box("head post %d%s (frame, approx.)" % (i, "L" if s > 0 else "R"), "frame", x, x + 0.06,
-                          y - 0.03, y + 0.03, lab, g.head_depth))
-    for j, y in enumerate(np.linspace(-HW / 2, HW / 2, 5)):
-        P.append(_box("head back post %d (frame, approx.)" % j, "frame", -HL - t - 0.09, -HL - t - 0.03, y - 0.03,
-                      y + 0.03, lab, g.head_depth))
+            y = s * (HW / 2 + t + 0.05)
+            P.append(_box("head side %s %s" % ("left" if s > 0 else "right", nm), "frame", xa, xb, y - 0.05, y + 0.05,
+                          lab, g.head_depth))
     P.append(_box("head under-frame (approx.)", "frame", -HL, 0, -HW / 2, HW / 2, lab + 0.05, lab + 0.12))
     # reservoir: blue column behind the gate
     w = 0.03

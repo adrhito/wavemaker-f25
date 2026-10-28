@@ -22,7 +22,11 @@ All commands below run from `tank-model/`.
 
 The tank is a T, with no turns:
 
-* **Head**: the wide tank (about 3.8 x 5.2 m) holding the piston bank. The
+* **Head**: the wide tank holding the piston bank, taped on 28 Oct. It is 3.04 m
+  across: the back wall is three windows and four steel beams, 125 in over the
+  corner beams and 119.75 in inside. It is 8.91 m along the axis: each long side
+  is eight 39.25 in windows with beams of 5, 4, 5, 4, 5, 4 and 5 in between them.
+  It is 1.08 m deep: the 42.5 in window height, taken as floor to rim. The
   backward wave from the pistons spreads out there.
 * **Piston bank**: 30 pipes of 8 in Sch 10S stainless (bore 211.6 mm), 3 across
   the 673 mm channel width by 10 along it, standing in the head right at the
@@ -151,15 +155,15 @@ channel end. Each cell is tight / leaky seal, in mm.
 
 | depth | pistons | 100 mm stroke | 200 mm | 350 mm |
 |---|---|---|---|---|
-| 0.30 m | all 30 (only rows 8-10 wet) | 36 / 29 | 74 / 46 | 118 / 45 |
+| 0.30 m | all 30 (only rows 8-10 wet) | 36 / 29 | 73 / 46 | 117 / 45 |
 | 0.30 m | row 10 only | 15 / 15 | 31 / 29 | 48 / 29 |
-| 0.40 m | all 30 | 38 / 35 | 82 / 67 | 138 / 82 |
-| 0.50 m | all 30 | 41 / 40 | 91 / 82 | 159 / 119 |
-| 0.60 m | all 30 | 51 / 47 | 117 / 101 | 205 / 156 |
-| 0.70 m | all 30 | 50 / 48 | 114 / 105 | 202 / 170 |
+| 0.40 m | all 30 | 38 / 35 | 81 / 66 | 136 / 81 |
+| 0.50 m | all 30 | 40 / 39 | 90 / 81 | 157 / 118 |
+| 0.60 m | all 30 | 51 / 47 | 115 / 99 | 203 / 154 |
+| 0.70 m | all 30 | 49 / 48 | 113 / 104 | 199 / 168 |
 
 If row 10 is at the head end instead, all 30 make a larger first wave in deeper water
-(+12% at 0.30 m up to +42% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
+(+12% at 0.30 m up to +44% at 0.70 m for 350 mm). With row 10 at the mouth, its 127 mm
 bottoms form a low roof there, which sends more of the flow back into the head.
 
 ## Files
@@ -186,6 +190,7 @@ bottoms form a low roof there, which sends more of the flow back into the head.
   motion, so this costs a few per cent at most.
 * Forcing above 2 Hz is left out, and `predict` reports what share that is. It grows
   with the leaky seal, whose venting cuts the flow off sharply.
-* The head's size and how much it absorbs are uncertain. They hardly touch the first
-  wave, which reaches the stations before anything returns from the head, but they do
-  shape the later waves of a long run.
+* The head is taped (corners aside), but how much it absorbs is a guess. Its size does
+  not touch the first wave, which reaches the stations before anything returns from the
+  head, but it shapes the later waves of a long run: replacing the photo-based 3.8 m by
+  5.2 m head with the measured 8.91 m by 3.04 m one moved H1/3 at 5 m by -17% to +120%.

@@ -59,6 +59,13 @@ are given the tank's blueprints, bring the model to the exact measurements:
   `results/row10_end_effect_{900,300}mms.png`.
 - **3D model** (`model/`): `tank_viewer.html`, `tank_model.glb` and `tank_model.obj`.
   **Drawings** (`drawings/`): plans and sections, PNG and PDF.
+- **Head taped (28 Oct).** William's measurements replaced the photo estimates. The back wall is
+  three windows between four 5 in beams: 125 in over the corners, 119.75 in (3.04 m)
+  inside. Each long side is eight 39.25 in windows with beams of 5, 4, 5, 4, 5, 4 and 5 in:
+  350.75 in (8.91 m) inside, with the corners read like the back wall's. The windows are
+  42.5 in high, taken as a 1.08 m rim for the head and the channel. The 3D frame draws
+  these beams. Capacity is now 13,700 gal against the published 13,500. The first wave
+  moved about 1%; the later waves of a run moved -24% to +120%.
 
 ## Still open (William)
 
@@ -66,8 +73,8 @@ are given the tank's blueprints, bring the model to the exact measurements:
    Assumed: the channel end. It changes wave heights by 10-40%.
 2. Seal behaviour: bubbles from the pipe bottoms on every downstroke, or not. Up to
    2.6x at shallow depth.
-3. Tape: rim height, channel length, head length, and the disc height at 0 mm (in order
-   of how much each matters; see MEASUREMENTS.md).
+3. Tape: rim height (now inferred from the window height), channel length, the head's corner
+   beams, and the disc height at 0 mm (in order of how much each matters; see MEASUREMENTS.md).
 4. The depths the lab actually runs, and the first measured wave heights, for
    `wm.py calibrate --compare`.
 

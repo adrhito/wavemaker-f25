@@ -13,9 +13,9 @@ In order of how much each would tighten the model:
 |---|---|---|---|
 | 1 | **Which end row 10 is at** (the longest pipes, lowest bottoms). Are pistons 28-30 in it? | Look at the pipe bottoms through the glass, or ask whoever built it | Wave heights by 10-40%. The same stroke gives a 202 mm first wave with row 10 at the channel end and 287 mm with it at the head end (all 30, 350 mm, 0.70 m). `results/row10_end_effect_900mms.png` |
 | 2 | **Does air vent on every stroke?** (not a tape measurement, but the biggest unknown) | 0.30 m of water, rows 8-10, 300 mm stroke: watch the row-10 pipe bottoms. Bubbles on every downstroke mean the seal lets air in (`--seal leaky`). None after the first stroke means `tight` | Up to 2.6x. All 30 at 0.30 m with a 350 mm stroke: 118 mm first wave (tight) against 45 mm (leaky) |
-| 3 | **Rim height**: inside floor to the top of the glass, in the head and in the channel | Tape | Capacity 10,100-12,200 gal across its range. Also checks that the pipe tops (1422 mm) stand about 0.42 m above the rim, as IMG_2459 suggests |
+| 3 | **Rim height**: inside floor to the top of the glass, in the head and in the channel | Tape. Now taken from the head's 42.5 in window height, and the channel assumed the same | Capacity 12,800-14,000 gal across its range. Also checks that the pipe tops (1422 mm) stand about 0.42 m above the rim, as IMG_2459 suggests |
 | 4 | **Channel length**: mouth (inside face of the head's channel-side wall) to the gate | Tape along the rim | When the gate's reflection gets back to each station (15.0 s at 5 m in 0.30 m water, ±1 s across the range): the window for measuring clean incident waves. Capacity only ±120 gal |
-| 5 | **Head length** along the axis, inside | Tape | The least certain dimension (3.0-5.2 m), and the largest effect on capacity: 9,900-12,900 gal. It does not touch the first wave, but it shapes the later waves of a long run |
+| 5 | **Head corners**: the four corner beams of the head (face width, and how much of each sits inside the water face) | Tape, as for the back wall | The head's inside length (8.79-8.93 m between the two ways of reading the corners). Small: under 1% on capacity, nothing on the first wave |
 | 6 | **Disc height at 0 mm** above the tank floor | Tank drained, piston at 0 mm: tape up the inside of a pipe from its open bottom to the disc face, then add that pipe's bottom height | Less than 1% on wave height (it only sets the length of trapped air); low priority. It also shows whether the disc can ever sit below the water |
 
 Also record the still-water depth of every run. It decides which rows reach the water,
@@ -101,11 +101,13 @@ discs parked:
 |---|---|---|---|
 | channel width | 0.673 | 0.665-0.680 | **tape**: 26.5 in, measured by the operator (wavemaker-f25 `app/solitons.py`) |
 | channel length | 15.4 | 14.8-16.2 | **photogrammetry**, IMG_2468. The rim width (known: 673 mm + glass) was fitted along the perspective (horizon at row 498, camera pitch 43°) from the platform edge to the reservoir face. The glass lid joints come out evenly spaced at 0.75 m, which checks the fit |
-| rim height (channel and head) | 1.00 | 0.88-1.15 | **photogrammetry**, IMG_2465/2464: the glass between the rails is 0.68 of the camera height, about one frame module. Taken equal round the whole tank (one rim line in IMG_2460/2462) |
+| channel rim (inside depth) | 1.0795 | 0.98-1.18 | assumed equal to the head's 42.5 in window height, since IMG_2460/2462 show one rim line round the tank. The photo estimate before 28 Oct was 1.00 m (IMG_2465/2464: the glass between the rails is 0.68 of the camera height) |
 | frame module (post spacing) | 1.07 | 1.00-1.15 | **photogrammetry**, IMG_2461/2465, from the posts' floor contact points |
 | lid panel | 0.753 | 0.72-0.78 | **photogrammetry**, IMG_2468, the spacing of the glass lid joints |
-| head width (across) | 5.2 | 4.2-6.3 | **photogrammetry**, IMG_2461: four frame modules plus part of a panel along its long side |
-| head length (along the axis) | 3.8 | 3.0-5.2 | **estimate**. It must hold the 2.24 m bank plus open water behind it (IMG_2459/2460). The least certain dimension |
+| head width (across) | 3.0416 | 3.035-3.048 | **tape**, William 28 Oct. The back face (the wall behind the pistons, opposite the channel) is 125 in end to end over the corner beams. Each steel beam's face is 5 in: a 2 3/8 in flange either side of a 1/4 in web. Inside, at the water: 125 - 2 x 2 3/8 - 2 x 1/4 = 119.75 in |
+| back wall | 3 windows, 4 beams | | **William, 28 Oct**: four beams including the corners, three windows between them. Equal windows: (125 - 4 x 5) / 3 = 35 in clear, so the bay is 40 in |
+| head length (along the axis) | 8.909 | 8.79-8.93 | **tape**, William 28 Oct. Each long side has 8 windows, 39.25 in wide end to end, with 7 beams between them alternating 5, 4, 5, 4, 5, 4, 5 in (32 in). That is 346 in between the corner beams. The corners are not measured yet; taking them like the back wall's (the inner 2 3/8 in flange inside the water face) gives 350.75 in. The photos had suggested 5 bays (5.07 m) because IMG_2461 shows only half of the side |
+| head rim (inside depth) | 1.0795 | 1.04-1.12 | the head's **window height**, 42.5 in (William 28 Oct), taken as the depth from the inside floor to the rim. An inference: tape it |
 | reservoir length | 5.6 | 4.6-6.8 | **photogrammetry**, IMG_2466: face length / height above rim = 3.12, with the height from IMG_2468 |
 | reservoir width | 0.75 | 0.67-0.95 | **photogrammetry**, IMG_2468: the end face is about 1.0 m outside the frame; inside assumed close to the channel |
 | reservoir height | 2.9 | 2.5-3.4 | IMG_2468: top 1.8 m above the channel rim. UNC Research quotes a "three-meter water column" |
@@ -119,20 +121,22 @@ axis (William). The bank ends at the channel mouth (operator's description).
 UNC publishes 13,500 gal, 118-120 ft overall, and 70,000 lb. At the values above, filled
 to the brim, the model holds:
 
-* head + channel: 29.5 m³
+* head + channel: 39.8 m³
 * water inside the pipes: almost none (it is air)
 * reservoir: 12.2 m³
-* total: 41.7 m³ = 11,000 gal, or 0.82 of the published figure.
+* total: 52.0 m³ = 13,700 gal, or 1.02 of the published figure.
 
-Drawing every ranged dimension uniformly across its range gives 9,800-14,500 gal
-(5th to 95th percentile, median 11,900); 15% of draws reach 13,500. The published figure
-therefore points to the long end of the head length and rim height, which are measurements
-3 and 5 above. Before the trapped air and the stepped pipes were modelled, the pipes
+Drawing every ranged dimension uniformly across its range gives 12,700-15,500 gal
+(5th to 95th percentile, median 14,100); 73% of draws reach 13,500. With the head
+measured (8.91 m by 3.04 m, 1.08 m deep), the published 13,500 gal is matched to 2%, so
+it is most likely the tank filled to the brim, reservoir included. The photo-based
+head (3.8 m by 5.2 m) and 1.00 m rim had given 11,000 gal. The reservoir is now the
+largest remaining uncertainty in the capacity (12,800-14,600 gal across its ranges). Before the trapped air and the stepped pipes were modelled, the pipes
 counted as full of water (265 gal) and the bank's whole footprint was dry above a
 300 mm duct. Now the pipes hold almost nothing and the gaps between them hold water.
 Net, the brim total fell from 11,160 to 11,020 gal.
 
-The 36 m published length against the model's 24.8 m (head + channel + reservoir) probably
+The 36 m published length against the model's 29.9 m (head + channel + reservoir) probably
 includes the platforms and stairs at both ends (IMG_2460, IMG_2462), so the model does not
 use it.
 
