@@ -37,11 +37,13 @@ MAX_TRIAL_ACCEL_MM_S2 = 20000
 MAX_TRIAL_JERK_MM_S3 = 7500
 
 # The tank, for working out how far the plates must move to carry one
-# soliton's worth of water.  The width was measured by the operator (26.5 in).
-# Three plates fill that width; their length along the tank has NOT been
-# measured, and is taken as square until it is.  The lift scales directly
-# with PLATE_LENGTH_MM, so measure a plate and correct it here.
-TANK_WIDTH_MM = 673.0
+# soliton's worth of water.  The channel's inside width was taped at 29.25 in
+# on 28 October 2026; the 26.5 in used before was out of date.  Three plates
+# fill that width, 9.75 in each.  Their length along the tank has NOT been
+# measured; the base plates look square in the photos (tank-model/), so it is
+# taken equal until a plate is taped.  The lift scales directly with
+# PLATE_LENGTH_MM, so measure a plate and correct it here.
+TANK_WIDTH_MM = 29.25 * 25.4
 PLATES_ACROSS = 3
 PLATE_WIDTH_MM = TANK_WIDTH_MM / PLATES_ACROSS
 PLATE_LENGTH_MM = PLATE_WIDTH_MM

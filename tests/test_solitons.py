@@ -103,14 +103,18 @@ def theory_target(crest, depth):
 
 
 def test_nine_plates_need_the_travel_worked_out_by_hand():
-    """80 mm in 394 mm of water from 3 x 3 plates: the figures given the lab."""
+    """80 mm in 394 mm of water from 3 x 3 plates on the 29.25 in channel.
+
+    Before the channel was taped (28 October 2026) the lab was given 240 mm
+    of lift for this, worked out on a 26.5 in width.
+    """
     target = theory_target(80, 394)
-    assert plate_footprint_mm(9) == pytest.approx(673.0)
-    assert volume_lift_mm(target, 9) == pytest.approx(240, abs=2)
-    trial = SolitonTrial(target, 240)
-    assert trial.speed_mm_s == pytest.approx(257, abs=3)
-    assert trial.accel_mm_s2 == pytest.approx(422, abs=5)
-    assert trial.jerk_mm_s3 == pytest.approx(2339, abs=25)
+    assert plate_footprint_mm(9) == pytest.approx(29.25 * 25.4)
+    assert volume_lift_mm(target, 9) == pytest.approx(217, abs=2)
+    trial = SolitonTrial(target, 217)
+    assert trial.speed_mm_s == pytest.approx(232, abs=3)
+    assert trial.accel_mm_s2 == pytest.approx(381, abs=5)
+    assert trial.jerk_mm_s3 == pytest.approx(2115, abs=25)
     assert not trial.speed_limited
     pulse = trial.pulse_parameters()
     assert pulse["Decel 1"] == pulse["Accel 1"] == trial.accel_mm_s2
