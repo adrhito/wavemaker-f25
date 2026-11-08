@@ -9,10 +9,10 @@
     "length": {
       "value": 17.7736,
       "range": [
-        16.9418,
-        17.799
+        17.55,
+        18.1
       ],
-      "how": "William 28 Oct: 16 windows down each side, with beams between them alternating 4, 5, 4, ... 4 in from the head-end corner to the reservoir (15 beams, 67 in). The channel's window width is ASSUMED equal to the head's measured 39.25 in (the photos' post spacing, 1.07 m with range 1.00-1.15, agrees with the 1.11 m this implies); corners read like the head's. 16 x 39.25 + 67 + 2 x 2 3/8 = 699.75 in. Replaces the 15.4 m perspective fit of IMG_2468. Tape one channel window to settle it"
+      "how": "William 28 Oct: 16 windows down each side, with beams between them alternating 4, 5, 4, ... 4 in from the head-end corner to the reservoir (15 beams, 67 in). The channel's window width is ASSUMED equal to the head's measured 39.25 in (the photos' post spacing, 1.07 m with range 1.00-1.15, agrees with the 1.11 m this implies); corners read like the head's. 16 x 39.25 + 67 + 2 x 2 3/8 = 699.75 in. Replaces the 15.4 m perspective fit of IMG_2468. Tape one channel window to settle it. Checked 7 Nov against the IIHR lab plan (sheet 1, scaled by its own dimension chain at 0.958 in per pixel): about 711 in (18.06 m) between the gate posts at the head and at the reservoir, consistent with this to within the gate frames"
     },
     "width": {
       "value": 0.74295,
@@ -23,12 +23,12 @@
       "how": "tape, William 28 Oct: the channel's inside width, wall to wall where the water is, 29.25 in. Replaces the 26.5 in in app/solitons.py TANK_WIDTH_MM"
     },
     "depth_to_rim": {
-      "value": 1.0795,
+      "value": 1.1525,
       "range": [
-        0.9779,
-        1.1811
+        1.13,
+        1.17
       ],
-      "how": "assumed equal to the head's 42.5 in window height (one rim line round the tank in IMG_2460/2462). The photo estimate before 28 Oct was 1.00 m (IMG_2465/2464)"
+      "how": "IIHR sheet 4 (typical wide and shallow basin section), also sheets 13 and 16: 5'-3 7/8\" from the lab floor to the 'Max Depth' line, the rim 5\" above that, and the floor 1'-11 1/2\" up, so the rim is 45.4 in (1.153 m) and the maximum water depth 40.4 in (1.026 m) above the tank floor. The 42.5 in William taped is the glass window, which sits inside the frame. Only the wide basin's sections are in the archive; the channel is taken to share its rim line, as the photos show. Before 7 Nov the model took the 42.5 in window height as the rim"
     },
     "side_wall": {
       "windows": 16,
@@ -79,7 +79,7 @@
         8.7884,
         8.9345
       ],
-      "how": "tape, William 28 Oct: each long side is 8 windows of 39.25 in with 7 beams between them, 5, 4, 5, 4, 5, 4, 5 in (32 in), so 346 in between the corner beams. The corners are not measured yet; taking them like the back wall's corner beams (the inner 2 3/8 in flange inside the water face) gives 350.75 in. Replaces the 5-bay photo count (5.07 m)"
+      "how": "tape, William 28 Oct: each long side is 8 windows of 39.25 in with 7 beams between them, 5, 4, 5, 4, 5, 4, 5 in (32 in), so 346 in between the corner beams. The corners are not measured yet; taking them like the back wall's corner beams (the inner 2 3/8 in flange inside the water face) gives 350.75 in. Replaces the 5-bay photo count (5.07 m). IIHR sheet 1 checks it: the wide basin is 4 modules (end 7'-9 1/4\", two of 7'-4\", gate 7'-10 1/2\" = 363.75 in over the posts), and the plan scales to about 359 in"
     },
     "width_across": {
       "value": 3.0416,
@@ -116,12 +116,16 @@
       "how": "William 28 Oct: 8 windows a side, each 42.5 in high and 39.25 in wide end to end; the beams between them alternate 5 and 4 in, starting and ending with 5 in at the corners"
     },
     "depth_to_rim": {
-      "value": 1.0795,
+      "value": 1.1525,
       "range": [
-        1.0414,
-        1.1176
+        1.13,
+        1.17
       ],
-      "how": "the head's window height, 42.5 in (William 28 Oct), taken as the inside depth from the floor to the rim. An inference: confirm with a tape from the inside floor to the top of the glass"
+      "how": "IIHR sheet 4 (typical wide and shallow basin section), also sheets 13 and 16: 5'-3 7/8\" from the lab floor to the 'Max Depth' line, the rim 5\" above that, and the floor 1'-11 1/2\" up, so the rim is 45.4 in (1.153 m) and the maximum water depth 40.4 in (1.026 m) above the tank floor. The 42.5 in William taped is the glass window, which sits inside the frame. Head section drawn; Before 7 Nov the model took the 42.5 in window height as the rim"
+    },
+    "max_water_depth": {
+      "value": 1.0255,
+      "how": "IIHR sheet 4: 'Max Depth' 5 in below the rim, 40.4 in above the floor"
     }
   },
   "reservoir": {
@@ -152,36 +156,40 @@
     }
   },
   "tank_floor_above_lab_floor": {
-    "value": 0.6,
+    "value": 0.5969,
     "range": [
-      0.5,
-      0.7
+      0.59,
+      0.61
     ],
-    "how": "photogrammetry, IMG_2465, standing camera height 1.45 m assumed"
+    "how": "IIHR sheets 4, 13 and 16: 1'-11 1/2\" (23.5 in) from the lab floor to the top of the basin floor structure. Replaces the 0.60 m photogrammetry of IMG_2465, which it confirms"
   },
   "piston_bank": {
-    "_note": "30 pipes, 3 across the axis by 10 along it, standing in the head at the channel mouth. The bank is as wide as the channel (3 x 9.75 in = 29.25 in): its side plates line up with the channel walls. William's 'row n' is one group of three along the tank; in the code that is column n (display pistons 3n-2, 3n-1, 3n).",
+    "_note": "30 cylinders, 3 across the axis by 10 along it, standing on a stepped block of sheet-metal ducts in the head at the channel mouth (archive: Design/Mechanicals/Frame/FramedDucts.png, Ducts/). Each cylinder discharges through its own duct, which turns horizontal at the cylinder's bottom and runs to the block's front face, where all 30 outlets open into the channel: 3 lanes by 10 layers. William's 'row n' is one group of three along the tank; in the code that is column n (display pistons 3n-2, 3n-1, 3n).",
     "rows_across": 3,
     "columns_along": 10,
     "pitch_across": {
-      "value": 0.24765,
+      "value": 0.24892,
       "range": [
-        0.237,
-        0.25
+        0.24879300000000001,
+        0.249047
       ],
-      "how": "channel width / 3 = 9.75 in: the square base plates tile the bank across the 29.25 in channel. IMG_2459 checks it: neighbouring pipes stand 1.08-1.12 diameters apart (237-245 mm) with about 26 mm between them; the old 26.5 in / 3 = 224 mm would leave 5 mm. Tape one base plate to confirm"
+      "how": "drawn: 9.800 in. Ducts (Elbow, Extend, Extend2) are 9.8 in wide and stacked three across; the flange plate's three 8.25 in holes are on 9.8 in centres; the horizontal rails' bolt holes are 9.800 +/- .005 in apart along the tank (archive Design/Mechanicals/Ducts/RapidQuote/Mar2015/*.stp, Frame/HorizontalRails.pdf). Replaces 9.75 in (the channel width / 3), which IMG_2459 could not tell from this"
     },
     "pitch_along": {
-      "value": 0.24765,
+      "value": 0.24892,
       "range": [
-        0.237,
-        0.25
+        0.24879300000000001,
+        0.249047
       ],
-      "how": "assumed equal to pitch_across (square base plates, IMG_2459, where the spacing along the front lane is 1.08-1.12 diameters)"
+      "how": "drawn: 9.800 in. Ducts (Elbow, Extend, Extend2) are 9.8 in wide and stacked three across; the flange plate's three 8.25 in holes are on 9.8 in centres; the horizontal rails' bolt holes are 9.800 +/- .005 in apart along the tank (archive Design/Mechanicals/Ducts/RapidQuote/Mar2015/*.stp, Frame/HorizontalRails.pdf). Replaces 9.75 in (the channel width / 3), which IMG_2459 could not tell from this"
     },
     "near_end_x": {
       "value": 0.0,
-      "how": "bank ends at the channel mouth (operator's description)"
+      "range": [
+        -0.05,
+        0.05
+      ],
+      "how": "the duct block's front face, where the outlets are. Its vertical rails bolt to the tank's gate frame at the head/channel junction (archive Frame/FrameDesignNotes, Frame/Fasteners/FastenerList), so the face is taken to be at the channel mouth"
     },
     "pipe_top_height": {
       "value": 1.4224,
@@ -189,23 +197,23 @@
         1.4,
         1.45
       ],
-      "how": "William, 26 Oct: the tops are level, 56 in above the tank floor (row 1's 51 in pipe on its 5 in bottom). IMG_2459 agrees: about 0.42 m of pipe stands above the deck at rim height"
+      "how": "William, 26 Oct: the tops are level, 56 in above the tank floor (row 1's 51 in pipe on its 5 in bottom). IMG_2459 agrees: about 0.42 m of pipe stands above the rim. Not taken from the design archive: its cylinder lengths (Construction/BOM_Account.ods, Grind All, Nov 2014) belong to the outdated PVC cylinder design; William, 7 Nov: the built cylinders are metal"
     },
     "row_bottoms": {
       "value": [
         0.127,
-        0.2032,
-        0.2794,
-        0.3556,
-        0.4318,
-        0.508,
-        0.5842,
-        0.6604,
-        0.7366,
-        0.8128
+        0.203708,
+        0.280416,
+        0.357124,
+        0.433832,
+        0.51054,
+        0.587248,
+        0.663956,
+        0.740664,
+        0.817372
       ],
-      "formula": "row n bottom = 5 + 3 (n - 1) in above the tank floor; pipe length 54 - 3n in",
-      "how": "William, 26 Oct ('roughly'), order corrected 28 Oct: row 1 is the longest, a 51 in pipe with its bottom 5 in (127 mm) up, and row 10 the shortest, a 24 in pipe with its bottom 32 in (813 mm) up. Until 28 Oct the model had them the other way round"
+      "formula": "row n bottom = 5 + 3.02 (n - 1) in above the tank floor",
+      "how": "row 1's 5 in is William's (26 Oct, 'roughly'). The step is one duct layer of the stainless duct block: a 3.000 in box with a 0.020 in plate between layers, and bolt holes every 3.020 +/- .005 in on the front vertical rails (Ducts/RapidQuote/Mar2015/*.stp, Frame/VerticalRails.pdf). William's 3 in agrees to 0.02 in a row. Row 1 (longest pipe, lowest duct, longest duct run) is at the head end and row 10 at the channel mouth, as William confirmed on 28 Oct and as the drawn block requires (the outlets are on its tall end)"
     },
     "bottom_offset": {
       "value": 0.0,
@@ -217,19 +225,79 @@
     },
     "row_10_end": {
       "value": "channel",
-      "how": "William, 28 Oct: row 10 (the shortest pipes, highest bottoms) stands at the channel end and row 1 (the longest) at the head end, away from the channel, so the pipe bottoms form a ramp rising toward the channel. 'head' is kept only as a switch, to show what the other way round would give. Row n is taken to hold display pistons 3n-2..3n (not confirmed)"
+      "how": "William, 28 Oct, and the drawings: row 10 (the shortest pipes, the top duct layer) stands at the channel end, where the block's face and outlets are. 'head' means anything only with layout 'open', as the old comparison"
     },
     "duct_side_walls": {
       "value": true,
-      "how": "IMG_2459 shows stacked steel plates closing the long sides of the bank, so water under the bank leaves through its two ends (channel and head). Set false to let it out sideways too"
+      "how": "layout 'open' only. With the drawn ducts, the block is solid steel boxes below each step and its sides are closed there; above the steps the cylinders stand in open water"
     },
     "between_pipes_open": {
       "value": true,
-      "how": "assumed: the gaps between neighbouring pipes (round pipes on a square pitch leave 25% of the footprint) are open water with a free surface, not sealed by the deck"
+      "how": "above each step the cylinders stand in open water with a free surface between them (9.8 in pitch, 8.625 in OD: 39% of the footprint)"
+    },
+    "layout": {
+      "value": "ducts",
+      "how": "'ducts' (drawn, and seen in IMG_2459: the 'stacked plates' under the cylinders are the duct layers): each piston's water reaches the channel through its duct outlet at x = 0, at its layer's height, and the block is solid below each step. 'open' is the model before 7 Nov: pipe bottoms open into a layer under the bank, roofed by the pipe bottoms. Kept as a switch for comparison only"
+    },
+    "front_units": {
+      "value": 1,
+      "how": "drawn: each duct starts in a 19.6 in (two-pitch) elbow box, so the front row of cylinders (row 10) stands one pitch back from the face, and the block is 11 pitches (107.8 in, 2.738 m) long. Duct parts count (Ducts/RapidQuote/21Oct2014/DuctPartsCount.png): row 10's ducts are a bare elbow; each row further back adds one pitch of straight duct (Extend 9.8 in, Extend2 19.6 in)"
+    },
+    "stack": {
+      "_note": "The duct block under the cylinders, from the 2015 design files (archive Design/Mechanicals/Ducts and Frame): stainless sheet-metal ducts and stainless rails, which IMG_2459 shows under the cylinders. Inches as drawn; the code converts. Sheet metal is 0.060 in nominal 304 stainless (Rapid Sheet Metal quote 64145, Mar 2015). The same design set drew PVC cylinders, which were not built (William, 7 Nov: the cylinders are metal), so parts that fit the cylinders, like the flange plate's holes, may differ on the machine",
+      "layer_pitch_in": {
+        "value": 3.02,
+        "how": "VerticalRails.pdf: holes every 3.020 +/- .005 in; Ducts STEP: 3.000 in boxes, 0.020 in plates between layers"
+      },
+      "duct_outside_in": {
+        "width": 9.8,
+        "height": 3.0,
+        "how": "Elbow.stp, Extend.stp, Extend2.stp (Mar 2015)"
+      },
+      "sheet_in": {
+        "value": 0.059,
+        "how": "STEP wall planes 0.059 in apart; drawings call for 0.060 in nominal"
+      },
+      "duct_inside_in": {
+        "width": 9.682,
+        "height": 2.941,
+        "how": "9.8 - 2 x 0.059 across; 3.0 - 0.059 from the duct floor to the top lip, which is open over the middle 8.1 in and closed by the plate and box above"
+      },
+      "flange_hole_diameter_in": {
+        "value": 8.25,
+        "how": "FlangePlate.stp: three 8.25 in holes, the opening from each cylinder into its elbow. Sized for the PVC cylinders of the design (8.050 in bore); with the built 8.329 in bore it may differ. Not used in the hydraulics"
+      },
+      "outlet_band": {
+        "formula": "row n's outlet spans row_bottom(n) - 3.0 in to row_bottom(n) - 0.059 in",
+        "how": "the cylinder stands on a 0.059 in flange plate on top of its layer's elbow; the elbow's floor is 3.0 in below the plate"
+      },
+      "duct_length_formula": "row n's duct runs (11.5 - n) pitches from its cylinder axis to the face: 0.37 m for row 10, 2.61 m for row 1",
+      "base_plate_in": {
+        "value": 0.059,
+        "how": "BasPlate2/3.stp: 29.4 in wide plates, 2 and 3 pitches long, under the bottom layer (4 + 1 of them = 11 pitches)"
+      },
+      "rails": {
+        "horizontal": "two 304 stainless offset tees, 104.0 in long: 6.00 in flange (4.70 in of it inboard, under the block), 4.00 in web, 0.25 in thick (Frame/HRailDetail.pdf, HorizontalRails.pdf); the block's bottom layer bolts to the webs",
+        "vertical": "two 2 x 2 x 1/4 in 304 angles, 30.2 in tall, at the front corners, bolted to the ducts and to the gate frame (Frame/VerticalRails.pdf, VRailDetail.pdf)",
+        "gussets": "two 8 x 8 x 3/8 in 304 plates joining them (Frame/Gussets.pdf)",
+        "pads": "support pads under the rails (Frame/SupportPads.dwb, not readable here); their thickness, about 1.6 in, is inferred from row 1's 5 in bottom"
+      },
+      "motor_mount_in": {
+        "value": [
+          9.6,
+          9.6,
+          0.25
+        ],
+        "how": "CadFiles/MotorMount.stp (Nov 2013 design, drawn for the PVC cylinders): 9.6 in square, 0.25 in 5086-H32 aluminium, 1.25 in bore for the slider. IMG_2459 shows square plates on the cylinder tops; their size is not measured. Only the 3D model uses it"
+      },
+      "mass_kg": {
+        "value": 1031,
+        "how": "Design/Mechanicals/Mass~: 1031 kg (2274 lb) for the 2015 design, with its PVC cylinders, centre of gravity 913 mm up. Not the built machine's mass"
+      }
     }
   },
   "cylinder": {
-    "spec": "8 in NPS Schedule 10S welded stainless pipe, ASTM A312 TP304/304L (Felker), stencil on IMG_2458",
+    "spec": "8 in NPS Schedule 10S welded stainless pipe, ASTM A312 TP304/304L (Felker), stencil on IMG_2458; William, 7 Nov: the cylinders are metal",
     "outside_diameter": {
       "value": 0.2191,
       "how": "ASME B36.19M: 8.625 in"
@@ -243,11 +311,12 @@
       "how": "OD - 2 x wall = 8.329 in"
     },
     "length": {
-      "note": "per row: pipe_top_height - row bottom, 51 in (row 1) to 24 in (row 10)"
-    }
+      "note": "per row: pipe_top_height - row bottom, about 51 in (row 1) to 24 in (row 10)"
+    },
+    "design_history": "OUTDATED, NOT USED: the 2013-15 design drew the cylinders in PVC (8 in DWV pipe; then a Grind All prototype with an 8.050 in bore, Jan 2015; Grind All lengths 24.005-51.185 in in the Nov 2014 build order; molded PVC flanges; DAPC seals sized for them). William, 7 Nov: that design was changed, and the built cylinders are metal, stainless as far as he knows, as the stencil says. Take no cylinder, flange or seal figure from those files"
   },
   "pistons": {
-    "drive": "LinMot linear motors on an Allen-Bradley ControlLogix PLC (wavemaker-f25)",
+    "drive": "LinMot PS01-48x360F-C stators with PL01-28x800/720 sliders, quoted with an E1200-GP-UC drive (72 V, 32 A) and a T01-72/900 supply by Scott Equipment (quote 10033082, 1 Aug 2014; sizing sheet 'UNC quote 48 300mm stroke rev3.xlsx', which sized them for 440 N at 1 Hz). The machine now runs them from an Allen-Bradley ControlLogix PLC (wavemaker-f25)",
     "position_mm": {
       "min": -20,
       "max": 370,
@@ -271,16 +340,64 @@
       "how": "makes the model reproduce the measured 3.834 s cycle of BIGGER WAVE.csv (0-350 mm, 500 mm/s, 10000 mm/s2, jerk 2000, Bestehorn), .claude/skills/wavemaker/SKILL.md"
     },
     "disc_face_at_0mm": {
-      "value": 1.3,
+      "value": 1.35,
       "range": [
-        1.25,
-        1.36
+        1.28,
+        1.4
       ],
-      "how": "ASSUMED, measure it: height of the disc face above the tank floor with the piston at 0 mm. Bounds: at the drive's -57 mm limit the disc must still be below the 1.422 m pipe top; at its 453 mm limit it must still be inside row 10's pipe (bottom 0.813 m). Only the length of trapped air depends on it"
+      "how": "ESTIMATED from the motor geometry, still to be measured. The stators stand on the 0.25 in plate on each pipe top with the slider coming out of their front face downward (IMG_2459). At drive position p the slider's front end is p + 32 mm below the stator face (data sheet stroke -25..485 mm against the drive's -57..453 mm), so at 0 mm it is about 1.39 m up, and the disc face a few cm lower. The model assumed 1.30 m before 7 Nov. Only the length of trapped air depends on it"
     },
     "park_mm": {
       "value": 370,
       "how": "wavemaker-f25 Model.py PARK_POSITION: after a stop the pistons rest at the bottom of travel (REST_DOWN is the default), so a run starts from 370 mm and the Prepare step lifts them to Position 1"
+    },
+    "motor": {
+      "model": "P01-48x360F/360x510 (stator PS01-48x360F-C, slider PL01-28x800/720)",
+      "standard_stroke_mm": 360,
+      "extended_stroke_mm": 510,
+      "peak_force_n": 1020,
+      "peak_force_48v_n": 905,
+      "border_force_share": 0.79,
+      "continuous_force_n": {
+        "passive": 200,
+        "fan": 340
+      },
+      "max_speed_mm_s": 2000,
+      "max_speed_48v_mm_s": 1300,
+      "force_constant_n_per_a": 32,
+      "peak_current_a": 31.9,
+      "continuous_current_a": {
+        "passive": 6.2,
+        "fan": 11
+      },
+      "thermal_time_constant_s": {
+        "passive": 1000,
+        "fan": 340
+      },
+      "stator_mm": {
+        "diameter": 48,
+        "length": 409.5,
+        "mass_kg": 2.88
+      },
+      "slider_mm": {
+        "diameter": 28,
+        "length": 800,
+        "mass_kg": 3.56
+      },
+      "repeatability_mm": 0.05,
+      "how": "LinMot data sheet 0185-1005 (P01-48x360F, edition 24), page 360x510. The extended stroke runs from 25 mm inside the stator's front face to 485 mm out of it; full force over the middle 360 mm (50 to 410 mm out), falling to 79% at the ends. The drive's configured envelope, -57 to 453 mm, is exactly that 510 mm, shifted 32 mm. Max speed and force are at 72 V; the drives' supply voltage on the machine is not recorded here. A fan cooler (HV01-37/48) was quoted; whether the machine has them is not known"
+    },
+    "moving_mass_kg": {
+      "value": 6.5,
+      "range": [
+        5.0,
+        8.5
+      ],
+      "how": "slider 3.56 kg (data sheet) plus the disc, its seal and the coupling: about 3 kg, ESTIMATED. Only the motor force check uses it"
+    },
+    "seal": {
+      "value": "rubber seal on the disc (William, 26 Oct); its type is not known",
+      "how": "The design archive's seal, a custom 8 in double-acting piston cup (DAPC-800-SP1, Smith Seal, ordered Nov 2014), was sized for the PVC cylinders, which were not built, so it says nothing about the machine's seal. Whether air gets past it ('tight' or 'leaky') is still open: bubbles or a measured wave decide it"
     }
   },
   "published": {
@@ -301,5 +418,10 @@
       "https://mclaughlin.web.unc.edu/fluids-lab/",
       "https://tarheels.live/comp523teamp/?p=79"
     ]
+  },
+  "_sources": {
+    "design_archive": "The 2013-2015 design files of the wavemaker (Leandra Vicci, UNC Computer Science, NSF MRI grant DMS-1229471), downloaded 7 Nov 2026 from the lab's shared Google Drive folder 'Wavemaker' to Wave_maker/Wavemaker_Drive/WaveMaker_Leah_versions (outside this repository). BLUEPRINTS.md says which files matter and what each gave.",
+    "tank_drawings": "IIHR (University of Iowa) construction drawings of the 'Wave Basin and Sediment Flume', sheets 1, 4, 8, 13 and 16, dated 4-7 Jul 2009, in Design/Infrastructure/WaveTankDrawings of the archive",
+    "motor_datasheet": "LinMot data sheet 0185-1005, Linear Motors P01-48x360F, edition 24 (shop.linmot.com), page P01-48x360F/360x510 for the 800 mm slider"
   }
 }

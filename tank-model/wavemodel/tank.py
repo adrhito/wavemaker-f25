@@ -7,12 +7,22 @@ the depth-averaged equation
     div(D grad eta) + (omega^2 / g) S eta = i omega s / g        (e^{-i omega t})
 
 is solved, where in open water D = tanh(kh)/k and S = 1 (exact propagation
-for linear waves of any depth). Under a row of pipes whose bottoms z_b are
-below the still water, the water flows in a layer roofed by the pipe bottoms:
-D = z_b, and only the gaps between the round pipes keep a free surface
-(S = the void fraction, 0.25 on a square pitch). Rows whose bottoms are above
-the water leave open water under them. The bottoms step from row to row, so
-the roof does too. s is each piston's volume flux spread over its footprint.
+for linear waves of any depth).
+
+The bank, as drawn (layout "ducts", BLUEPRINTS.md): the cylinders stand on a
+stepped block of ducts that is solid below each step. Where a step is under
+the still water, a layer h - z_top deep runs over it between the cylinders
+(D = (h - z_top) x the open share, S = the open share); where it is above, the
+block is dry land. The block's front unit and row 10 stand 0.82 m high, so in
+shallower water it walls the channel off from the head entirely. Each
+piston's flux s enters the channel at the face (x = 0) across its lane, and
+its far-field coupling is that of a slot at its duct's height.
+
+Layout "open" (the model before 7 Nov): under a row of pipes whose bottoms
+z_b are below the still water, the water flows in a layer roofed by the pipe
+bottoms: D = z_b, and only the gaps between the round pipes keep a free
+surface. s is each piston's flux spread over its footprint.
+
 Walls reflect. Damping enters as a complex wavenumber: Hunt's boundary-layer decay
 in the channel, plus an adjustable absorption in the head that stands in for
 whatever else spreads and dissipates the backward wave there.
@@ -61,13 +71,17 @@ class HydroParams:
     dx_max: float = 0.06              # m
     seal: str = "tight"               # disc seal: 'tight' or 'leaky' (air passes it under vacuum); see air.py
     air_n: float = 1.4                # polytropic index of the trapped air during a run
+    air_dynamics: bool = True         # the water's inertia in pipe and duct against the air spring (drive.py)
+    duct_zeta: float = 0.05           # (fit) damping ratio of that swing beyond the duct's turbulent loss and the
+                                      # waves it radiates: wall friction, the air's heat exchange (est.)
 
 
 # Fields that do not change the cached transfer functions (they act on the flux or scale the result).
-_FLUX_ONLY_HP = {"seal", "air_n", "gain"}       # gain multiplies the result in predict
+_FLUX_ONLY_HP = {"seal", "air_n", "gain", "air_dynamics", "duct_zeta"}       # gain multiplies the result in predict
 _FLUX_ONLY_G = {"raw", "published", "disc_zero", "park_mm", "stroke_min_mm", "stroke_max_mm", "speed_max",
                 "accel_max", "bestehorn_jerk_factor", "cylinder_bore", "pipe_top", "floor_above_lab",
-                "reservoir_length", "reservoir_width", "reservoir_height"}
+                "reservoir_length", "reservoir_width", "reservoir_height", "duct_in_width", "duct_in_height",
+                "flange_hole", "moving_mass", "motor"}
 
 
 @dataclass
@@ -82,7 +96,7 @@ class Transfer:
 
 # ---------------------------------------------------------------------------
 
-def _grid(g: Geometry, dx: float):
+def _grid(g: Geometry, dx: float, h: float):
     x0, x1 = -g.head_length, g.channel_length
     y0, y1 = -g.head_width / 2, g.head_width / 2
     nx = int(round((x1 - x0) / dx))
@@ -95,25 +109,44 @@ def _grid(g: Geometry, dx: float):
     wet = head | chan
     bx0, bx1 = g.bank_x_range
     bank = (X >= bx0) & (X < bx1) & (np.abs(Y) <= g.bank_width / 2) & wet
-    # height of the pipe bottoms over each bank cell (inf elsewhere)
+    # "open": height of the pipe bottoms over each bank cell. "ducts": top of the duct block (inf elsewhere)
     roof = np.full(X.shape, np.inf)
-    for c in range(1, g.columns + 1):
-        xc = g.column_x(c)
-        roof[bank & (X >= xc - g.pitch_along / 2) & (X < xc + g.pitch_along / 2)] = g.row_bottom(c)
-    return xs, ys, X, Y, wet, head, chan, bank, roof
+    por = np.ones(X.shape)                              # open share of the plan over the bank
+    if g.ducted:
+        k = np.floor((bx1 - X) / g.pitch_along).astype(int)
+        for j in range(int(round(g.bank_length / g.pitch_along))):
+            sel = bank & (k == j)
+            if j < g.front_units:
+                roof[sel] = g.row_bottom(g.columns)
+            else:
+                roof[sel] = g.row_bottom(g.columns - (j - g.front_units))
+                por[sel] = g.void_fraction
+        solid = bank & (roof >= h)                      # block above the water: dry land
+        wet = wet & ~solid
+        bank = bank & ~solid
+        head = head & wet
+    else:
+        for c in range(1, g.columns + 1):
+            xc = g.column_x(c)
+            roof[bank & (X >= xc - g.pitch_along / 2) & (X < xc + g.pitch_along / 2)] = g.row_bottom(c)
+    return xs, ys, X, Y, wet, head, chan, bank, roof, por
 
 
 def _assemble(g: Geometry, hp: HydroParams, omega: float, h: float, grid):
-    xs, ys, X, Y, wet, head, chan, bank, roof = grid
+    xs, ys, X, Y, wet, head, chan, bank, roof, por = grid
     nx, ny = X.shape
     dx = xs[1] - xs[0]
     dy = ys[1] - ys[0]
     w_re = float(np.real(omega))
     kr = float(linear.wavenumber(w_re, h)) if w_re > 0 else float(abs(np.imag(omega)) / math.sqrt(linear.G * h))
     k = linear.wavenumber_complex(omega, h) if np.iscomplexobj(omega) and np.imag(omega) != 0 else kr
-    covered = bank & (roof < h)                      # pipes reach below the surface here
     D_open = np.tanh(k * h) / k
-    D = np.where(covered, np.where(np.isfinite(roof), roof, 0.0), D_open) + 0j
+    if g.ducted:
+        covered = bank                                   # a layer of water over a step of the block
+        D = np.where(covered, np.where(np.isfinite(roof), np.maximum(h - roof, 1e-3), 0.0) * por, D_open) + 0j
+    else:
+        covered = bank & (roof < h)                      # pipes reach below the surface here
+        D = np.where(covered, np.where(np.isfinite(roof), roof, 0.0), D_open) + 0j
     # discrete-dispersion-corrected k^2, with decay folded in as k -> k + i alpha
     kappa2 = 4 * np.sin(k * dx / 2) ** 2 / dx ** 2 if kr * dx < math.pi else k ** 2
     alpha = np.zeros_like(X)
@@ -134,7 +167,7 @@ def _assemble(g: Geometry, hp: HydroParams, omega: float, h: float, grid):
             dist = np.minimum(dist, g.head_width / 2 - np.abs(Y))
         s = np.clip(1 - dist / Lsp, 0, 1)
         alpha = np.where(head & ~bank, alpha + 8.0 / Lsp * s ** 2, alpha)
-    S = np.where(covered, g.void_fraction, 1.0)
+    S = np.where(covered, por if g.ducted else g.void_fraction, 1.0)
     # storage omega^2 S / g, written as D_open kappa^2 S so the discrete dispersion stays matched
     diag_term = (D_open * kappa2) * (1 + 2j * alpha / max(kr, 1e-9)) * S * dx * dy
 
@@ -162,7 +195,7 @@ def _assemble(g: Geometry, hp: HydroParams, omega: float, h: float, grid):
         return ia, ib, T
 
     # duct side walls: no flow between the bank and the head across the bank's long sides
-    if g.duct_side_walls:
+    if g.duct_side_walls and not g.ducted:
         side_block = ~(bank[:, :-1] ^ bank[:, 1:])
     else:
         side_block = np.ones((nx, ny - 1), bool)
@@ -186,6 +219,27 @@ def _footprint(X, Y, wet, cx, cy, lx, ly, dx):
     ox = np.clip(np.minimum(X + dx / 2, cx + lx / 2) - np.maximum(X - dx / 2, cx - lx / 2), 0, None) / dx
     oy = np.clip(np.minimum(Y + dx / 2, cy + ly / 2) - np.maximum(Y - dx / 2, cy - ly / 2), 0, None) / dx
     return np.where(wet, ox * oy, 0.0)
+
+
+def _source_cells(g: Geometry, p, X, Y, wet, chan, dx):
+    """Where a piston's water enters the plan: its duct outlet, the channel's first
+    column of cells across its lane ("ducts"), or the footprint under it ("open")."""
+    if g.ducted:
+        w = _footprint(X, Y, wet & chan, dx / 2, p.y, dx, g.pitch_across, dx)
+        if w.sum() == 0:                                 # a lane wider than the channel: nearest cells
+            w = _footprint(X, Y, wet & chan, dx / 2, p.y, dx, 2 * g.pitch_across, dx)
+        return w
+    return _footprint(X, Y, wet, p.x, p.y, g.pitch_along, g.pitch_across, dx)
+
+
+def _coupling(g: Geometry, p, k, h) -> complex:
+    """Far-field coupling of a piston's flux: a slot at its duct's height ("ducts"),
+    or a layer under the roof it leaves by ("open")."""
+    if g.ducted:
+        lo, hi = g.outlet_band(p.column)
+        return complex(linear.source_coupling_band(k, h, lo, hi)) if lo < h else 1.0
+    z = g.lip_height(p.column, h)
+    return complex(linear.source_coupling(k, h, z)) if z is not None else 1.0
 
 
 def _key(g: Geometry, hp: HydroParams, h: float, stations, freqs) -> str:
@@ -218,12 +272,10 @@ def transfer(depth: float, stations: Sequence[float], freqs: np.ndarray, g: Opti
     fmax = min(hp.f_max, float(freqs.max()))
     kmax = float(linear.wavenumber(2 * math.pi * fmax, h))
     dx = min(hp.dx_max, 2 * math.pi / kmax / hp.cells_per_wavelength)
-    grid = _grid(g, dx)
-    xs, ys, X, Y, wet, head, chan, bank, roof = grid
+    grid = _grid(g, dx, h)
+    xs, ys, X, Y, wet, head, chan, bank, roof, por = grid
     pist = g.pistons()
-    lips = [g.lip_height(p.column, h) for p in pist]
-    # each piston's footprint cells (the duct under it)
-    src_w = [_footprint(X, Y, wet, p.x, p.y, g.pitch_along, g.pitch_across, dx) for p in pist]
+    src_w = [_source_cells(g, p, X, Y, wet, chan, dx) for p in pist]
     # station sampling: mean over the channel cells in the column nearest x
     st_cols = []
     for s in stations:
@@ -245,14 +297,14 @@ def transfer(depth: float, stations: Sequence[float], freqs: np.ndarray, g: Opti
             B[idx[m], j] = 1j * omega / linear.G * w[m] / w.sum()
         lu = spla.splu(A)
         E = lu.solve(B)
-        coup = np.array([complex(linear.source_coupling(k, h, z)) if z is not None else 1.0 for z in lips])
+        coup = np.array([_coupling(g, p, k, h) for p in pist])
         for si, (i, colmask) in enumerate(st_cols):
             cells = idx[i, colmask]
             H[fi, :, si] = E[cells, :].mean(axis=0) * coup
         if verbose and fi % 25 == 0:
             print("  f=%.3f Hz  (%d/%d)  cells=%d" % (f, fi, len(freqs), nw), flush=True)
 
-    meta = {"cells": int(wet.sum()), "dx": dx, "f_max": fmax, "key": key}
+    meta = {"cells": int(wet.sum()), "dx": dx, "f_max": fmax, "key": key, "layout": g.layout}
     CACHE.mkdir(exist_ok=True)
     np.savez_compressed(path, freqs=freqs, H=H, stations=np.array(stations), depth=h, dx=dx,
                         meta=json.dumps(meta))
@@ -268,16 +320,15 @@ def field_at(depth: float, freq: float, pistons: Sequence[int], g: Optional[Geom
     omega = 2 * math.pi * freq
     k = float(linear.wavenumber(omega, h))
     dx = dx or min(hp.dx_max, 2 * math.pi / k / hp.cells_per_wavelength)
-    grid = _grid(g, dx)
-    xs, ys, X, Y, wet, head, chan, bank, roof = grid
+    grid = _grid(g, dx, h)
+    xs, ys, X, Y, wet, head, chan, bank, roof, por = grid
     A, idx, k = _assemble(g, hp, omega, h, grid)
     b = np.zeros(A.shape[0], complex)
     for p in g.pistons():
-        z = g.lip_height(p.column, h)
-        if p.number in pistons and z is not None:
-            w = _footprint(X, Y, wet, p.x, p.y, g.pitch_along, g.pitch_across, dx)
+        if p.number in pistons and p.bottom < h:
+            w = _source_cells(g, p, X, Y, wet, chan, dx)
             m = w > 0
-            b[idx[m]] += 1j * omega / linear.G * w[m] / w.sum() * complex(linear.source_coupling(k, h, z))
+            b[idx[m]] += 1j * omega / linear.G * w[m] / w.sum() * _coupling(g, p, k, h)
     e = spla.spsolve(A, b)
     out = np.full(X.shape, np.nan, complex)
     out[wet] = e * hp.gain

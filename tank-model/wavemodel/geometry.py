@@ -3,9 +3,15 @@
 Everything is in metres (positions) and cubic metres (volumes). Piston
 numbering follows the wavemaker-f25 application: display pistons 1..30,
 three per column. Column n is William's "row n": the group of three whose
-pipe is 54 - 3n inches long, so row 1 has the longest pipes and the lowest
-bottoms, row 10 the shortest and the highest. Which end of the bank row 10 is
-at comes from geometry.json (piston_bank.row_10_end).
+pipe is about 51 - 3.02 (n - 1) inches long, so row 1 has the longest pipes and the
+lowest bottoms, row 10 the shortest and the highest.
+
+The cylinders stand on a stepped block of ducts (the 2013-15 design drawings,
+BLUEPRINTS.md): each cylinder empties into its own duct, which runs to the
+block's front face at the channel mouth (x = 0). Row 10 is the top layer and
+its duct is the shortest; row 1 is the bottom layer, 2.6 m from the face.
+`layout = "open"` keeps the model before the drawings (pipe bottoms open
+under the bank) for comparison.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GEOMETRY_FILE = ROOT / "geometry.json"
 
 GALLONS_PER_M3 = 264.172
+IN = 0.0254
 
 
 def _v(node):
@@ -58,6 +65,15 @@ class Geometry:
     row_bottoms: List[float]
     bottom_offset: float
     row_10_end: str
+    layout: str
+    front_units: int
+    layer_pitch: float
+    duct_in_width: float
+    duct_in_height: float
+    sheet: float
+    flange_hole: float
+    moving_mass: float
+    motor: Dict
     duct_side_walls: bool
     between_pipes_open: bool
     cylinder_od: float
@@ -92,8 +108,42 @@ class Geometry:
         return max(0.0, 1.0 - self.pipe_area / (self.pitch_along * self.pitch_across))
 
     @property
+    def ducted(self) -> bool:
+        return self.layout == "ducts"
+
+    @property
     def bank_length(self) -> float:
-        return self.columns * self.pitch_along
+        """Length of the bank along the tank: the duct block, one front pitch longer than the 10 rows."""
+        return (self.columns + (self.front_units if self.ducted else 0)) * self.pitch_along
+
+    @property
+    def duct_area(self) -> float:
+        """Flow area of one duct, m^2."""
+        return self.duct_in_width * self.duct_in_height
+
+    @property
+    def outlet_ratio(self) -> float:
+        """Water speed in a duct over the disc speed (bore area / duct area)."""
+        return self.bore_area / self.duct_area
+
+    def duct_length(self, column: int) -> float:
+        """Run of row `column`'s duct from its cylinder axis to the outlet at the face, m."""
+        return (self.front_units + (self.columns - column) + 0.5) * self.pitch_along
+
+    def outlet_band(self, column: int) -> Tuple[float, float]:
+        """Bottom and top of row `column`'s duct outlet above the tank floor, m."""
+        zb = self.row_bottom(column)
+        return zb - self.layer_pitch + 0.02 * 0.0254, zb - self.sheet
+
+    def step_top(self, x: float) -> Optional[float]:
+        """Top of the duct block at x (m), or None outside it along the tank."""
+        x0, x1 = self.bank_x_range
+        if not (x0 <= x < x1):
+            return None
+        k = int((x1 - x) // self.pitch_along)          # 0 = the front unit at the face
+        if k < self.front_units:
+            return self.row_bottom(self.columns)
+        return self.row_bottom(self.columns - (k - self.front_units))
 
     @property
     def bank_width(self) -> float:
@@ -121,6 +171,8 @@ class Geometry:
     def column_x(self, column: int) -> float:
         """x of the centre of a column (row of three)."""
         k = self.columns - column if self.row_10_end == "channel" else column - 1
+        if self.ducted:
+            k += self.front_units
         return self.bank_near_x - (k + 0.5) * self.pitch_along
 
     def columns_toward_channel(self, column: int) -> List[int]:
@@ -278,6 +330,7 @@ def load(path: Path = GEOMETRY_FILE, **overrides) -> Geometry:
     raw = json.loads(Path(path).read_text())
     ch, hd, rs, pb, cy, ps = (raw["channel"], raw["head"], raw["reservoir"],
                               raw["piston_bank"], raw["cylinder"], raw["pistons"])
+    st = pb.get("stack", {})
     g = Geometry(
         channel_length=_v(ch["length"]),
         channel_width=_v(ch["width"]),
@@ -298,6 +351,15 @@ def load(path: Path = GEOMETRY_FILE, **overrides) -> Geometry:
         row_bottoms=list(_v(pb["row_bottoms"])),
         bottom_offset=_v(pb["bottom_offset"]),
         row_10_end=_v(pb["row_10_end"]),
+        layout=_v(pb.get("layout", {"value": "open"})),
+        front_units=int(_v(pb.get("front_units", 0))),
+        layer_pitch=_v(st.get("layer_pitch_in", 3.0)) * IN,
+        duct_in_width=st.get("duct_inside_in", {}).get("width", 9.682) * IN,
+        duct_in_height=st.get("duct_inside_in", {}).get("height", 2.941) * IN,
+        sheet=_v(st.get("sheet_in", 0.059)) * IN,
+        flange_hole=_v(st.get("flange_hole_diameter_in", 8.25)) * IN,
+        moving_mass=_v(ps.get("moving_mass_kg", 6.5)),
+        motor=dict(ps.get("motor", {})),
         duct_side_walls=bool(_v(pb["duct_side_walls"])),
         between_pipes_open=bool(_v(pb["between_pipes_open"])),
         cylinder_od=_v(cy["outside_diameter"]),
@@ -318,6 +380,13 @@ def load(path: Path = GEOMETRY_FILE, **overrides) -> Geometry:
         setattr(g, k, val)
     if g.row_10_end not in ("channel", "head"):
         raise ValueError("row_10_end must be 'channel' or 'head', not %r" % g.row_10_end)
+    if g.layout not in ("ducts", "open"):
+        raise ValueError("layout must be 'ducts' or 'open', not %r" % g.layout)
+    if g.ducted and g.row_10_end != "channel":
+        raise ValueError("with the drawn ducts row 10 is at the channel end (the outlets are on the block's tall face); "
+                         "row_10_end = 'head' needs layout = 'open'")
+    if not g.ducted:
+        g.front_units = 0
     return g
 
 

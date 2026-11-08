@@ -87,6 +87,23 @@ def source_coupling(k, h, z_top):
     return np.where(np.real(k) * h > 1e-6, g, 1.0)
 
 
+def source_coupling_band(k, h, z_lo, z_hi):
+    """As `source_coupling`, for a horizontal flux leaving a slot between z_lo and z_hi
+    above the bed (a duct outlet in an end wall). Linear wavemaker theory, with the
+    flux spread evenly over the slot:
+
+        4 sinh(kh) (sinh(k z_hi) - sinh(k z_lo)) / (k (z_hi - z_lo) (2kh + sinh 2kh))
+
+    It is 1 for long waves, and with z_lo = 0 it is `source_coupling`.
+    """
+    z1 = np.minimum(z_lo, h)
+    z2 = np.minimum(z_hi, h)
+    kh = k * h
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        g = 4 * np.sinh(kh) * (np.sinh(k * z2) - np.sinh(k * z1)) / (k * (z2 - z1) * (2 * kh + np.sinh(2 * kh)))
+    return np.where((np.real(k) * h > 1e-6) & (z2 > z1), g, 1.0)
+
+
 def stokes2_crest(a, k, h):
     """(crest, trough) of a second-order Stokes wave of first-order amplitude a."""
     kh = k * h
