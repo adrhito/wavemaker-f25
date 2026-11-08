@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Wave tank model: volumes, predictions, sweep tables and charts, drawings,
-3D model, calibration.
+"""Wave tank model: volumes, the pistons' limits, predictions, sweep tables and
+charts, drawings, 3D model, calibration.
 
   .venv/bin/python wm.py volumes --depth 0.30
+  .venv/bin/python wm.py pistons --depth 0.30 [--stroke 300 --speed 900]
   .venv/bin/python wm.py predict --pistons all --stroke 300 --speed 500 --depth 0.30 --plot
   .venv/bin/python wm.py sweep --depth 0.30,0.40,0.50,0.60
   .venv/bin/python wm.py chart
@@ -28,7 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from wavemodel import calibrate, motion, predict, tank  # noqa: E402
+from wavemodel import calibrate, drive, motion, predict, tank  # noqa: E402
 from wavemodel.geometry import GALLONS_PER_M3, capacity_band, load, parse_pistons  # noqa: E402
 
 RESULTS = HERE / "results"
@@ -36,6 +37,8 @@ RESULTS = HERE / "results"
 
 def _geom(a):
     over = {}
+    if getattr(a, "layout", None):
+        over["layout"] = a.layout
     if getattr(a, "row10_end", None):
         over["row_10_end"] = a.row10_end
     if getattr(a, "disc_zero", None) is not None:
@@ -67,7 +70,7 @@ def cmd_volumes(a):
               % (d, v, v * GALLONS_PER_M3, dv * 1000, dv * GALLONS_PER_M3,
                  ("rows %d-%d" % (wet[0], wet[-1]) if len(wet) > 1 else "row %d" % wet[0]) if wet else "none"))
     print()
-    print("The bank at %.3f m still water, discs parked at %.0f mm (row 10 at the %s end):" % (a.depth, g.park_mm, g.row_10_end))
+    print("The bank at %.3f m still water, discs parked at %.0f mm (%s layout):" % (a.depth, g.park_mm, g.layout))
     print("  row  pistons  pipe   bottom  under water   air below disc   water in pipe   air gauge   water follows disc")
     for r in g.air_table(a.depth):
         print("  %3d  %-7s  %4.0f mm  %4.0f mm  %6s       %4.0f mm          %4.0f mm         %5.2f kPa    %s"
@@ -76,7 +79,7 @@ def cmd_volumes(a):
                  1000 * r["air_length_m"], 1000 * r["water_column_m"], r["air_gauge_kpa"],
                  ("%.1f%%" % (100 * r["follow"])) if r["wet"] else "-"))
     print()
-    print("One piston: %.1f cm2 bore, %.3f L per mm of travel, %.1f L for the full 390 mm."
+    print("One piston: %.1f cm2 bore, %.4f L per mm of travel, %.1f L for the full 390 mm."
           % (g.bore_area * 1e4, g.bore_area * 1e-3 * 1e3, g.bore_area * 0.39 * 1e3))
     wet = g.wet_columns(a.depth)
     nw = 3 * len(wet)
@@ -99,22 +102,30 @@ def _run_from_args(a, g):
 def _hp(a, seal=None):
     return tank.HydroParams(end=a.end, head_walls=a.head_walls, gain=a.gain,
                             head_absorption=a.head_absorption, channel_damping=a.channel_damping,
-                            seal=seal or a.seal)
+                            seal=seal or a.seal, air_dynamics=not getattr(a, "no_air_dynamics", False),
+                            duct_zeta=getattr(a, "duct_zeta", 0.05))
 
 
 def print_rows(res):
-    print("  row  pistons   bottom  under water  disc stroke  water stroke first / steady  air")
+    print("  row  pistons   bottom  under water  disc stroke  water stroke first / steady  rings at       "
+          "outlet    motor force peak / rms   air")
     for r in res["rows"]:
+        force = "%4.0f / %3.0f N (%3.0f%%)" % (r["force_peak_n"], r["force_rms_n"], 100 * r["force_ratio"]) \
+            if "force_peak_n" in r else ""
         if not r["wet"]:
-            print("  %3d  %-8s  %4.0f mm  dry          -            -                            moves only air"
-                  % (r["row"], "%d-%d" % (r["pistons"][0], r["pistons"][-1]), r["bottom_mm"]))
+            print("  %3d  %-8s  %4.0f mm  dry          -            -                            -              "
+                  "-         %-24s moves only air"
+                  % (r["row"], "%d-%d" % (r["pistons"][0], r["pistons"][-1]), r["bottom_mm"], force))
             continue
-        note = "vents at the bottom" if r["vented"] else "stays in the pipe"
+        note = "vents at the bottom" if r["vented"] else \
+            "puffs air at the bottom as the water overshoots" if r.get("vented_dynamic") else "stays in the pipe"
         if r["leaked"]:
             note += ", drawn in past the seal"
-        print("  %3d  %-8s  %4.0f mm  %4.0f mm      %4.0f mm      %5.0f / %4.0f mm               %s"
+        ring = "%.2f Hz z %.2f" % (r["f_n_hz"], r["zeta"]) if "f_n_hz" in r else "(quasi-static)"
+        outlet = "%.2f m/s" % r["outlet_speed_peak_m_s"] if "outlet_speed_peak_m_s" in r else "-"
+        print("  %3d  %-8s  %4.0f mm  %4.0f mm      %4.0f mm      %5.0f / %4.0f mm               %-14s %-9s %-24s %s"
               % (r["row"], "%d-%d" % (r["pistons"][0], r["pistons"][-1]), r["bottom_mm"], r["submergence_mm"],
-                 r["disc_down_mm"], r["first_down_mm"], r["last_down_mm"], note))
+                 r["disc_down_mm"], r["first_down_mm"], r["last_down_mm"], ring, outlet, force, note))
 
 
 def cmd_predict(a):
@@ -124,9 +135,10 @@ def cmd_predict(a):
     else:
         run = _run_from_args(a, g)
     res = predict.predict(run, a.stations, g, _hp(a), verbose=True)
-    print("pistons %s  stroke %.0f mm (%.0f -> %.0f)  speed %.0f (reached %.0f) mm/s  depth %.3f m  seal %s  row 10 at the %s"
+    print("pistons %s  stroke %.0f mm (%.0f -> %.0f)  speed %.0f (reached %.0f) mm/s  depth %.3f m  seal %s  %s layout%s"
           % (a.pistons, run.params.stroke, run.params.position1, run.params.position2, run.params.speed2,
-             res["peak_piston_speed_mm_s"], run.depth, res["seal"], g.row_10_end))
+             res["peak_piston_speed_mm_s"], run.depth, res["seal"], g.layout,
+             "" if res["air_dynamics"] else ", water inertia off"))
     print("cycle %.3f s   water moved per stroke %.1f L (discs sweep %.1f L)   peak flux %.1f L/s   grid %.3f m, %s cells"
           % (res["cycle_time_s"], 1000 * res["volume_per_stroke_m3"], 1000 * res["volume_disc_m3"],
              1000 * res["peak_flux_m3s"], res["dx"], res["cells"]))
@@ -193,12 +205,13 @@ def _sweep_one(a, depth):
     speeds = [int(s) for s in a.speeds.split(",")]
     sets = SETS if a.sets == "default" else dict((s, s) for s in a.sets.split(";"))
     RESULTS.mkdir(exist_ok=True)
-    suffix = "" if g.row_10_end == "channel" else "_row10-%s" % g.row_10_end
+    suffix = ("" if g.row_10_end == "channel" else "_row10-%s" % g.row_10_end) + \
+        ("" if g.ducted else "_open") + ("" if not getattr(a, "no_air_dynamics", False) else "_quasistatic")
     out = RESULTS / ("sweep_%dcm%s.csv" % (round(depth * 100), suffix))
     rows = []
     n = len(strokes) * len(speeds) * len(sets) * len(seals)
     i = 0
-    print("sweep at %.2f m, row 10 at the %s end, wet rows %s" % (depth, g.row_10_end, g.wet_columns(depth)))
+    print("sweep at %.2f m, %s layout, wet rows %s" % (depth, g.layout, g.wet_columns(depth)))
     for seal, (label, spec), stroke, speed in itertools.product(seals, sets.items(), strokes, speeds):
         i += 1
         ids = parse_pistons(spec, g)
@@ -210,6 +223,7 @@ def _sweep_one(a, depth):
             rows.append({
                 "pistons": label, "spec": spec, "n_pistons": len(ids), "n_wet": 3 * len(wet),
                 "wet_rows": " ".join(str(r["row"]) for r in wet), "seal": seal, "row10_end": g.row_10_end,
+                "layout": g.layout, "air_dynamics": int(res["air_dynamics"]),
                 "stroke_mm": stroke,
                 "water_stroke_mm": round(sum(r["last_down_mm"] for r in wet) / len(wet), 1) if wet else 0.0,
                 "litres_per_stroke": round(1000 * res["volume_per_stroke_m3"], 1),
@@ -221,7 +235,12 @@ def _sweep_one(a, depth):
                 "first_H_mm": round(m["first_wave_height_mm"], 1), "first_crest_mm": round(m["first_crest_mm"], 1),
                 "max_crest_mm": round(m["max_crest_mm"], 1), "H13_mm": round(m["H_one_third_mm"], 1),
                 "period_s": round(m["period_s"], 2), "wavelength_m": round(m["wavelength_m"], 2),
-                "ursell": round(m["ursell"], 1), "flags": "; ".join(m["flags"] + res["warnings"]),
+                "ursell": round(m["ursell"], 1),
+                "force_peak_n": round(max((r.get("force_peak_n", 0) for r in res["rows"]), default=0)),
+                "force_rms_n": round(max((r.get("force_rms_n", 0) for r in res["rows"]), default=0)),
+                "force_ratio": round(max((r.get("force_ratio", 0) for r in res["rows"]), default=0), 2),
+                "outlet_m_s": round(max((r.get("outlet_speed_peak_m_s", 0) for r in res["rows"]), default=0), 2),
+                "flags": "; ".join(m["flags"] + res["warnings"]),
             })
         if i % 20 == 0 or i == n:
             print("  [%d/%d] %-5s %-28s %3d mm %3d mm/s -> H %.1f mm at x=%.0f m" %
@@ -232,6 +251,62 @@ def _sweep_one(a, depth):
         w.writeheader()
         w.writerows(rows)
     print("wrote", out, "(%d rows)" % len(rows))
+
+
+def cmd_pistons(a):
+    """What each row moves, how its water answers, and what the motors allow."""
+    g = _geom(a)
+    lim = drive.motor_limits(g)
+    A = g.bore_area
+    print("Pistons, from the design drawings and the LinMot data sheet (BLUEPRINTS.md); %s layout." % g.layout)
+    print()
+    print("Motor  %s" % g.motor.get("model", "LinMot"))
+    print("  stroke: %.0f mm with full force, %.0f mm in all (the drive's -57..453 mm); the application uses -20..370 mm"
+          % (lim["standard_stroke_mm"], lim["extended_stroke_mm"]))
+    print("  force: %.0f N peak (%.0f%% at the ends of the stroke), %.0f N continuous without a fan, %.0f N with one"
+          % (lim["peak_n"], 100 * lim["border_share"], lim["cont_passive_n"], lim["cont_fan_n"]))
+    fast = motion.run(motion.Params.simple(350, 900, 20000, 7500, motion.BESTEHORN), duration=10, kj=g.bestehorn_jerk_factor,
+                      cycles=1)
+    print("  speed: %.1f m/s at 72 V; the application allows 0.9 m/s; with the lab's fast settings (accel 20,000, jerk"
+          " 7,500) a 350 mm stroke peaks at %.2f m/s" % (lim["speed_mm_s"] / 1000, fast.peak_speed / 1000))
+    print("  moving mass %.1f kg (slider 3.56 kg + disc, est.): holding it takes %.0f N; dry, it could accelerate at %.0f m/s2"
+          % (g.moving_mass, g.moving_mass * 9.81, drive.max_steady_accel(g)))
+    print()
+    print("Displacement  bore %.1f mm, %.1f cm2: %.3f L per mm of travel, %.1f L over the 390 mm the application allows"
+          % (1000 * g.cylinder_bore, A * 1e4, A, A * 390))
+    if g.ducted:
+        print("Ducts  %.0f x %.0f mm inside (%.0f cm2): the water leaves the outlet %.2f times faster than the disc moves"
+              % (1000 * g.duct_in_width, 1000 * g.duct_in_height, g.duct_area * 1e4, g.outlet_ratio))
+    print()
+    print("Each row at %.3f m still water, discs parked at %.0f mm (%s seal):" % (a.depth, g.park_mm, a.seal))
+    print("  row  pistons  bottom  outlet       duct    air    water mass  air spring  rings at  wet?")
+    for r in drive.table(g, a.depth, a.seal):
+        lo, hi = r["outlet_m"]
+        if r["wet"]:
+            print("  %3d  %-7s  %4.0f mm  %3.0f-%3.0f mm  %4.2f m  %3.0f mm  %5.0f kg    %5.1f kN/m  %4.2f Hz  wet"
+                  % (r["row"], "%d-%d" % (3 * r["row"] - 2, 3 * r["row"]), 1000 * r["bottom_m"], 1000 * lo, 1000 * hi,
+                     r["duct_m"], 1000 * r["air_m"], r["mass_kg"], r["k_n_per_m"] / 1000, r["f_n_hz"]))
+        else:
+            print("  %3d  %-7s  %4.0f mm  %3.0f-%3.0f mm  %4.2f m  %3.0f mm  -           -           -         dry: moves air"
+                  % (r["row"], "%d-%d" % (3 * r["row"] - 2, 3 * r["row"]), 1000 * r["bottom_m"], 1000 * lo, 1000 * hi,
+                     r["duct_m"], 1000 * r["air_m"]))
+    print()
+    print("  water mass: the pipe's water plus its duct's, referred to the disc (rho A^2 L / A_duct): what the air must")
+    print("  push. With the trapped air as the spring, each wet row rings at the frequency shown, after every stroke.")
+    if a.stroke:
+        g2 = g
+        ids = parse_pistons(a.pistons, g2)
+        prm = motion.Params.simple(a.stroke, a.speed, a.accel, a.jerk, a.profile)
+        run = predict.Run(ids, prm, a.depth, cycles=a.cycles)
+        res = predict.predict(run, [5.0], g2, tank.HydroParams(seal=a.seal))
+        print()
+        print("A run: pistons %s, %.0f mm at %.0f mm/s (reached %.0f), accel %.0f, jerk %.0f, %g cycles:"
+              % (a.pistons, a.stroke, a.speed, res["peak_piston_speed_mm_s"], a.accel, a.jerk, a.cycles))
+        print_rows(res)
+        for w in res["warnings"]:
+            print("  ! " + w)
+        m = res["metrics"][0]
+        print("  first wave at 5 m: %.0f mm crest to trough" % m["first_wave_height_mm"])
 
 
 def cmd_chart(a):
@@ -282,12 +357,26 @@ def main():
     def geom_args(p, depth_default=0.30):
         p.add_argument("--depth", default=depth_default, type=float, help="still-water depth, m")
         p.add_argument("--row10-end", choices=["channel", "head"],
-                       help="which end of the bank row 10 (shortest pipes) is at; default from geometry.json")
+                       help="which end of the bank row 10 (shortest pipes) is at; 'head' needs --layout open")
         p.add_argument("--disc-zero", type=float, help="disc face height above the floor at 0 mm, m")
+        p.add_argument("--layout", choices=["ducts", "open"],
+                       help="ducts: the drawn duct block (default); open: the model before the drawings")
 
     p = sub.add_parser("volumes")
     geom_args(p)
     p.set_defaults(fn=cmd_volumes)
+
+    p = sub.add_parser("pistons", help="per-row duct, air spring, ringing, and the motors' limits")
+    geom_args(p)
+    p.add_argument("--seal", default="tight", choices=["tight", "leaky"])
+    p.add_argument("--pistons", default="all")
+    p.add_argument("--stroke", type=float, help="also run this stroke and report the motor force")
+    p.add_argument("--speed", type=float, default=900)
+    p.add_argument("--accel", type=float, default=20000)
+    p.add_argument("--jerk", type=float, default=7500)
+    p.add_argument("--profile", type=int, default=1)
+    p.add_argument("--cycles", type=float, default=5)
+    p.set_defaults(fn=cmd_pistons)
 
     def run_args(p, accel=10000, jerk=2000):
         p.add_argument("--pistons", default="all", help="all | 1-30 | row8-10 | lane2 | 1,4,7")
@@ -302,9 +391,15 @@ def main():
         p.add_argument("--gain", type=float, default=1.0)
         p.add_argument("--head-absorption", type=float, default=0.01)
         p.add_argument("--channel-damping", type=float, default=1.0)
+        p.add_argument("--duct-zeta", type=float, default=0.05,
+                       help="damping ratio of the air/duct-water swing beyond turbulent loss and radiation (est.)")
         p.add_argument("--row10-end", choices=["channel", "head"],
-                       help="which end of the bank row 10 (shortest pipes) is at; default from geometry.json")
+                       help="which end of the bank row 10 (shortest pipes) is at; 'head' needs --layout open")
         p.add_argument("--disc-zero", type=float, help="disc face height above the floor at 0 mm, m")
+        p.add_argument("--layout", choices=["ducts", "open"],
+                       help="ducts: the drawn duct block (default); open: the model before the drawings")
+        p.add_argument("--no-air-dynamics", action="store_true",
+                       help="leave out the water's inertia in pipe and duct (quasi-static, as before 7 Nov)")
 
     p = sub.add_parser("predict")
     run_args(p)

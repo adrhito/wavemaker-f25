@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from . import air, linear, motion, tank
+from . import air, drive, linear, motion, tank
 from .geometry import Geometry, load, parse_pistons
 
 DT = 0.04              # s, synthesis sample interval
@@ -50,7 +50,8 @@ def _flux(run: Run, g: Geometry, n: int, hp: tank.HydroParams):
     nf = int(round(WINDOW / fine))
     step = int(round(DT / fine))
     Q = np.zeros((g.rows * g.columns, n))
-    info = {"peak_speed": 0.0, "cycle_time": float("nan"), "end_time": 0.0, "pipes": {}}
+    info = {"peak_speed": 0.0, "cycle_time": float("nan"), "end_time": 0.0, "pipes": {}, "disc": {}, "fine": {},
+            "tkey": {}, "fine_dt": fine}
     trajs, done = {}, {}
     zd_park = g.disc_height(g.park_mm)
     for p in run.pistons:
@@ -64,8 +65,16 @@ def _flux(run: Run, g: Geometry, n: int, hp: tank.HydroParams):
             m = min(len(tr.pos), nf)
             pos[:m] = tr.pos[:m]
             moving = np.nonzero(np.abs(tr.vel) > 1e-6)[0]
-            trajs[tkey] = (pos, tr, tr.t[moving[-1]] if len(moving) else 0.0)
-        pos, tr, end = trajs[tkey]
+            acc = np.zeros(nf)
+            acc[:m] = np.gradient(tr.vel[:m], fine) if m > 2 else 0.0
+            mid = np.minimum(np.arange(n) * step + step // 2, nf - 1)
+            trajs[tkey] = (pos, tr, tr.t[moving[-1]] if len(moving) else 0.0,
+                           {"pos_mm": pos[np.minimum(np.arange(n) * step, nf - 1)], "acc_mm_s2": acc[mid],
+                            "acc_peak_mm_s2": float(np.abs(acc).max())})
+        pos, tr, end, disc = trajs[tkey]
+        info["disc"][p] = disc
+        info["fine"][tkey] = pos
+        info["tkey"][p] = tkey
         col = (p - 1) // g.rows + 1
         zb = g.row_bottom(col)
         fkey = (tkey, round(zb, 5))
@@ -160,8 +169,12 @@ def predict(run: Run, stations: Sequence[float] = DEFAULT_STATIONS, g: Geometry 
     sigma = SIGMA_DECADES / WINDOW
     freqs = np.fft.rfftfreq(n, DT)
     Q, info = _flux(run, g, n, hp)
-    net = Q.sum(axis=0)
+    dyn, pressure = {}, {}
+    if hp.air_dynamics:
+        Q, dyn, pressure = _dynamic(run, g, hp, info, Q, t)
     QF = np.fft.rfft(Q * np.exp(-sigma * t), axis=1)            # [piston, f]
+    net = Q.sum(axis=0)
+    forces = _forces(run, g, hp, info, Q, t, pressure)
     tf = tank.transfer(run.depth, stations, freqs, g, hp, verbose=verbose, sigma=sigma)
     # transfer functions use exp(-i w t); numpy's forward FFT pairs with exp(+i w t)
     EF = np.einsum("fps,pf->sf", np.conj(tf.H), QF)
@@ -172,13 +185,16 @@ def predict(run: Run, stations: Sequence[float] = DEFAULT_STATIONS, g: Geometry 
     above = float(P[freqs > tf.meta.get("f_max", hp.f_max)].sum() / max(P.sum(), 1e-30))
 
     rows = row_summary(run, info, g)
+    for r in rows:
+        r.update(dyn.get(r["row"], {}))
+        r.update(forces.get(r["row"], {}))
     out = {
         "t": t, "eta": eta, "stations": list(stations),
         "net_flux": net,
         "volume_per_stroke_m3": sum(g.bore_area * r["last_down_mm"] / 1000.0 * len(r["pistons"]) for r in rows),
         "volume_first_stroke_m3": sum(g.bore_area * r["first_down_mm"] / 1000.0 * len(r["pistons"]) for r in rows),
         "volume_disc_m3": g.bore_area * run.params.stroke / 1000.0 * len(run.pistons),
-        "rows": rows, "seal": hp.seal,
+        "rows": rows, "seal": hp.seal, "air_dynamics": hp.air_dynamics,
         "peak_flux_m3s": float(np.abs(net).max()),
         "peak_piston_speed_mm_s": info["peak_speed"],
         "cycle_time_s": info["cycle_time"],
@@ -208,11 +224,139 @@ def predict(run: Run, stations: Sequence[float] = DEFAULT_STATIONS, g: Geometry 
     if getattr(run, "curve", 0):
         out["warnings"].append("this preset runs stored curve %d; the model drives the plain Position 1/2 "
                                "stroke with each piston's Curve Offset as a start delay" % run.curve)
+    lim = drive.motor_limits(g)
+    over = [r for r in rows if r.get("force_ratio", 0) > 1.0]
+    if over:
+        out["warnings"].append("motor force: row%s %s would need %s N at peak, more than the LinMot gives there "
+                               "(%.0f N, %.0f%% of it at the ends of its stroke): expect a following error or a fault"
+                               % ("s" if len(over) > 1 else "", _span([r["row"] for r in over]),
+                                  "/".join("%.0f" % r["force_peak_n"] for r in over), lim["peak_n"],
+                                  100 * lim["border_share"]))
+    hot = [r for r in rows if r.get("force_rms_n", 0) > lim["cont_passive_n"]]
+    if hot:
+        out["warnings"].append("motor heat: row%s %s average%s %s N rms while moving, above the %.0f N continuous "
+                               "rating without a fan (%.0f N with one): fine for a short run, not for minutes"
+                               % ("s" if len(hot) > 1 else "", _span([r["row"] for r in hot]), "" if len(hot) > 1 else "s",
+                                  "/".join("%.0f" % r["force_rms_n"] for r in hot), lim["cont_passive_n"],
+                                  lim["cont_fan_n"]))
     if run.params.speed2 > info["peak_speed"] * 1.05:
         out["warnings"].append("commanded %.0f mm/s but the jerk/acceleration limits only reach %.0f mm/s"
                                % (run.params.speed2, info["peak_speed"]))
     for si, x in enumerate(stations):
         out["metrics"].append(_metrics(eta[si], t, x, run, info, g))
+    return out
+
+
+DYN_DT = 0.004          # s, step of the dynamic integration
+RING_DOWN = 30.0        # s after the motion that the dynamic integration keeps going
+
+
+def _dynamic(run: Run, g: Geometry, hp: tank.HydroParams, info, Q, t):
+    """Replace each wet pipe's quasi-static flux with the one its water's inertia gives (air.pipes_dynamic).
+
+    Pipes that share a trajectory and a row are integrated once. Returns the new
+    flux [piston, t] on the DT grid, a per-row summary, and each wet piston's air
+    pressure on the DT grid.
+    """
+    A = g.bore_area
+    fine_dt = info["fine_dt"]
+    sub = int(round(DYN_DT / fine_dt))
+    step = int(round(DT / DYN_DT))
+    nsteps = min(int((info["end_time"] + RING_DOWN) / DYN_DT) + 1, len(t) * step)
+    wet = [p for p in run.pistons if info["pipes"][p]["wet"]]
+    groups = {}
+    for p in wet:
+        groups.setdefault((info["tkey"][p], (p - 1) // g.rows + 1), []).append(p)
+    if not groups:
+        return Q, {}, {}
+    keys = list(groups)
+    U = len(keys)
+    ZD = np.empty((U, nsteps))
+    zb, M, cq, C0, z0, cl = (np.empty(U) for _ in range(6))
+    r = g.outlet_ratio if g.ducted else 1.0
+    c0 = math.sqrt(linear.G * run.depth)
+    c_rad = len(wet) * drive.RHO * linear.G * A * A / (g.channel_width * c0)
+    n_air = info["pipes"][wet[0]]["n"]
+    for i, (tk, col) in enumerate(keys):
+        pos = info["fine"][tk][::sub]
+        seg = pos[:nsteps]
+        if len(seg) < nsteps:
+            seg = np.concatenate([seg, np.full(nsteps - len(seg), seg[-1])])
+        ZD[i] = g.disc_height(seg)
+        pi = info["pipes"][groups[(tk, col)][0]]
+        zb[i] = g.row_bottom(col)
+        water = max(pi["inner_start_m"] - zb[i], 0.0)
+        duct = (g.duct_length(col) + drive.END_LENGTH) * A / g.duct_area if g.ducted else drive.END_LENGTH
+        M[i] = drive.RHO * A * (water + duct)
+        cq[i] = 0.5 * drive.RHO * drive.loss_coefficient(g, col) * r * r * A
+        C0[i] = pi["pLn"]
+        z0[i] = pi["inner_start_m"]
+        k_i = A * (n_air * pi["p_start_pa"] / pi["air_start_m"] + drive.RHO * linear.G)
+        cl[i] = c_rad + 2 * hp.duct_zeta * math.sqrt(k_i * M[i])
+    q, P, vented, leaked = air.pipes_dynamic(ZD, zb, run.depth, A, M, cq, cl, C0, z0, n_air, hp.seal, DYN_DT)
+    Qd = Q.copy()
+    pressure = {}
+    out_rows = {}
+    nt = len(t)
+    for i, (tk, col) in enumerate(keys):
+        # average onto the DT grid; after the integration window the water is still
+        qc = np.zeros(nt)
+        m = nsteps // step
+        qc[:m] = q[i, :m * step].reshape(m, step).mean(axis=1)
+        pc = np.full(nt, P[i, -1])
+        pc[:m] = P[i, :m * step].reshape(m, step).mean(axis=1)
+        for p in groups[(tk, col)]:
+            Qd[p - 1] = qc
+            pressure[p] = pc
+        pi = info["pipes"][groups[(tk, col)][0]]
+        L, pr = pi["air_start_m"], pi["p_start_pa"]
+        k = A * (n_air * pr / L + drive.RHO * linear.G)
+        if col not in out_rows:
+            w_peak = np.abs(q[i]).max() / A
+            c_eq = cl[i] + (8 / (3 * math.pi)) * cq[i] * w_peak
+            out_rows[col] = {"f_n_hz": math.sqrt(k / M[i]) / (2 * math.pi), "zeta": c_eq / (2 * math.sqrt(k * M[i])),
+                             "water_mass_kg": float(M[i]), "air_spring_n_per_m": k,
+                             "outlet_speed_peak_m_s": float(np.abs(q[i]).max() / (g.duct_area if g.ducted else A)),
+                             "vented_dynamic": bool(vented[i]), "leaked_dynamic": bool(leaked[i])}
+    return Qd, out_rows, pressure
+
+
+def _forces(run: Run, g: Geometry, hp: tank.HydroParams, info, Q, t, pressure) -> Dict[int, Dict]:
+    """Motor force per row of the selection: F = m a - m g + A (p - p0), positive down.
+
+    The air pressure is the dynamic one when it was integrated; otherwise the
+    quasi-static balance p = p0 + rho g (h - z_in)."""
+    lim = drive.motor_limits(g)
+    A, m = g.bore_area, g.moving_mass
+    half_extra = (lim["extended_stroke_mm"] - lim["standard_stroke_mm"]) / 2
+    out = {}
+    for p in run.pistons:
+        col = (p - 1) // g.rows + 1
+        if col in out:
+            continue
+        d = info["disc"][p]
+        pos = d["pos_mm"]
+        a = d["acc_mm_s2"] / 1000.0
+        pi = info["pipes"][p]
+        dp = np.zeros_like(pos)
+        if pi["wet"]:
+            if p in pressure:
+                dp = pressure[p] - air.P0
+            else:
+                V = np.cumsum(Q[p - 1]) * DT
+                z_in = np.maximum(pi["inner_start_m"] - V / A, g.row_bottom(col))
+                dp = drive.RHO * linear.G * (run.depth - z_in)
+        F = m * a - m * linear.G + A * dp
+        # usable force along the stroke: full over the standard stroke, down to the border share at its ends.
+        # Drive position p sits p + 32 mm out of the stator (data sheet against the drive's -57..453 mm envelope);
+        # the standard stroke is 50..410 mm out.
+        ext = pos + 32.0
+        outside = np.maximum(np.maximum(50.0 - ext, ext - 410.0), 0.0)
+        Flim = lim["peak_n"] * (1 - (1 - lim["border_share"]) * np.minimum(outside / half_extra, 1.0))
+        moving = t <= max(info["end_time"], DT)
+        out[col] = {"force_peak_n": float(np.abs(F).max()), "force_rms_n": float(np.sqrt(np.mean(F[moving] ** 2))),
+                    "force_ratio": float((np.abs(F) / Flim).max()), "air_gauge_peak_kpa": float(np.abs(dp).max() / 1000),
+                    "accel_peak_m_s2": d["acc_peak_mm_s2"] / 1000.0}
     return out
 
 

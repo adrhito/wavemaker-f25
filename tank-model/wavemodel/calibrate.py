@@ -49,7 +49,7 @@ FIELDS = ["run_id", "pistons", "position1_mm", "position2_mm", "speed_mm_s", "ac
           "observed_height_mm", "observed_crest_mm", "observed_period_s", "notes"]
 
 BOUNDS = {"gain": (0.3, 2.0), "head_absorption": (0.0, 0.3), "channel_damping": (0.5, 6.0),
-          "bottom_offset": (-0.06, 0.06), "disc_zero": (1.2, 1.4)}
+          "bottom_offset": (-0.06, 0.06), "disc_zero": (1.25, 1.42), "duct_zeta": (0.0, 0.4)}
 
 
 def _f(row, k, default=None):

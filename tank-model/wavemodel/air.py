@@ -1,15 +1,19 @@
 """The air trapped between each piston's sealed disc and the water in its pipe.
 
-The pipes stand in the head with open bottoms, stepped from row 1 (lowest)
-to row 10 (highest), tops level. A disc with a rubber seal runs in the top of
-each pipe, and between the disc and the water there is air. So:
+The pipes stand on the duct block, stepped from row 1 (lowest) to row 10
+(highest), tops level; each opens at its bottom into its own duct, which
+runs to an outlet in the block's face at the channel mouth. A disc with a
+rubber seal runs in the top of each pipe, and between the disc and
+the water there is air. So:
 
-* A row whose pipe bottom is above the still water moves only air.
+* A row whose pipe bottom (its duct's ceiling) is above the still water moves
+  only air: its outlet is not under water, and the air leaves by it.
 * In a wet row the air is a stiff spring between disc and water. The water
   inside follows the disc a few per cent short of it, because the air
   squeezes: n p / L is 15-30 times the rho g of the water pushing back.
 * If a downstroke drives the inner water down to the pipe bottom, the rest of
-  it blows air out of the bottom and moves no water (venting).
+  it blows air along the duct and out of the outlet, and moves no water
+  (venting).
 * An upstroke draws water up the pipe, above the outside level if it must
   (a slight vacuum in the air), unless air gets past the seal.
 
@@ -30,11 +34,13 @@ Seeing bubbles come out of the pipe bottoms on every downstroke would mean
 'leaky'; none after the first stroke would mean 'tight'. A measured run
 with a stroke longer than the submergence also tells them apart.
 
-The model is quasi-static: the air pressure balances the water at the
+`pipe_flux` is quasi-static: the air pressure balances the water at the
 inner surface, p = p0 + rho g (h - z_in), and p L^n stays fixed between
 venting and leak events (n = 1 while parked and while Prepare lifts the
-pistons, the polytropic index during the run). The water's inertia is left
-out: air spring and water ring at 3-5 Hz, well above the piston motion.
+pistons, the polytropic index during the run). `pipes_dynamic` adds the
+water's inertia: with the drawn ducts it is large (drive.py), and air and
+water ring at 0.9-3 Hz, inside the band the strokes drive. (Without the
+ducts, as this model was first written, they rang at 3-5 Hz.)
 """
 
 from __future__ import annotations
@@ -151,5 +157,61 @@ def pipe_flux(zd: np.ndarray, zb: float, h: float, area: float, dt: float, step:
     info.update(first_down_mm=downs[0][0] if downs else 0.0, last_down_mm=downs[-1][0] if downs else 0.0,
                 disc_down_mm=downs[0][1] if downs else 0.0, vented=vented, leaked=leaked,
                 follow=n * p0 / (n * p0 + RHO * G * L0), inner_start_m=float(z_in[0]),
-                inner_min_m=float(z_in.min()), inner_max_m=float(z_in.max()))
+                inner_min_m=float(z_in.min()), inner_max_m=float(z_in.max()),
+                air_start_m=L0, p_start_pa=p0, pLn=c, n=n)
     return q, info
+
+
+def pipes_dynamic(ZD: np.ndarray, zb: np.ndarray, h: float, area: float, mass: np.ndarray, c_quad: np.ndarray,
+                  c_lin: np.ndarray, C0: np.ndarray, z0: np.ndarray, n: float, seal: str, dt: float):
+    """Air and water in several wet pipes at once, with the water's inertia.
+
+    ZD[u, k]: disc height of pipe group u at step k (dt apart). Per group: pipe
+    bottom zb, water mass M (pipe + duct, referred to the inner surface), quadratic
+    loss c_quad (N per (m/s)^2) and linear damping c_lin (N s/m), and the start
+    state: p L^n = C0, inner surface z0, at rest.
+
+        M dw/dt = -A (p - p0 - rho g (h - z_in)) - c_lin w - c_quad w |w|
+        p = C / (z_disc - z_in)^n
+
+    Venting: the inner water cannot go below the pipe bottom; air leaves along
+    the duct instead (C drops) and the water there stops. 'leaky': air comes in
+    past the seal whenever p < p0 (C rises). Semi-implicit Euler.
+    Returns flux out (m^3/s) and air pressure (Pa), both [u, k], and per-group
+    flags (vented, leaked).
+    """
+    U, N = ZD.shape
+    z = z0.astype(float).copy()
+    w = np.zeros(U)
+    C = C0.astype(float).copy()
+    q = np.zeros((U, N))
+    P = np.zeros((U, N))
+    vented = np.zeros(U, bool)
+    leaked = np.zeros(U, bool)
+    pb = P0 + RHO * G * (h - zb)
+    rg = RHO * G
+    leaky = seal == "leaky"
+    for k in range(N):
+        zd = ZD[:, k]
+        L = np.maximum(zd - z, 1e-4)
+        p = C / L ** n
+        if leaky:
+            low = p < P0
+            if low.any():
+                C = np.where(low, P0 * L ** n, C)
+                p = np.where(low, P0, p)
+                leaked |= low
+        acc = (-area * (p - P0 - rg * (h - z)) - c_lin * w - c_quad * w * np.abs(w)) / mass
+        w = w + dt * acc
+        z = z + dt * w
+        under = z < zb
+        if under.any():
+            z = np.where(under, zb, z)
+            w = np.where(under, np.maximum(w, 0.0), w)
+            Lb = np.maximum(zd - zb, 1e-4)
+            C = np.where(under, np.minimum(C, pb * Lb ** n), C)
+            p = np.where(under, C / Lb ** n, p)
+            vented |= under
+        q[:, k] = -area * w
+        P[:, k] = p
+    return q, P, vented, leaked
