@@ -23,7 +23,7 @@
   body { margin: 0; background: var(--bg); color: var(--ink); overflow: hidden;
          font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
   #view { position: fixed; inset: 0; }
-  #panel { position: fixed; top: 12px; left: 12px; width: 318px; max-width: calc(100vw - 32px);
+  #panel { position: fixed; top: 12px; left: 12px; width: 384px; max-width: calc(100vw - 32px);
            max-height: calc(100vh - 24px); overflow: auto; background: var(--panel);
            border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; }
   h1 { font-size: 15px; margin: 0 0 2px; }
@@ -72,25 +72,27 @@
     <input type="range" id="disc" min="-20" max="370" step="1">
     <div class="hint">0 mm is the top, 370 mm the bottom (where the pistons park). Down pushes water out.</div>
   </div>
-  <div class="row">Row 10 (shortest pipes) at:
-    <span class="seg" id="endSeg"><button data-end="channel">channel end</button><button data-end="head">head end</button></span>
-  </div>
   <div class="row">
     <label><input type="checkbox" id="showWater" checked> water</label>
     <label><input type="checkbox" id="xray" checked> see-through pipes</label>
+    <label><input type="checkbox" id="showStack" checked> duct block</label>
     <label><input type="checkbox" id="showLabels" checked> labels</label>
   </div>
   <div class="row views">
     <button data-view="all">Whole tank</button><button data-view="bank">Piston bank</button>
-    <button data-view="side">Bank side-on</button><button data-view="channel">Down the channel</button>
+    <button data-view="side">Bank side-on</button><button data-view="outlets">Outlets</button>
+    <button data-view="channel">Down the channel</button>
   </div>
   <table>
-    <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Under water</th><th>Water in pipe</th><th>Air</th></tr></thead>
+    <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Outlet</th><th>Under water</th><th>Air</th><th>Rings</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <p class="note">mm. Air and water inside each pipe: air trapped when the water rose past the pipe bottom with
-    the disc parked at 370 mm, then the disc moved slowly to this position (tight seal). A row moves water only
-    when its bottom is under the still water. Motors, frame and stand are approximate.</p>
+  <p class="note">mm, and Hz. Each cylinder empties into its own duct, which runs to an outlet in the block's face at
+    the channel mouth: row 1's duct is 2.6 m long, row 10's 0.4 m. A row moves water only when its bottom (its duct's
+    ceiling) is under the still water. Air: the column trapped under the disc when the water rose past the bottom with
+    the disc parked at 370 mm, then moved slowly here (tight seal). Rings: the frequency at which the air under the
+    disc and the water in pipe and duct swing after a stroke. From the 2013-15 design drawings; the tank's posts and
+    the motors' flanges are approximate.</p>
 </div>
 <div id="err"></div>
 <script>
@@ -102,8 +104,8 @@ const DATA = /*DATA*/null;
   }
   const G = DATA.g;
   const P0 = 101325, RG = 1000 * 9.81;
-  const state = { depth: DATA.start.depth, disc: DATA.start.disc_mm, end: G.row_10_end,
-                  water: true, xray: true, labels: true };
+  const state = { depth: DATA.start.depth, disc: DATA.start.disc_mm,
+                  water: true, xray: true, stack: true, labels: true };
 
   const view = document.getElementById("view");
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -150,6 +152,9 @@ const DATA = /*DATA*/null;
   const tank = new THREE.Group();
   DATA.tank.forEach(p => tank.add(make(p, mat(p.mat))));
   scene.add(tank);
+  const stack = new THREE.Group();
+  DATA.stack.forEach(p => stack.add(make(p, mat(p.mat))));
+  scene.add(stack);
   let bank = new THREE.Group(), water = new THREE.Group();
   scene.add(bank, water);
 
@@ -169,22 +174,17 @@ const DATA = /*DATA*/null;
     bank = new THREE.Group();
     const ro = G.od / 2, ri = G.bore / 2, zd = discZ(state.disc), h = state.depth;
     DATA.pistons.forEach(p => {
-      const x = p.x[state.end], wet = p.bottom < h;
+      const x = p.x, wet = p.bottom < h;
       const pipeMat = state.xray ? mat("steel", wet ? "wet" : "") :
         (mats["steel_solid" + wet] || (mats["steel_solid" + wet] = new THREE.MeshStandardMaterial({
           color: wet ? "#7fb2ee" : "#c9ccd1", metalness: 0.25, roughness: 0.45, side: THREE.DoubleSide })));
       bank.add(make({ kind: "tube", p: [x, p.y, p.bottom], r: ro, h: G.pipe_top - p.bottom }, pipeMat));
       bank.add(make({ kind: "cyl", p: [x, p.y, zd - 0.01], r: ri * 0.995, h: 0.02 }, mat("disc")));
-      bank.add(make({ kind: "box", p: [x, p.y, G.pipe_top + 0.006], s: [G.pitch_along - 0.004, G.pitch_across - 0.004, 0.012] }, mat("plate")));
-      bank.add(make({ kind: "box", p: [x, p.y, G.pipe_top + 0.186], s: [0.06, 0.09, 0.348] }, mat("motor")));
+      bank.add(make({ kind: "cyl", p: [x, p.y, zd + 0.01], r: G.slider_r, h: G.slider_l }, mat("slider")));
       const st = inner(p.bottom, h, zd);
       if (st && st.z - p.bottom > 0.002)
         bank.add(make({ kind: "cyl", p: [x, p.y, p.bottom], r: ri * 0.99, h: st.z - p.bottom }, mat("pipe_water")));
     });
-    if (G.side_walls) {
-      [-1, 1].forEach(s => bank.add(make({ kind: "box", p: [(G.bank_x0 + G.bank_x1) / 2, s * (G.bank_width / 2 + 0.006), G.rim / 2],
-                                           s: [G.bank_x1 - G.bank_x0, 0.012, G.rim] }, mat("side_plate"))));
-    }
     scene.add(bank);
   }
 
@@ -198,6 +198,14 @@ const DATA = /*DATA*/null;
     scene.add(water);
   }
 
+  function rings(p, st, h) {                // air spring against the water in pipe and duct (drive.py)
+    if (!st) return null;
+    const A = G.bore_area, n = 1.4, pr = P0 + RG * (h - st.z);
+    const k = A * (n * pr / st.air + RG);
+    const M = 1000 * A * Math.max(st.z - p.bottom, 0) + 1000 * A * A * (p.duct + G.end_length) / (G.ducted ? G.duct_area : A);
+    return Math.sqrt(k / M) / (2 * Math.PI);
+  }
+
   function table() {
     const h = state.depth, zd = discZ(state.disc);
     const rows = [];
@@ -208,9 +216,11 @@ const DATA = /*DATA*/null;
       const isWet = p.bottom < h;
       if (isWet) wet.push(r);
       const col = isWet ? "var(--accent)" : "var(--dry)";
+      const f = rings(p, st, h);
       rows.push(`<tr><td><span class="dot" style="background:${col}"></span>${r}</td><td>${3 * r - 2}-${3 * r}</td>` +
-        `<td>${Math.round(p.bottom * 1000)}</td><td>${isWet ? Math.round((h - p.bottom) * 1000) : "dry"}</td>` +
-        `<td>${st ? Math.round((st.z - p.bottom) * 1000) : "-"}</td><td>${Math.round((st ? st.air : zd - p.bottom) * 1000)}</td></tr>`);
+        `<td>${Math.round(p.bottom * 1000)}</td><td>${Math.round(p.outlet[0] * 1000)}-${Math.round(p.outlet[1] * 1000)}</td>` +
+        `<td>${isWet ? Math.round((h - p.bottom) * 1000) : "dry"}</td>` +
+        `<td>${Math.round((st ? st.air : zd - p.bottom) * 1000)}</td><td>${f ? f.toFixed(2) : "-"}</td></tr>`);
     }
     document.getElementById("rows").innerHTML = rows.join("");
     document.getElementById("wetHint").textContent = wet.length ?
@@ -232,8 +242,9 @@ const DATA = /*DATA*/null;
   label(() => `Head ${HL.toFixed(2)} x ${HW.toFixed(2)} m`, () => [-HL / 2, -HW / 2 - 0.25, G.rim]);
   label(() => `Channel ${L.toFixed(1)} m x ${Math.round(G.channel_width * 1000)} mm`, () => [L * 0.45, 0, G.rim + 0.25]);
   label(() => `Reservoir ${G.reservoir_height.toFixed(1)} m tall (gate shut)`, () => [L + G.reservoir_length / 2, 0, G.reservoir_height + 0.2]);
-  label(() => "Row 1", () => [DATA.pistons.find(p => p.row === 1).x[state.end], 0, G.pipe_top + 0.55]);
-  label(() => "Row 10", () => [DATA.pistons.find(p => p.row === 10).x[state.end], 0, G.pipe_top + 0.55]);
+  label(() => "Row 1", () => [DATA.pistons.find(p => p.row === 1).x, 0, G.pipe_top + 0.6]);
+  label(() => "Row 10", () => [DATA.pistons.find(p => p.row === 10).x, 0, G.pipe_top + 0.6]);
+  if (G.ducted) label(() => "30 duct outlets", () => [0.02, -G.bank_width / 2 - 0.12, 0.45]);
   label(() => `Still water ${Math.round(state.depth * 1000)} mm`, () => [L * 0.2, G.channel_width / 2 + 0.1, state.depth]);
   label(() => `Pipe tops ${Math.round(G.pipe_top * 1000)} mm`, () => [G.bank_x0 - 0.2, G.bank_width / 2 + 0.2, G.pipe_top]);
   label(() => "Channel mouth x = 0", () => [0, -G.channel_width / 2 - 0.2, 0.05]);
@@ -256,7 +267,8 @@ const DATA = /*DATA*/null;
   const VIEWS = {
     all: { pos: [-HL - 5, -HW * 1.6, 7.5], at: [L * 0.35, 0, 0] },
     bank: { pos: [1.2, -3.4, 1.7], at: [-1.1, 0, 0.55] },
-    side: { pos: [-1.1, -2.55, 0.75], at: [-1.1, 0, 0.72] },
+    side: { pos: [-1.35, -3.1, 0.8], at: [-1.35, 0, 0.75] },
+    outlets: { pos: [1.45, -0.1, 0.6], at: [0, 0, 0.43] },
     channel: { pos: [-HL - 0.6, 0, 2.2], at: [L * 0.6, 0, 0.2] },
   };
   function go(name) {
@@ -279,15 +291,12 @@ const DATA = /*DATA*/null;
   discIn.value = state.disc;
   depthIn.addEventListener("input", () => { state.depth = +depthIn.value; buildBank(); buildWater(); table(); });
   discIn.addEventListener("input", () => { state.disc = +discIn.value; buildBank(); table(); });
-  const segBtns = document.querySelectorAll("#endSeg button");
-  function markEnd() { segBtns.forEach(b => b.classList.toggle("on", b.dataset.end === state.end)); }
-  segBtns.forEach(b => b.addEventListener("click", () => { state.end = b.dataset.end; markEnd(); buildBank(); }));
+  document.getElementById("showStack").addEventListener("change", e => { state.stack = e.target.checked; stack.visible = state.stack; });
   document.getElementById("showWater").addEventListener("change", e => { state.water = e.target.checked; water.visible = state.water; });
   document.getElementById("xray").addEventListener("change", e => { state.xray = e.target.checked; buildBank(); });
   document.getElementById("showLabels").addEventListener("change", e => { state.labels = e.target.checked; });
   document.querySelectorAll(".views button").forEach(b => b.addEventListener("click", () => go(b.dataset.view)));
 
-  markEnd();
   buildBank();
   buildWater();
   table();

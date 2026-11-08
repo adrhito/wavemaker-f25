@@ -5,12 +5,17 @@ Writes three files to model/:
   tank_model.glb     glTF 2.0, one named node per part. Blender: File > Import > glTF 2.0.
   tank_model.obj     the same parts as Wavefront OBJ (+ .mtl), Y up, metres.
   tank_viewer.html   opens in a browser (three.js from a CDN); sliders for the still-water
-                     depth and the disc position, and a switch for which end row 10 is at.
+                     depth and the disc position.
 
 The model frame is x along the channel axis (0 at the channel mouth, + toward the
 reservoir), y across it, z up from the tank floor. glTF and OBJ are Y-up, so they get
-(x, z, -y). Parts that were estimated rather than measured (motors, frame posts) are
-approximate and say so in their names.
+(x, z, -y). Parts that were estimated rather than measured or drawn (the tank's posts,
+the motors' flanges, where the rails end) are approximate and say so in their names.
+
+The piston bank is drawn from the 2013-15 design files (BLUEPRINTS.md): the stepped
+duct block with its 30 outlets at the channel mouth, its flange and base plates, the
+offset-tee rails it sits on and the angles that bolt it to the gate frame, the
+cylinders, the 9.6 in motor plates, and the LinMot stators and sliders.
 """
 
 from __future__ import annotations
@@ -18,7 +23,6 @@ from __future__ import annotations
 import json
 import math
 import struct
-from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -37,6 +41,11 @@ MATERIALS = {
     "side_plate": ("#a9adb3", 0.3, 0.25, 0.5),
     "disc": ("#26262a", 1.0, 0.2, 0.6),
     "motor": ("#1b1b1d", 1.0, 0.3, 0.5),
+    "slider": ("#d9d8d2", 1.0, 0.8, 0.25),
+    "duct": ("#b7bcc4", 0.92, 0.35, 0.45),
+    "outlet": ("#141413", 1.0, 0.0, 0.9),
+    "rail": ("#9aa0a8", 1.0, 0.35, 0.45),
+    "pad": ("#c9a46c", 1.0, 0.0, 0.8),
     "water": ("#2a78d6", 0.32, 0.0, 0.1),
     "pipe_water": ("#1c5cab", 0.75, 0.0, 0.1),
     "reservoir": ("#3987e5", 1.0, 0.1, 0.6),
@@ -141,28 +150,93 @@ def tank_parts(g: Geometry) -> List[Dict]:
     return P
 
 
-def bank_parts(g: Geometry, depth: float, disc_mm: float) -> List[Dict]:
-    """The 30 pipes, their discs and motors, the water under each disc, and the bank's side plates."""
+IN = 0.0254
+
+
+def stack_parts(g: Geometry) -> List[Dict]:
+    """The parts of the bank that do not move: duct block, plates, rails, motor plates and stators."""
     P = []
+    u, w = g.pitch_along, g.pitch_across
+    x1 = g.bank_near_x
+    x0 = x1 - g.bank_length
+    half = g.rows * w / 2
+    lanes = [(r - (g.rows + 1) / 2) * w for r in range(1, g.rows + 1)]
+    sheet = g.sheet
+    if g.ducted:
+        for c in range(1, g.columns + 1):
+            zb = g.row_bottom(c)
+            zt = zb - sheet                                   # top of this row's layer, under its flange plate
+            zl = zt - 3.0 * IN
+            xs = x1 - g.duct_length(c) - u / 2                # back end of the layer (the elbow's closed end)
+            for k, y in enumerate(lanes, start=1):
+                P.append(_box("duct row %d lane %d (%.2f m to the outlet)" % (c, k, g.duct_length(c)), "duct",
+                              xs, x1 - 0.004, y - w / 2 + 0.0006, y + w / 2 - 0.0006, zl, zt))
+                lo, hi = g.outlet_band(c)
+                P.append(_box("outlet row %d lane %d (pistons %d)" % (c, k, 3 * (c - 1) + k), "outlet",
+                              x1 - 0.006, x1 + 0.0008, y - g.duct_in_width / 2, y + g.duct_in_width / 2, lo, hi))
+            xc = g.column_x(c)
+            P.append(_box("flange plate row %d" % c, "plate", xc - u / 2, xc + u / 2,
+                          -half, half, zt, zb))
+        ztop = g.row_bottom(g.columns) - sheet
+        P.append(_box("front cover plate", "plate", x1 - g.front_units * u, x1, -half, half, ztop, ztop + sheet))
+        zbase = g.row_bottom(1) - sheet - 3.0 * IN
+        P.append(_box("base plate", "plate", x0, x1, -half, half, zbase - sheet, zbase))
+        zf = zbase - sheet                                    # top of the rails' flanges
+        for s_, nm in ((-1, "right"), (1, "left")):
+            web_in, web_out = s_ * half, s_ * (half + 0.25 * IN)
+            fl_in, fl_out = s_ * (half - 4.70 * IN), s_ * (half + (0.25 + 1.05) * IN)
+            xr0, xr1 = x0, x0 + 104.0 * IN
+            P.append(_box("rail %s flange (offset tee 6 x 4 in, 104 in; where it ends approx.)" % nm, "rail", xr0, xr1,
+                          min(fl_in, fl_out), max(fl_in, fl_out), zf - 0.25 * IN, zf))
+            P.append(_box("rail %s web" % nm, "rail", xr0, xr1, min(web_in, web_out), max(web_in, web_out),
+                          zf - 0.25 * IN, zf + 3.75 * IN))
+            P.append(_box("support pad %s (thickness inferred)" % nm, "pad", xr0, xr1, min(fl_in, fl_out),
+                          max(fl_in, fl_out), 0.0, zf - 0.25 * IN))
+            ya, yb = s_ * half, s_ * (half + 2.0 * IN)
+            P.append(_box("vertical rail %s, side leg (2 x 2 in angle, 30.2 in)" % nm, "rail", x1 - 2.0 * IN, x1,
+                          min(web_out, s_ * (half + 0.5 * IN)), max(web_out, s_ * (half + 0.5 * IN)), zf, zf + 30.2 * IN))
+            P.append(_box("vertical rail %s, gate-frame leg" % nm, "rail", x1 - 0.25 * IN, x1, min(ya, yb), max(ya, yb),
+                          zf, zf + 30.2 * IN))
+            P.append(_box("gusset %s (8 x 8 x 3/8 in; approx.)" % nm, "rail", x1 - 8.0 * IN, x1 - 2.0 * IN,
+                          min(s_ * (half + 0.25 * IN), s_ * (half + 0.625 * IN)),
+                          max(s_ * (half + 0.25 * IN), s_ * (half + 0.625 * IN)), zf, zf + 8.0 * IN))
+    elif g.duct_side_walls:
+        bx0, bx1 = g.bank_x_range
+        for s_, nm in ((-1, "right"), (1, "left")):
+            y = s_ * g.bank_width / 2
+            P.append(_box("bank %s side plates" % nm, "side_plate", bx0, bx1, min(y, y + s_ * 0.012),
+                          max(y, y + s_ * 0.012), 0, g.channel_depth))
+    m = g.motor or {}
+    st = m.get("stator_mm", {}) or {}
+    sd, sl = st.get("diameter", 48) / 1000, st.get("length", 409.5) / 1000
+    plate = 0.25 * IN
+    for p in g.pistons():
+        P.append(_box("motor plate %d (9.6 in as designed; approx.)" % p.number, "plate", p.x - 4.8 * IN, p.x + 4.8 * IN,
+                      p.y - 4.8 * IN, p.y + 4.8 * IN, g.pipe_top, g.pipe_top + plate))
+        z0 = g.pipe_top + plate
+        P.append(_box("motor %d flange (approx.)" % p.number, "motor", p.x - 0.035, p.x + 0.035, p.y - 0.035, p.y + 0.035,
+                      z0, z0 + 0.12))
+        P.append(_cyl("LinMot stator %d (48 x 410 mm)" % p.number, "motor", p.x, p.y, z0, sd / 2, sl))
+        P.append(_box("motor %d connector (approx.)" % p.number, "motor", p.x - 0.027, p.x + 0.027, p.y + sd / 2,
+                      p.y + sd / 2 + 0.03, z0 + sl - 0.07, z0 + sl - 0.01))
+    return P
+
+
+def bank_parts(g: Geometry, depth: float, disc_mm: float) -> List[Dict]:
+    """The 30 cylinders with their discs, sliders and the water under each disc, on the duct block."""
+    P = stack_parts(g)
     ro, ri = g.cylinder_od / 2, g.cylinder_bore / 2
     zd_park = g.disc_height(g.park_mm)
     zd = g.disc_height(disc_mm)
+    sl = (g.motor or {}).get("slider_mm", {}) or {}
     for p in g.pistons():
         P.append(_cyl("pipe %d (row %d)" % (p.number, p.column), "steel", p.x, p.y, p.bottom, ro, g.pipe_top - p.bottom, ri))
         P.append(_cyl("disc %d" % p.number, "disc", p.x, p.y, zd - 0.01, ri * 0.995, 0.02))
-        P.append(_box("top plate %d" % p.number, "plate", p.x - g.pitch_along / 2 + 0.002, p.x + g.pitch_along / 2 - 0.002,
-                      p.y - g.pitch_across / 2 + 0.002, p.y + g.pitch_across / 2 - 0.002, g.pipe_top, g.pipe_top + 0.012))
-        P.append(_box("LinMot motor %d (approx.)" % p.number, "motor", p.x - 0.03, p.x + 0.03, p.y - 0.045, p.y + 0.045,
-                      g.pipe_top + 0.012, g.pipe_top + 0.36))
+        P.append(_cyl("slider %d (28 x 800 mm)" % p.number, "slider", p.x, p.y, zd + 0.01, sl.get("diameter", 28) / 2000,
+                      sl.get("length", 800) / 1000))
         st = air.rest_state(zd_park, zd, p.bottom, depth)
         if st["water_column_m"] > 0.002:
             P.append(_cyl("water in pipe %d" % p.number, "pipe_water", p.x, p.y, p.bottom, ri * 0.99, st["water_column_m"]))
-    if g.duct_side_walls:
-        x0, x1 = g.bank_x_range
-        for s, nm in ((-1, "right"), (1, "left")):
-            y = s * g.bank_width / 2
-            P.append(_box("bank %s side plates" % nm, "side_plate", x0, x1, min(y, y + s * 0.012), max(y, y + s * 0.012), 0,
-                          g.channel_depth))
     return P
 
 
@@ -333,14 +407,15 @@ def write_obj(parts: List[Dict], path: Path):
 # ---------------------------------------------------------------------------
 
 def viewer_data(g: Geometry, depth: float, disc_mm: float) -> Dict:
+    from . import drive
     pistons = []
-    flipped = {"channel": "head", "head": "channel"}[g.row_10_end]
-    g_alt = replace(g, row_10_end=flipped)
     for p in g.pistons():
-        pistons.append({"n": p.number, "row": p.column, "lane": p.row, "y": p.y, "bottom": p.bottom,
-                        "x": {g.row_10_end: p.x, flipped: g_alt.column_x(p.column)}})
+        lo, hi = g.outlet_band(p.column) if g.ducted else (p.bottom, p.bottom)
+        pistons.append({"n": p.number, "row": p.column, "lane": p.row, "y": p.y, "bottom": p.bottom, "x": p.x,
+                        "duct": g.duct_length(p.column) if g.ducted else 0.0, "outlet": [lo, hi]})
+    sl = (g.motor or {}).get("slider_mm", {}) or {}
     return {
-        "tank": tank_parts(g), "materials": MATERIALS, "pistons": pistons,
+        "tank": tank_parts(g), "stack": stack_parts(g), "materials": MATERIALS, "pistons": pistons,
         "g": {"head_length": g.head_length, "head_width": g.head_width, "channel_length": g.channel_length,
               "channel_width": g.channel_width, "rim": g.channel_depth, "reservoir_length": g.reservoir_length,
               "reservoir_width": g.reservoir_width, "reservoir_height": g.reservoir_height,
@@ -348,7 +423,9 @@ def viewer_data(g: Geometry, depth: float, disc_mm: float) -> Dict:
               "bore": g.cylinder_bore, "pitch_along": g.pitch_along, "pitch_across": g.pitch_across,
               "disc_zero": g.disc_zero, "park_mm": g.park_mm, "row_10_end": g.row_10_end,
               "bank_x0": g.bank_x_range[0], "bank_x1": g.bank_x_range[1], "bank_width": g.bank_width,
-              "side_walls": g.duct_side_walls},
+              "ducted": g.ducted, "duct_area": g.duct_area, "bore_area": g.bore_area, "end_length": drive.END_LENGTH,
+              "slider_r": sl.get("diameter", 28) / 2000, "slider_l": sl.get("length", 800) / 1000,
+              "layout": g.layout},
         "start": {"depth": depth, "disc_mm": disc_mm},
     }
 

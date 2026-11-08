@@ -38,6 +38,31 @@ Kd 0.1059 0.1059 0.1137
 d 1.000
 Ns 450
 
+newmtl slider
+Kd 0.8510 0.8471 0.8235
+d 1.000
+Ns 675
+
+newmtl duct
+Kd 0.7176 0.7373 0.7686
+d 0.920
+Ns 495
+
+newmtl outlet
+Kd 0.0784 0.0784 0.0745
+d 1.000
+Ns 90
+
+newmtl rail
+Kd 0.6039 0.6275 0.6588
+d 1.000
+Ns 495
+
+newmtl pad
+Kd 0.7882 0.6431 0.4235
+d 1.000
+Ns 180
+
 newmtl water
 Kd 0.1647 0.4706 0.8392
 d 0.320

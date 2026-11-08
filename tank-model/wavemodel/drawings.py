@@ -71,7 +71,10 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
     fig, ax = plt.subplots(figsize=(16, 4.6))
     _rect(ax, -HL, -HW / 2, HL, HW, fc=WATER, ec=INK, lw=1.2)
     _rect(ax, 0, -b / 2, L, b, fc=WATER, ec=INK, lw=1.2)
-    ax.plot([0, 0], [-b / 2, b / 2], color=WATER, lw=1.6)           # the mouth is open
+    if g.ducted:
+        ax.plot([0, 0], [-b / 2, b / 2], color=INK, lw=2.0)          # the duct block's face, with the outlets
+    else:
+        ax.plot([0, 0], [-b / 2, b / 2], color=WATER, lw=1.6)       # the mouth is open
     _rect(ax, L, -RW / 2, RL, RW, fc=RES, ec=INK, lw=1.2)
     ax.plot([L, L], [-RW / 2, RW / 2], color=INK, lw=2.4)            # gate
     x0, x1 = g.bank_x_range
@@ -80,10 +83,12 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
     ax.text(L / 2, b / 2 + 0.25, "CHANNEL", ha="center", fontsize=9, weight="bold")
     ax.text(L + RL / 2, RW / 2 + 0.25, "RESERVOIR (dam-break column)", ha="center", fontsize=9, weight="bold")
     ax.text(L + 0.1, -RW / 2 - 0.35, "gate", fontsize=7.5, color=INK_2)
-    ax.text((x0 + x1) / 2, -g.bank_width / 2 - 0.3, "piston bank", ha="center", fontsize=7.5, color=INK_2)
+    ax.text((x0 + x1) / 2, -g.bank_width / 2 - 0.3, "piston bank on its duct block" if g.ducted else "piston bank",
+            ha="center", fontsize=7.5, color=INK_2)
     _dim(ax, (-HL, -HW / 2), (0, -HW / 2), "head %.2f m" % HL, off=(0, -0.45))
     _dim(ax, (-HL, -HW / 2), (-HL, HW / 2), "head %.2f m" % HW, off=(-0.45, 0))
-    _dim(ax, (0, -b / 2), (L, -b / 2), "channel %.2f m (photogrammetry; tape it)" % L, off=(0, -1.0))
+    _dim(ax, (0, -b / 2), (L, -b / 2), "channel %.2f m (16 windows counted; IIHR plan gives about 18.0 m)" % L,
+         off=(0, -1.0))
     _dim(ax, (L, -RW / 2), (L + RL, -RW / 2), "%.1f m" % RL, off=(0, -1.0))
     _dim(ax, (-HL, HW / 2), (L + RL, HW / 2), "overall %.1f m (published 118-120 ft = 36 m incl. platforms)"
          % (HL + L + RL), off=(0, 0.45))
@@ -102,11 +107,23 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
     fig, ax = plt.subplots(figsize=(11, 8.6))
     _rect(ax, -HL, -HW / 2, HL, HW, fc=WATER, ec=INK, lw=1.2)
     _rect(ax, 0, -b / 2, 1.6, b, fc=WATER, ec=INK, lw=1.2)
-    ax.plot([0, 0], [-b / 2, b / 2], color=WATER, lw=2)
     ax.text(1.65, 0, "to the channel ->", va="center", fontsize=8, color=INK_2)
-    if g.duct_side_walls:
-        for s in (-1, 1):
-            ax.plot([x0, x1], [s * g.bank_width / 2] * 2, color=INK, lw=2.2)
+    if g.ducted:
+        # the duct block: its outline, the step under each row, and the 30 outlets in its face
+        _rect(ax, x0, -g.bank_width / 2, g.bank_length, g.bank_width, fc=STEEL, ec=INK, lw=1.4)
+        for j in range(1, int(round(g.bank_length / g.pitch_along))):
+            ax.plot([x1 - j * g.pitch_along] * 2, [-g.bank_width / 2, g.bank_width / 2], color=INK_2, lw=0.5)
+        for k in range(g.rows):
+            y = (k - (g.rows - 1) / 2) * g.pitch_across
+            ax.plot([x1, x1], [y - g.duct_in_width / 2, y + g.duct_in_width / 2], color=WET, lw=4, solid_capstyle="butt")
+        ax.annotate("outlets: 3 lanes x 10 layers\n(each piston's duct ends here)", xy=(x1, g.bank_width / 2 - 0.05),
+                    xytext=(x1 + 0.25, g.bank_width / 2 + 0.45), fontsize=7, color=INK_2,
+                    arrowprops=dict(arrowstyle="-", color=INK_2, lw=0.6))
+    else:
+        ax.plot([0, 0], [-b / 2, b / 2], color=WATER, lw=2)
+        if g.duct_side_walls:
+            for s in (-1, 1):
+                ax.plot([x0, x1], [s * g.bank_width / 2] * 2, color=INK, lw=2.2)
     for p in g.pistons():
         c = WET if p.column in wet else DRY
         ax.add_patch(Circle((p.x, p.y), g.cylinder_od / 2, fc="white", ec=c, lw=1.4))
@@ -118,19 +135,24 @@ def plan(g: Geometry, depth: float, out: Path) -> List[Path]:
         ax.text(xc, -g.bank_width / 2 - 0.12, "%s" % _mm(g.row_bottom(c)), ha="center", va="top", fontsize=6.5,
                 rotation=90, color=WET if c in wet else DRY)
     ax.text(x0 - 0.05, -g.bank_width / 2 - 0.55, "pipe bottom above floor, mm", ha="right", fontsize=7, color=INK_2)
-    _dim(ax, (x0, g.bank_width / 2), (x1, g.bank_width / 2), "bank %.3f m = 10 x %s mm pitch (pitch along assumed)"
-         % (g.bank_length, _mm(g.pitch_along)), off=(0, 0.75))
+    _dim(ax, (x0, g.bank_width / 2), (x1, g.bank_width / 2),
+         ("duct block %.3f m = %d x %s mm (9.8 in) pitch, drawn" % (g.bank_length, round(g.bank_length / g.pitch_along),
+                                                                   _mm(g.pitch_along))) if g.ducted else
+         ("bank %.3f m = 10 x %s mm pitch" % (g.bank_length, _mm(g.pitch_along))), off=(0, 0.75))
     _dim(ax, (x0, -g.bank_width / 2), (x0, g.bank_width / 2), "%s" % _mm(g.bank_width), off=(-0.25, 0))
-    _dim(ax, (-HL, -HW / 2), (0, -HW / 2), "head %.2f m (estimate, 3.0-5.2)" % HL, off=(0, -0.3))
+    _dim(ax, (-HL, -HW / 2), (0, -HW / 2), "head %.2f m (taped)" % HL, off=(0, -0.3))
     _dim(ax, (-HL, -HW / 2), (-HL, HW / 2), "head %.2f m" % HW, off=(-0.3, 0))
     _dim(ax, (x0, -HW / 2), (-HL, -HW / 2), "%.2f m open water behind the bank" % (x0 + HL), off=(0, 0.35))
     ax.text(-HL + 0.15, HW / 2 - 0.25,
             "Pipes: 8 in NPS Sch 10S, OD %s mm, bore %s mm (%.1f cm2 disc face).\n"
             "Blue: bottom under the %.2f m still water, the row moves water.\n"
             "Orange: bottom above it, the row moves only air.\n"
-            "Row 10 (shortest pipes) drawn at the %s end.\n"
+            "%s\n"
             "Row n = display pistons 3n-2..3n."
-            % (_mm(g.cylinder_od), "%.1f" % (1000 * g.cylinder_bore), g.bore_area * 1e4, depth, g.row_10_end),
+            % (_mm(g.cylinder_od), "%.1f" % (1000 * g.cylinder_bore), g.bore_area * 1e4, depth,
+               "Each pipe empties into its own duct (%.0f x %.0f mm inside) running to its outlet at x = 0." %
+               (1000 * g.duct_in_width, 1000 * g.duct_in_height) if g.ducted else
+               "Row 10 (shortest pipes) drawn at the %s end." % g.row_10_end),
             va="top", fontsize=7.5, color=INK)
     ax.set_aspect("equal")
     ax.set_xlim(-HL - 0.6, 2.4)
@@ -164,6 +186,10 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
             continue
         c = WET if p.column in wet else DRY
         _rect(ax, p.x - g.cylinder_od / 2, p.bottom, g.cylinder_od, g.pipe_top - p.bottom, fc=STEEL, ec=c, lw=0.6)
+        if g.ducted:
+            lo, hi = g.outlet_band(p.column)
+            _rect(ax, -g.duct_length(p.column) - g.pitch_along / 2, lo, g.duct_length(p.column) + g.pitch_along / 2,
+                  hi - lo, fc=STEEL, ec=INK_2, lw=0.3)
     ax.plot([-HL, L + RL], [-g.floor_above_lab] * 2, color=INK_2, lw=0.8)
     ax.text(L + RL, -g.floor_above_lab - 0.12, "lab floor", ha="right", va="top", fontsize=7, color=INK_2)
     _dim(ax, (L + RL, 0), (L + RL, g.reservoir_height), "%.1f m" % g.reservoir_height, off=(0.4, 0))
@@ -176,14 +202,14 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
     _dim(ax, (-HL, 0), (0, 0), "head %.2f m" % HL, off=(0, -0.3))
     _dim(ax, (0, 0), (L, 0), "channel %.2f m" % L, off=(0, -0.3))
     _dim(ax, (L, 0), (L + RL, 0), "reservoir %.1f m" % RL, off=(0, -0.3))
-    ax.text(-HL / 2, rim + 0.6, "piston bank (centre lane):\npipes stand above the rim", ha="center", fontsize=7.5,
-            color=INK_2)
+    ax.text(-HL / 2, rim + 0.6, "piston bank (centre lane):\npipes stand above the rim on a stepped duct block" if g.ducted
+            else "piston bank (centre lane):\npipes stand above the rim", ha="center", fontsize=7.5, color=INK_2)
     ax.set_aspect("equal")
     ax.set_xlim(-HL - 1.8, L + RL + 1.2)
     ax.set_ylim(-g.floor_above_lab - 0.5, g.reservoir_height + 0.3)
     ax.axis("off")
-    ax.set_title("Side section on the centreline (metres). Rim height from photogrammetry: tape it.", loc="left",
-                 fontsize=9)
+    ax.set_title("Side section on the centreline (metres). Rim and floor heights from the IIHR drawings (2009).",
+                 loc="left", fontsize=9)
     fig.tight_layout()
     paths += _save(fig, out / "side_whole")
 
@@ -191,17 +217,38 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
     from . import air
     fig, ax = plt.subplots(figsize=(12, 7.0))
     x0, x1 = g.bank_x_range
-    xa, xb = x0 - 0.5, x1 + 0.7
+    xa, xb = x0 - 0.5, x1 + 0.8
     _rect(ax, xa, 0, xb - xa, depth, fc=WATER, ec="none")
     ax.plot([xa, xb], [depth, depth], color=WATER_EDGE, lw=0.9)
     ax.plot([xa, xb], [0, 0], color=INK, lw=1.4)
     ax.plot([xa, xb], [rim, rim], color=INK_2, lw=0.6, ls=(0, (6, 3)))
-    ax.text(xb, rim + 0.01, "rim %.2f m (est.)" % rim, ha="right", va="bottom", fontsize=7, color=INK_2)
+    ax.text(xb, rim + 0.01, "rim %.2f m (IIHR)" % rim, ha="right", va="bottom", fontsize=7, color=INK_2)
     ax.text(xb, depth + 0.01, "still water %.0f mm" % (1000 * depth), ha="right", va="bottom", fontsize=7,
             color=WATER_EDGE)
     ax.plot([x1, x1], [0, rim], color=INK_2, lw=0.6)
-    ax.text(x1 + 0.03, rim * 0.55, "channel mouth\nx = 0", fontsize=7, color=INK_2)
+    ax.text(x1 + 0.03, rim * 0.9 if g.ducted else rim * 0.55, "channel mouth\nx = 0", fontsize=7, color=INK_2)
     zd_park = g.disc_height(g.park_mm)
+    if g.ducted:
+        # duct layers on the centre lane: each row's duct runs from under its pipe to its outlet at the face
+        IN = 0.0254
+        for c in range(1, g.columns + 1):
+            lo, hi = g.outlet_band(c)
+            xs = x1 - g.duct_length(c) - g.pitch_along / 2
+            _rect(ax, xs, lo - g.sheet, x1 - xs, (hi + g.sheet) - (lo - g.sheet), fc=STEEL, ec=INK_2, lw=0.5)
+            _rect(ax, xs + 0.004, lo, x1 - xs - 0.004, hi - lo, fc=WATER if c in wet else "white", ec="none")
+            ax.plot([x1, x1], [lo, hi], color=WET if c in wet else DRY, lw=2.2, solid_capstyle="butt")
+            ax.annotate("", xy=(x1 + 0.09, (lo + hi) / 2), xytext=(x1 + 0.01, (lo + hi) / 2),
+                        arrowprops=dict(arrowstyle="-|>", color=WET if c in wet else FAINT, lw=0.7, mutation_scale=6))
+        zbase = g.row_bottom(1) - g.sheet - 3.0 * IN
+        zf = zbase - g.sheet
+        _rect(ax, x0, zbase - g.sheet, g.bank_length, g.sheet, fc=INK_2, ec="none")           # base plate
+        _rect(ax, x0, zf - 0.25 * IN, 104 * IN, 0.25 * IN, fc="#9aa0a8", ec="none")            # rail flanges
+        _rect(ax, x0, 0, 104 * IN, zf - 0.25 * IN, fc="#c9a46c", ec="none")                    # pads
+        _rect(ax, x0, zf - 0.25 * IN, 104 * IN, 4.0 * IN, fc="none", ec=INK_2, lw=0.5, ls=(0, (3, 2)))  # web, beyond
+        ax.text(x0 + 0.05, -0.02, "base plate on two offset-tee rails (webs dashed: beside the section) and pads",
+                fontsize=6.5, color=INK_2, va="top")
+        ax.text(x1 + 0.12, g.outlet_band(1)[0], "row 1 outlet", fontsize=6.5, color=INK_2, va="bottom")
+        ax.text(x1 + 0.12, g.outlet_band(g.columns)[1], "row 10 outlet", fontsize=6.5, color=INK_2, va="top")
     for c in range(1, g.columns + 1):
         xc = g.column_x(c)
         zb = g.row_bottom(c)
@@ -222,17 +269,18 @@ def side(g: Geometry, depth: float, out: Path) -> List[Path]:
             ax.text(xc, (zb + z370) / 2, "air\n%.0f" % (1000 * st["air_length_m"]), ha="center", va="center",
                     fontsize=6.3, color=INK_2)
     xl = min(g.column_x(1), g.column_x(g.columns)) - g.pitch_along / 2
-    _dim(ax, (xa + 0.1, 0), (xa + 0.1, g.pipe_top), "pipe tops %s mm (56 in)" % _mm(g.pipe_top), off=(0, 0), ext=False)
+    _dim(ax, (xa + 0.1, 0), (xa + 0.1, g.pipe_top), "pipe tops %s mm (%.0f in)" % (_mm(g.pipe_top), g.pipe_top / 0.0254), off=(0, 0), ext=False)
     c_lo = min(range(1, g.columns + 1), key=g.row_bottom)
     _dim(ax, (g.column_x(c_lo) + 0.13, 0), (g.column_x(c_lo) + 0.13, g.row_bottom(c_lo)), "5 in", off=(0, 0),
          ext=False, rot=0, fs=6.5)
     ax.text(xl, -0.13,
-            "Pipe bottoms (mm above the floor) step 3 in per row: 5 + 3(n - 1) in; pipe length 54 - 3n in.\n"
+            "Pipe bottoms (mm above the floor) step one duct layer per row: 5 + 3.02(n - 1) in (row 1 taped, the step "
+            "drawn).\nEach pipe empties into its own duct (grey band), which runs to its outlet in the block's face at "
+            "the channel mouth; blue ducts are under water.\n"
             "Dark bar: disc parked at %.0f mm; dotted: its travel up to 0 mm (top tick). "
-            "Disc height at 0 mm = %s mm, ASSUMED: measure it.\n"
-            "Blue inside a pipe: water under the trapped air with the disc parked; 'air' = air column length, mm.\n"
-            "Row 10 drawn at the %s end."
-            % (g.park_mm, _mm(g.disc_zero), g.row_10_end), fontsize=7, color=INK_2, va="top")
+            "Disc height at 0 mm = %s mm, estimated from the motor's geometry: measure it.\n"
+            "Blue inside a pipe: water under the trapped air with the disc parked; 'air' = air column length, mm."
+            % (g.park_mm, _mm(g.disc_zero)), fontsize=7, color=INK_2, va="top"),
     ax.set_aspect("equal")
     ax.set_xlim(xa - 0.25, xb + 0.05)
     ax.set_ylim(-0.45, g.pipe_top + 0.2)

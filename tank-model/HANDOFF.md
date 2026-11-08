@@ -1,4 +1,4 @@
-# Tank model: where it stands (26 Oct 2026)
+# Tank model: where it stands (7 Nov 2026)
 
 Goal (William, 26 Oct): from the 11 photos (`photos/`, IMG_2458-2468) and the piston
 specs, an end-to-end model of the wave maker. It should give the geometry and the expected
@@ -6,30 +6,64 @@ wave heights, so predictions can be compared with measured runs and the model ad
 for stroke, speed and which pistons run. `README.md` says how to run everything;
 `MEASUREMENTS.md` says where each number came from.
 
-## For the agent with the blueprints
+## The blueprints are in (7 Nov)
 
-This model is an approximation and a good start, not the tank's true geometry. Only
-the channel width (tape) and the pipe bore (the stencil and the pipe standard) are
-firm. Every other dimension was estimated from the photos or from William's rough
-description, and no prediction has been checked against a measured wave yet. When you
-are given the tank's blueprints, bring the model to the exact measurements:
+The lab's shared Drive held the wavemaker's 2013-15 design files and the tank's 2009 IIHR
+construction drawings. They are copied to `Wave_maker/Wavemaker_Drive/` (next to this
+repository); `BLUEPRINTS.md` lists every file, which ones the model now rests on, and what
+each gave. Applied:
+
+- **The bank is a duct block.** Each cylinder empties into its own 9.8 x 3.0 in stainless duct,
+  which runs to an outlet in the block's front face at the channel mouth: 3 lanes by 10
+  layers, row 1's at the bottom with a 2.61 m duct, row 10's at the top with a 0.37 m one.
+  The model had the pipe bottoms open into a roofed layer under the bank. `tank.py` now puts
+  each piston's flux into the channel at its outlet with a slot's coupling
+  (`linear.source_coupling_band`), and treats the block as solid below its steps. Its front
+  is 0.82 m high, so below that depth the channel is walled off from the head. The first
+  wave about doubled: 246 mm against 123 mm for all 30 at 0.30 m, 350 mm
+  (`results/drawings_effect_*.png`).
+- **The water has inertia.** The duct water is about 185 kg referred to row 1's disc, and with
+  the trapped air it rings at 0.9-1.1 Hz (rows 1-3), up to 2.5 Hz (row 8). `predict` now
+  integrates air and water in time (`air.pipes_dynamic`, `drive.py`); `--no-air-dynamics`
+  gives the old quasi-static answer. The damping is partly estimated (`duct_zeta` = 0.05).
+- **Drawn dimensions.** Pitch 9.8 in both ways (was 9.75); the block is 11 pitches (2.738 m);
+  steps 3.02 in, one duct layer (was 3); duct 184 cm² inside, 1.91 times faster than the
+  disc.
+- **Not from the archive: the cylinders.** The archive's cylinders, flanges and seals are an
+  outdated PVC design; William (7 Nov): the built cylinders are metal. Their bore (stencil),
+  lengths and tops (William's 51-24 in, 56 in) stay as measured.
+- **The tank's heights.** From the IIHR sections: the rim is 1.153 m (was the 1.08 m window
+  height), the maximum water depth 1.026 m, and the floor 0.597 m above the lab floor. At
+  maximum depth the tank holds 14,000 gal against the published 13,500.
+- **The motors.** LinMot P01-48x360F with the 800 mm slider: 1020 N peak, 200 N continuous
+  (340 N fan), 2 m/s, 510 mm travel. `wm.py pistons` reports what each row moves and how it
+  rings. Every `predict` checks the motor force (peak and rms) against these limits.
+- **Disc at 0 mm.** Re-estimated at 1.35 m from the LinMot geometry (was an assumed 1.30 m).
+
+What the drawings could not settle: the bore to the millimetre, the support pads'
+thickness (in a VariCAD file), the disc's mass, and the seal's behaviour. Next: the camera runs in MEASUREMENTS.md, "Measure these next".
+
+## Before the blueprints (26-28 Oct)
+
+This model was an approximation built from the photos and William's description. Only the
+channel width (tape) and the pipe bore (the stencil and the pipe standard) were firm.
+Every other dimension was estimated from the photos or from William's rough description,
+and no prediction has been checked against a measured wave yet. When more drawings or tape
+measurements arrive:
 
 1. In `geometry.json`, replace each estimate with the drawn value, narrow its `range`
-   to the drawing's tolerance, and change `how` to name the drawing and sheet. That
-   includes `row_bottoms` (per-row pipe bottoms), `pipe_top_height`, `pitch_along`,
-   and `disc_face_at_0mm`. Update `MEASUREMENTS.md` to match; its first
-   table ranks which numbers move the predictions most.
+   to the drawing's tolerance, and change `how` to name the drawing and sheet. Update
+   `MEASUREMENTS.md` to match; its first table ranks which numbers move the predictions
+   most.
 2. Where the drawings contradict the model's picture of the tank, change the code, not
-   only the numbers. The T layout with the channel on the head's centre line, the square
-   pitch of the bank, the side plates under it, the open gaps between pipes, and the
-   reservoir as a plain end wall all came from the photos or William's description.
+   only the numbers, as was done for the duct block on 7 Nov.
 3. Regenerate what depends on the geometry: the sweeps and charts, `drawings/` and
    `model/` (README, Commands), and the table in README's "Results at a glance". The
    cached tank solutions are keyed on the geometry, so a change re-solves them.
 4. The drawings cannot settle the seal behaviour or the overall gain. Those still need
    measured runs and `wm.py calibrate --compare` (README, Calibration loop).
 
-## Done
+## Done before the blueprints (26-28 Oct; the section at the top supersedes it where they differ)
 
 - **Stepped pipes.** The single `outlet_height` and the duct under the bank are gone.
   Each row of three has its own pipe bottom at 5 + 3(n - 1) in, with tops level at
@@ -90,12 +124,12 @@ are given the tank's blueprints, bring the model to the exact measurements:
 
 1. Whether display pistons 1-3 are William's row 1 (assumed: row n is pistons 3n-2..3n).
    It does not change a run of all 30, only which pistons a selection like `row1-3` means.
-2. Seal behaviour: bubbles from the pipe bottoms on every downstroke, or not. Up to
-   3.6x at shallow depth.
-3. Tape: rim height (now inferred from the window height), one channel window's width (the
-   channel length rests on assuming it equals the head's 39.25 in), the corner beams, and the
-   disc height at 0 mm (in order of how much each matters; see MEASUREMENTS.md).
-4. The depths the lab actually runs, and the first measured wave heights, for
+2. Seal behaviour: a burst of air from the bottom outlets on every slow downstroke, or not.
+   Up to 2.7x at shallow depth.
+3. The ringing after a stroke: its period and decay, from one filmed run (fits `duct_zeta`).
+4. Tape: a cylinder's circumference (bore), row 1's bottom, the disc height at 0 mm, one
+   channel window (see MEASUREMENTS.md).
+5. The depths the lab actually runs, and the first measured wave heights, for
    `wm.py calibrate --compare`.
 
 Committed to wavemaker-f25 as `tank-model/` on 27 Oct 2026. The HEIC originals in
@@ -103,4 +137,5 @@ Committed to wavemaker-f25 as `tank-model/` on 27 Oct 2026. The HEIC originals i
 
 Not fixed here, belongs to wavemaker-f25: its soliton trial lifts the "floor" from 370
 to 290 mm to make a crest. In this disc-in-pipe picture, lifting the discs draws water
-into the pipes, so that move would make a trough, not a crest.
+into the pipes (back through the ducts from the channel), so that move would make a
+trough, not a crest.
