@@ -9,11 +9,13 @@ by an Allen-Bradley ControlLogix PLC, in three rows of ten.
 
 ![The camera's view through the tank's side wall, with the waterline it found drawn in green](docs/media/waterline-demo.gif)
 
-*The camera measurement (`vision/`) watching a run of pistons 1-12 through the
-side wall: the waterline it detects is drawn in green, and the inset traces the
-height at the middle of the window. Recorded 16 Nov 2026;
-[full-quality MP4](docs/media/waterline-demo.mp4). How this footage is turned
-into a model of the water is in [docs/VISION_HANDOFF.md](docs/VISION_HANDOFF.md).*
+*The camera measurement (`vision/`) watching the channel through a side window,
+185 in from the pistons. Pistons 1-12 are pushed down 180 mm, which sends a
+single crest of about 10 mm past the window; the second bump in the trace is
+its echo from the far end of the channel. The waterline the camera finds is
+drawn in green. Recorded 16 Nov 2026, shown at 2x speed;
+[MP4](docs/media/waterline-demo.mp4). How footage like this is turned into a
+model of the water is in [docs/VISION_HANDOFF.md](docs/VISION_HANDOFF.md).*
 
 ## Running it
 
