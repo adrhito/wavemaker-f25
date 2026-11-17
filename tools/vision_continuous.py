@@ -27,7 +27,7 @@ from vision_probe import wm  # noqa: E402
 
 
 #: Pistons left out of every plan because their drives are locked off.
-EXCLUDED = {1, 2, 3, 8, 9, 19, 26}
+EXCLUDED = {26}
 
 
 def _problems(status: dict) -> list:

@@ -38,6 +38,9 @@ from wavemodel import predict as tm_predict  # noqa: E402
 
 RIG = json.loads((ROOT / "vision" / "rigs" / "channel_window_185in.json").read_text())
 FINE = 0.002
+#: The picture columns compared with the model: across the window, clear of
+#: the ignored columns (548-622, 1301-1311).
+STATION_PX = [1435.0, 1195.0, 975.0, 755.0, 515.0]
 
 
 def station_x_m(px):
@@ -104,9 +107,12 @@ def compare(run_name, depth=None, hp=None, seal="tight", before=15.0, after=85.0
     if depth is None:
         base = wavefit.baseline_at(ROOT / "analytics/rig", fire)
         depth = (base or {}).get("depth_mm", RIG["still_water_depth_mm"]) / 1000.0
-    cols = np.linspace(0, len(probe.stations_px) - 1, n_stations).round().astype(int)
-    xs = station_x_m(probe.stations_px[cols])
-    lead = max(0.0, origin - min(e["fire_sent"] for e in used) + 5.0)
+    # Fixed picture columns, the same for every run, so the tank's transfer
+    # functions are solved once per setting and cached.
+    want = np.array(STATION_PX[:n_stations] if n_stations <= len(STATION_PX) else STATION_PX)
+    cols = np.array([int(np.argmin(np.abs(probe.stations_px - w))) for w in want])
+    xs = station_x_m(want)
+    lead = max(0.0, origin - min(e.get("watch_started", e["fire_sent"]) for e in used) + 5.0)
     t, eta, Q = predict(used, origin - lead, xs, depth, seal=seal, hp=hp)
     t = t - lead
     meas = probe.eta[:, cols]
