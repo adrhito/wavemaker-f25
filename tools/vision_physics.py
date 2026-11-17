@@ -124,11 +124,15 @@ def compare(run_name, depth=None, hp=None, seal="tight", before=15.0, after=85.0
 _PREP = {}
 
 
-def prepared(run_name, depth=None, seal="tight", before=15.0, after=85.0, n_stations=5):
+def prepared(run_name, depth=None, seal="tight", before=15.0, after=85.0, n_stations=5,
+             one_run_log=None):
     """Everything about a run that does not depend on the tank's settings.
 
     The measured surface and each piston's flux (motion through the air
     model) are worked out once; ``synth`` then applies any tank settings.
+    ``one_run_log`` names the scratch file the run's entry is copied to
+    (default ``analytics/rig/_one_run.jsonl``), so that two processes
+    preparing runs at once do not read each other's.
     """
     key = (run_name, depth, seal, before, after, n_stations)
     if key in _PREP:
@@ -136,7 +140,7 @@ def prepared(run_name, depth=None, seal="tight", before=15.0, after=85.0, n_stat
     entries = [json.loads(l) for l in (ROOT / "analytics/rig/runs.jsonl").read_text().splitlines()]
     entry = [e for e in entries if e["run"]["name"] == run_name and e["reply"].get("ok")][-1]
     fire = entry["fire_sent"]
-    one = ROOT / "analytics" / "rig" / "_one_run.jsonl"
+    one = Path(one_run_log) if one_run_log else ROOT / "analytics" / "rig" / "_one_run.jsonl"
     one.write_text(json.dumps(entry) + chr(10))
     probe, runs = wavefit.load_rig(ROOT / "analytics/rig", runs_log=one,
                                    t_start=fire - before, t_end=fire + after)
