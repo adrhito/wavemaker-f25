@@ -46,6 +46,14 @@ def _problems(status: dict) -> list:
     return out
 
 
+def _baseline():
+    """The still-water baseline last marked in the waterline window."""
+    path = LOG.parent / "annotations.json"
+    if path.exists():
+        return json.loads(path.read_text()).get("baseline")
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,7 +92,9 @@ def main() -> None:
         fire = time.time()
         reply = wm("run", "--seconds", str(int(seconds)), "--sample", "30", "--wait",
                    *extra, timeout=seconds + 120)
+        base = _baseline()
         entry = {"run": item, "kind": "continuous", "fire_sent": fire,
+                 "baseline": base, "depth_mm": (base or {}).get("depth_mm"),
                  "fire_answered": time.time(), "params": params.get("text"),
                  "reply": reply}
         with open(LOG, "a") as handle:

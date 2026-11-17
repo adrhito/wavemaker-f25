@@ -98,11 +98,39 @@ class Annotations:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.marks = []
+        self.baselines = []   # every baseline ever set, newest last
         if path.exists():
-            self.marks = json.loads(path.read_text()).get("marks", [])
+            saved = json.loads(path.read_text())
+            self.marks = saved.get("marks", [])
+            self.baselines = saved.get("baselines", [])
         self.pending = None   # (x, y) waiting for a value
         self.typed = ""
-        self.mode = "height"  # or "along": inches along the chamber
+        self.mode = "height"  # "height", "along" (inches along the chamber) or "baseline"
+
+    @property
+    def baseline(self):
+        return self.baselines[-1] if self.baselines else None
+
+    def set_baseline(self, row: float, how: str) -> dict:
+        """Record the still-water level; the depth comes from the height marks."""
+        entry = {"row": float(row), "how": how, "at": time.time(),
+                 "when": datetime.now().isoformat(timespec="seconds")}
+        fit = self.fit()
+        if fit is not None:
+            entry["depth_in"] = fit[0] + fit[1] * row
+            entry["depth_mm"] = 25.4 * entry["depth_in"]
+        self.baselines.append(entry)
+        self.save()
+        return entry
+
+    def mm_per_row(self) -> float:
+        fit = self.fit()
+        return -25.4 * fit[1] if fit is not None else DEFAULT_MM_PER_PX
+
+    def floor_mm(self, row: float):
+        """Height above the tank floor, by the operator's marks."""
+        fit = self.fit()
+        return None if fit is None else 25.4 * (fit[0] + fit[1] * row)
 
     def save(self) -> None:
         fit = self.fit()
@@ -113,13 +141,17 @@ class Annotations:
             along_fit = {"inches_at_col0": float(a), "inches_per_col": float(b)}
         self.path.write_text(json.dumps({
             "marks": self.marks, "along_fit": along_fit,
+            "baselines": self.baselines, "baseline": self.baseline,
             "fit": None if fit is None else {"inches_at_row0": fit[0],
                                              "inches_per_row": fit[1]},
             "saved": datetime.now().isoformat(timespec="seconds")}, indent=1))
 
     def fit(self):
         """Height in inches as a + b * row, from the marks; None if too few."""
-        marks = [m for m in self.marks if m.get("axis", "height") == "height"]
+        # The 36 in tape stands off the glass (it sits 159-163 px above the
+        # 30 in one where the others are 155 apart), so it is left out.
+        marks = [m for m in self.marks if m.get("axis", "height") == "height"
+                 and m["inches"] < 33]
         if len({m["inches"] for m in marks}) < 2:
             return None
         rows = np.array([m["y"] for m in marks])
@@ -164,6 +196,7 @@ def main() -> None:
         print("ignoring columns from {0}: {1}".format(
             args.weak_file, _spans(np.flatnonzero(weak) + x0)), flush=True)
     zero_centre = None
+    recent = []  # the fitted line's median row over the last two seconds
     zero_row = None
     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], time.time()
     video, video_start = None, 0.0
@@ -181,6 +214,9 @@ def main() -> None:
                 # Clicks in the magnifier map back to the picture.
                 mouse["x"] = box[2] + (mx - box[0]) / 3
                 mouse["y"] = box[3] + (my - box[1]) / 3
+            if notes.mode == "baseline":
+                notes.set_baseline(float(mouse["y"]), "clicked")
+                return
             notes.pending = (float(mouse["x"]), float(mouse["y"]))
             notes.typed = ""
 
@@ -225,6 +261,9 @@ def main() -> None:
                 else:
                     lost += 1
                 last = rows
+                if not np.all(np.isnan(line)):
+                    recent.append(float(np.nanmedian(line)))
+                    del recent[:-60]
                 chunk_t.append(stamp)
                 chunk_rows.append(np.where(np.isnan(rows), -1,
                                            np.round(rows * 50)).astype(np.int16))
@@ -274,8 +313,9 @@ def main() -> None:
                 cy = int(round(line[centre]))
                 cv2.drawMarker(view, (x0 + centre, cy), (255, 0, 255),
                                cv2.MARKER_CROSS, 40, 2)
-                height = ((zero_centre if zero_centre is not None else line[centre])
-                          - line[centre]) * DEFAULT_MM_PER_PX
+                ref = notes.baseline["row"] if notes.baseline else (
+                    zero_centre if zero_centre is not None else line[centre])
+                height = (ref - line[centre]) * notes.mm_per_row()
                 if zero_centre is None:
                     zero_centre = line[centre]
                 cv2.putText(view, "measuring point x={0}: {1:+.1f} mm".format(
@@ -304,20 +344,43 @@ def main() -> None:
             mean_row = np.nanmedian(line) if pts else np.nan
             if zero_row is None and pts:
                 zero_row = mean_row
-            fit = notes.fit()
-            if fit is not None and pts:
-                level = '{0:.2f} in ({1:.1f} mm) by your marks'.format(
-                    fit[0] + fit[1] * mean_row, 25.4 * (fit[0] + fit[1] * mean_row))
+            base = notes.baseline
+            k = notes.mm_per_row()
+            if base is not None:
+                brow = base["row"]
+                depth = base.get("depth_mm")
+                cv2.line(view, (x0 - 40, int(round(brow))), (x1 + 40, int(round(brow))),
+                         (255, 255, 0), 1)
+                label = "baseline (still water)"
+                if depth is not None:
+                    label += ": {0:.1f} mm deep ({1:.2f} in)".format(depth, depth / 25.4)
+                cv2.putText(view, label, (x1 + 45, int(brow) + 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 1)
+                if depth is not None:
+                    lim = limits(depth, brow, lo, hi, k)
+                    for name, mm, colour in (("max crest", lim["crest_mm"], (0, 0, 255)),
+                                             ("lowest trough seen", -lim["trough_mm"], (0, 128, 255))):
+                        y = int(round(brow - mm / k))
+                        cv2.line(view, (x0, y), (x1, y), colour, 1, cv2.LINE_AA)
+                        cv2.putText(view, "{0} {1:+.0f} mm ({2})".format(
+                            name, mm, lim["crest_by"] if mm > 0 else "camera"),
+                            (x0 + 5, y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 1)
+                    cv2.putText(view, "breaking: wave height (crest to trough) up to {0:.0f} mm "
+                                "= 0.78 x depth".format(lim["height_mm"]),
+                                (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                now = (brow - mean_row) * k if pts else float("nan")
+                level = "{0:+.1f} mm above baseline".format(now)
             else:
-                level = '{0:+.1f} mm from start (default scale)'.format(
-                    (zero_row - mean_row) * DEFAULT_MM_PER_PX if pts else float("nan"))
+                level = "{0:+.1f} mm from start - press b on still water to set the baseline".format(
+                    (zero_row - mean_row) * k if pts else float("nan"))
             cv2.putText(view, "waterline: " + level, (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             cv2.putText(view, "green: fitted waterline  yellow ticks: measuring stations  "
                         "magenta: main point  red dots: raw edges  grey: ignored",
                         (20, 1025), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.putText(view, "MODE: {0}   (h switches height / along-the-chamber)".format(
-                "HEIGHT marks" if notes.mode == "height" else "ALONG-CHAMBER marks"),
+            cv2.putText(view, "MODE: {0}   (h cycles height / along / baseline;  b = baseline from water now)".format(
+                {"height": "HEIGHT marks", "along": "ALONG-CHAMBER marks",
+                 "baseline": "BASELINE - click the still waterline"}[notes.mode]),
                 (20, 990), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 128, 0), 2)
             cv2.putText(view, "click=mark  type inches+Enter  z=magnify  u=undo  r=zero  Q=quit",
                         (20, 1060), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
@@ -360,7 +423,11 @@ def main() -> None:
             if key == ord("z"):
                 zoom = not zoom
             elif key == ord("h"):
-                notes.mode = "along" if notes.mode == "height" else "height"
+                notes.mode = {"height": "along", "along": "baseline",
+                              "baseline": "height"}[notes.mode]
+            elif key == ord("b") and recent:
+                entry = notes.set_baseline(float(np.median(recent)), "fitted line, 2 s median")
+                print("baseline set: {0}".format(entry), flush=True)
             elif key == ord("u") and notes.marks:
                 notes.marks.pop()
                 notes.save()
@@ -374,6 +441,29 @@ def main() -> None:
             video.release()
         grab.close()
         cv2.destroyAllWindows()
+
+
+#: Rim of the tank above its floor (IIHR sheet 4) and the margin kept below it.
+RIM_MM = 1152.5
+RIM_MARGIN_MM = 50.0
+#: McCowan's limit: a wave breaks when its height reaches 0.78 of the depth.
+BREAKING = 0.78
+
+
+def limits(depth_mm: float, base_row: float, lo: int, hi: int, mm_per_row: float) -> dict:
+    """What the water can do at this baseline, and what the camera can see.
+
+    The highest crest is the least of: the breaking limit (a solitary wave
+    of 0.78 x depth), the rim less a margin, and the top of the band the
+    camera searches.  The lowest trough shown is the bottom of the band.
+    """
+    candidates = {"breaking": BREAKING * depth_mm,
+                  "rim": RIM_MM - depth_mm - RIM_MARGIN_MM,
+                  "camera": (base_row - lo) * mm_per_row}
+    by = min(candidates, key=candidates.get)
+    return {"crest_mm": candidates[by], "crest_by": by,
+            "trough_mm": min((hi - base_row) * mm_per_row, depth_mm),
+            "height_mm": BREAKING * depth_mm}
 
 
 def _spans(cols) -> str:

@@ -464,6 +464,23 @@ def score(model: Model, probe: Probe, t0: float = 0.0,
             "peak_mm": float(np.max(np.abs(centred)))}
 
 
+def baseline_at(folder, when: float) -> Optional[dict]:
+    """The still-water baseline the operator set last before ``when``.
+
+    Baselines are marked in ``tools/vision_rig.py`` and kept, with their
+    times and depths, in ``annotations.json``.  The water level changes
+    over days, so each record is measured from the baseline in force then.
+    """
+    path = Path(folder) / "annotations.json"
+    if not path.exists():
+        return None
+    marks = json.loads(path.read_text()).get("baselines", [])
+    before = [b for b in marks if b["at"] <= when]
+    if before:
+        return before[-1]
+    return marks[0] if marks else None
+
+
 def load_rig(folder, runs_log=None, t_start=None, t_end=None,
              bin_px: int = BIN_PX) -> tuple:
     """The continuous record from ``tools/vision_rig.py`` as one Probe.
@@ -501,7 +518,12 @@ def load_rig(folder, runs_log=None, t_start=None, t_end=None,
     px = x0 + (np.arange(rb.shape[1]) + 0.5) * bin_px
     good = np.mean(np.isnan(rb), axis=0) < 0.2
     rb, px = rb[:, good], px[good]
-    eta_f = (np.nanmedian(rb, axis=0) - rb) * MM_PER_PX
+    still = baseline_at(folder, t[0])
+    if still is None:
+        still = np.nanmedian(rb, axis=0)  # no baseline marked: the record's own median
+    else:
+        still = still["row"]
+    eta_f = (still - rb) * MM_PER_PX
     eta_f = _hampel(eta_f)
     origin = t[0]
     grid = np.arange(0, t[-1] - origin, DT)
