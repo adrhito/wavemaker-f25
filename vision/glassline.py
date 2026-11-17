@@ -62,6 +62,87 @@ def edge_rows(gray: np.ndarray, lo: int, hi: int, bin_px: int = 1,
     return rows
 
 
+def edge_rows_near(gray: np.ndarray, lo: int, hi: int, last: np.ndarray,
+                   track: float, min_step: float = MIN_STEP,
+                   strength_out: Optional[list] = None) -> np.ndarray:
+    """``edge_rows`` searching only ``track`` rows either side of ``last``.
+
+    Columns whose ``last`` is NaN search the whole band.  Vectorised, for
+    reading every column of a live picture at the camera's rate.
+    """
+    g = np.asarray(gray, dtype=np.float32)
+    d = np.zeros_like(g)
+    d[1:-1] = (g[:-2] - g[2:]) * 0.5
+    band = d[lo:hi]
+    ys = np.arange(lo, hi, dtype=np.float32)[:, None]
+    near = np.abs(ys - last[None, :]) <= track
+    near |= np.isnan(last)[None, :]
+    masked = np.where(near, band, -np.inf)
+    peak = np.argmax(masked, axis=0)
+    cols = np.arange(band.shape[1])
+    strength = masked[peak, cols]
+    inner = (peak > 0) & (peak < band.shape[0] - 1)
+    pk = np.clip(peak, 1, band.shape[0] - 2)
+    a, b, c = band[pk - 1, cols], band[pk, cols], band[pk + 1, cols]
+    denom = a - 2 * b + c
+    with np.errstate(divide="ignore", invalid="ignore"):
+        shift = np.where(np.abs(denom) > 1e-6, 0.5 * (a - c) / denom, 0.0)
+    rows = (lo + peak + np.where(inner, np.clip(shift, -0.5, 0.5), 0.0)).astype(np.float64)
+    rows[(strength < min_step) | ~inner] = np.nan
+    if strength_out is not None:
+        strength_out.append(np.where(np.isfinite(strength), strength, 0.0))
+    return rows
+
+
+def weak_columns(strengths: Sequence[np.ndarray], fraction: float = 0.45) -> np.ndarray:
+    """Columns whose edge is persistently weak compared with the rest.
+
+    Where something pale stands behind the tank instead of the dark sheet,
+    the waterline barely shows and the strongest edge is often something
+    else.  Those columns are better bridged by the fitted line than read.
+    """
+    typical = np.median(np.asarray(strengths), axis=0)
+    return typical < fraction * np.median(typical)
+
+
+def fit_line(rows: np.ndarray, window: int = 61, reject: float = 2.5,
+             smooth: float = 12.0, min_fraction: float = 0.2) -> np.ndarray:
+    """One smooth waterline through a picture's column edges.
+
+    The surface is smooth across the window (waves here are metres long), so
+    a column far from its neighbours is a glint, a post or a dark patch, not
+    water.  Columns more than ``reject`` pixels from the running median of
+    ``window`` columns are dropped (twice, the second time against the
+    cleaned line), and the rest are averaged with a Gaussian ``smooth``
+    columns wide, which also bridges the gaps.  Returns NaN everywhere if
+    fewer than ``min_fraction`` of the columns survive.
+    """
+    from scipy.ndimage import gaussian_filter1d, median_filter
+
+    rows = np.asarray(rows, dtype=float)
+    good = ~np.isnan(rows)
+    if good.mean() < min_fraction:
+        return np.full_like(rows, np.nan)
+    x = np.arange(len(rows))
+    centre = None
+    for _ in range(2):
+        filled = np.interp(x, x[good], rows[good])
+        if centre is not None:
+            # Rejected columns take the cleaned line, not their stray value.
+            filled = np.where(good, rows, centre)
+        med = median_filter(filled, window, mode="nearest")
+        good = ~np.isnan(rows) & (np.abs(rows - med) <= reject)
+        if good.mean() < min_fraction:
+            return np.full_like(rows, np.nan)
+        centre = med
+    weights = gaussian_filter1d(good.astype(float), smooth, mode="nearest")
+    values = gaussian_filter1d(np.where(good, rows, 0.0), smooth, mode="nearest")
+    line = values / np.maximum(weights, 1e-9)
+    # Far from any surviving column the line is a guess: say so.
+    line[weights < 0.02] = np.nan
+    return line
+
+
 def edges(frames: Sequence[np.ndarray], lo: int, hi: int, bin_px: int = 1,
           min_step: float = MIN_STEP, track: Optional[float] = None) -> np.ndarray:
     """``edge_rows`` for every picture: an array of pictures x column groups.

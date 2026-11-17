@@ -199,33 +199,94 @@ def _fit_legs(ts: np.ndarray, pos: np.ndarray, top: float, speed: float,
 
 def motion(record: dict, grid: np.ndarray, fire: float) -> tuple:
     """Upward displacement of every moved piston on the grid, and fit notes."""
-    reply = record["replies"][-1]
+    return motion_from(record["replies"][-1], record["run"], grid, fire)
+
+
+def legs_from_samples(ts: np.ndarray, pos: np.ndarray, still: float = 0.4,
+                      prior_accel: float = 2000.0, prior_smooth: float = 0.3) -> list:
+    """Every move one piston made, found and fitted from its samples.
+
+    The pistons do not always make only the move planned: on 16 Nov 2026 a
+    single stroke first went to the previous run's top and back.  So the
+    samples are taken as the truth.  They are split into plateaus (still to
+    ``still`` mm between samples) and the legs between them, and each leg is
+    fitted with :func:`scurve` -- start, speed, effective acceleration and
+    smoothing -- gently held towards the values typical of these drives,
+    since a fast leg may have only three or four samples.
+    """
+    from scipy.optimize import least_squares
+
+    lift = REST_MM - np.asarray(pos, dtype=float)
+    n = len(lift)
+    moving = np.zeros(n, bool)
+    moving[1:] |= np.abs(np.diff(lift)) > still
+    moving[:-1] |= np.abs(np.diff(lift)) > still
+    legs = []
+    k = 0
+    while k < n:
+        if not moving[k]:
+            k += 1
+            continue
+        j = k
+        while j < n and moving[j]:
+            j += 1
+        a_i, b_i = max(k - 1, 0), min(j, n - 1)
+        level_a, level_b = lift[a_i], lift[b_i]
+        length = level_b - level_a
+        if abs(length) < 1.0 or b_i - a_i < 2:
+            k = j
+            continue
+        t_win, y_win = ts[a_i:b_i + 1], lift[a_i:b_i + 1]
+        span = max(t_win[-1] - t_win[0], 1e-3)
+        sign = np.sign(length)
+
+        def resid(x):
+            model = level_a + sign * scurve(t_win, x[0], abs(length), x[1], x[2], x[3])
+            prior = [0.3 * np.log(x[2] / prior_accel), 0.3 * (x[3] - prior_smooth) / 0.3]
+            return np.concatenate([model - y_win, np.array(prior) * max(abs(length), 1) * 0.05])
+
+        v0 = abs(length) / span
+        x0 = [t_win[0], max(v0 * 1.5, 5.0), prior_accel, prior_smooth]
+        fit = least_squares(resid, x0, bounds=([t_win[0] - 0.3, 2.0, 10.0, 0.0],
+                                               [t_win[-1], 1500.0, 50000.0, 1.5]))
+        legs.append({"from": float(level_a), "to": float(level_b),
+                     "start": float(fit.x[0]), "speed": float(fit.x[1]),
+                     "accel": float(fit.x[2]), "smooth": float(fit.x[3])})
+        k = j
+    return legs
+
+
+def lift_series(t: np.ndarray, legs: list, start_level: float) -> np.ndarray:
+    """Upward displacement on ``t`` from the fitted legs."""
+    out = np.full(len(t), float(start_level))
+    for leg in legs:
+        out += np.sign(leg["to"] - leg["from"]) * scurve(
+            t, leg["start"], abs(leg["to"] - leg["from"]), leg["speed"],
+            leg["accel"], leg["smooth"])
+    return out
+
+
+def motion_from(reply: dict, run: dict, grid: np.ndarray, fire: float) -> tuple:
+    """Upward displacement of every piston that moved, on the grid.
+
+    ``grid`` and the samples are compared in the samples' clock minus
+    ``fire``.  Displacement is counted from rest (``REST_MM``), so a piston
+    that ends where it began contributes nothing outside its moves.
+    """
     path = Path(reply["data"]["samples"]["file"])
     times, pistons, pos = _read_samples(path)
-    settings = {}
-    for group in record["run"]["groups"]:
-        for p in _expand(group["pistons"]):
-            settings[p] = group
+    t = times - fire
     disp, notes = {}, {}
     for col, p in enumerate(pistons):
-        g = settings.get(p)
-        if g is None:
+        legs = legs_from_samples(t, pos[:, col])
+        if not legs:
             continue
-        stroke = float(g["stroke"])
-        top = float(g.get("top", REST_MM - stroke))
-        speed, accel = float(g["speed"]), float(g.get("accel", 20000))
-        decel = float(g.get("decel", 20000))
-        found = _fit_legs(times - fire, pos[:, col], top, speed, accel, decel)
-        if found is None:
-            continue
-        legs, a_eff, smooth = found[:2], found[2], found[3]
-        length = REST_MM - top
-        disp[p] = _stroke(grid, legs, length, speed, a_eff, smooth)
-        model = _stroke(times - fire, legs, length, speed, a_eff, smooth)
+        start = REST_MM - pos[0, col]
+        series = lift_series(grid, legs, start) - start
+        model = lift_series(t, legs, start)
         resid = (REST_MM - pos[:, col]) - model
-        notes[p] = {"legs": [float(v) for v in legs], "accel": float(a_eff),
-                    "smooth": float(smooth),
-                    "rms_mm": float(np.sqrt(np.mean(resid ** 2)))}
+        disp[p] = series
+        notes[p] = {"legs": legs, "rms_mm": float(np.sqrt(np.mean(resid ** 2)))}
     return disp, notes
 
 
@@ -321,48 +382,140 @@ def _station_cols(probe: Probe, px: np.ndarray) -> np.ndarray:
 
 def fit(probes: Sequence[Probe], groups: Dict[str, List[int]],
         taps: int = 450, ridge: float = 1.0, smooth: float = 10.0,
-        stations_px: Optional[np.ndarray] = None) -> Model:
+        stations_px: Optional[np.ndarray] = None,
+        masks: Optional[Sequence[np.ndarray]] = None) -> Model:
     """Least-squares kernels for every station at once.
 
     ``ridge`` and ``smooth`` penalise the kernels' size and their second
-    difference, which keeps the long tails from fitting noise.
+    difference, which keeps the long tails from fitting noise.  ``masks``
+    choose which grid steps of each probe are fitted (held-out steps are
+    left out of the fit but their inputs still drive later steps).  Each
+    probe gets its own constant offset per station, for the still level.
     """
     px = _common_stations(probes) if stations_px is None else stations_px
     names = list(groups)
-    blocks, targets = [], []
-    for probe in probes:
+    n = len(names) * taps
+    m = len(probes)
+    XtX = np.zeros((n + m, n + m))
+    XtY = np.zeros((n + m, len(px)))
+    for j, probe in enumerate(probes):
         u = inputs(probe, groups)
-        X = np.hstack([_lagged(u[n], taps) for n in names])
+        X = np.hstack([_lagged(u[k], taps) for k in names]
+                      + [np.zeros((len(probe.t), m))])
+        X[:, n + j] = 1.0
         Y = probe.eta[:, _station_cols(probe, px)]
         ok = ~np.any(np.isnan(Y), axis=1)
-        blocks.append(X[ok])
-        targets.append(Y[ok])
-    X = np.vstack(blocks)
-    Y = np.vstack(targets)
-    n = X.shape[1]
+        if masks is not None:
+            ok &= masks[j]
+        XtX += X[ok].T @ X[ok]
+        XtY += X[ok].T @ Y[ok]
     D = np.zeros((taps - 2, taps))
     for k in range(taps - 2):
         D[k, k:k + 3] = (1, -2, 1)
     P = np.kron(np.eye(len(names)), D.T @ D) * smooth + np.eye(n) * ridge
-    scale = np.mean(np.sum(X ** 2, axis=0)) + 1e-12
-    A = X.T @ X + P * scale * 1e-4
-    W = np.linalg.solve(A, X.T @ Y)
-    kernels = W.reshape(len(names), taps, -1)
-    return Model({k: list(v) for k, v in groups.items()}, taps, kernels, px)
+    scale = np.mean(np.diag(XtX)[:n]) + 1e-12
+    A = XtX.copy()
+    A[:n, :n] += P * scale * 1e-4
+    W = np.linalg.solve(A + np.eye(n + m) * 1e-9, XtY)
+    kernels = W[:n].reshape(len(names), taps, -1)
+    model = Model({k: list(v) for k, v in groups.items()}, taps, kernels, px)
+    model.offsets = {id(p): W[n + j] for j, p in enumerate(probes)}
+    return model
 
 
 def score(model: Model, probe: Probe, t0: float = 0.0,
-          t1: Optional[float] = None) -> dict:
-    """Relative RMS error of the prediction over the stations and window."""
+          t1: Optional[float] = None, mask: Optional[np.ndarray] = None,
+          offset: Optional[np.ndarray] = None) -> dict:
+    """Relative RMS error of the prediction over the stations and window.
+
+    The still level is taken from the fit when the probe was part of it, or
+    else from ``offset``, or else from the probe's own steps before firing.
+    """
     pred = model.predict(probe)
     Y = probe.eta[:, _station_cols(probe, model.stations_px)]
-    mask = (probe.t >= t0) & (probe.t <= (t1 if t1 is not None else probe.t[-1]))
-    mask &= ~np.any(np.isnan(Y), axis=1)
+    if mask is None:
+        mask = (probe.t >= t0) & (probe.t <= (t1 if t1 is not None else probe.t[-1]))
+    mask = mask & ~np.any(np.isnan(Y), axis=1)
+    if offset is None:
+        offset = getattr(model, "offsets", {}).get(id(probe))
+    if offset is None:
+        offset = np.nanmedian(Y[probe.t < 0] - pred[probe.t < 0], axis=0)
+    pred = pred + offset
     err = pred[mask] - Y[mask]
-    rms = float(np.sqrt(np.mean(Y[mask] ** 2)))
+    centred = Y[mask] - offset
+    rms = float(np.sqrt(np.mean(centred ** 2)))
     return {"rel_rms": float(np.sqrt(np.mean(err ** 2))) / max(rms, 1e-9),
             "rms_mm": rms, "err_mm": float(np.sqrt(np.mean(err ** 2))),
-            "peak_mm": float(np.max(np.abs(Y[mask])))}
+            "peak_mm": float(np.max(np.abs(centred)))}
+
+
+def load_rig(folder, runs_log=None, t_start=None, t_end=None,
+             bin_px: int = BIN_PX) -> tuple:
+    """The continuous record from ``tools/vision_rig.py`` as one Probe.
+
+    Returns the probe (its ``t`` in seconds since the first picture used)
+    and the list of runs, each with ``fire`` on the same clock.
+    """
+    folder = Path(folder)
+    ts, rows = [], []
+    # Pieces may cover different columns; place each on picture columns.
+    X0, X1 = 400, 1500
+    for path in sorted(folder.glob("edges-*.npz")):
+        z = np.load(path)
+        # The fitted line where the recorder saved one, else raw edges.
+        key = "line50" if "line50" in z.files else "rows50"
+        r = z[key].astype(np.float64) / 50.0
+        r[z[key] < 0] = np.nan
+        full = np.full((len(r), X1 - X0), np.nan)
+        a = int(z["x0"]) - X0
+        full[:, a:a + r.shape[1]] = r
+        ts.append(z["t"])
+        rows.append(full)
+    x0 = X0
+    t = np.concatenate(ts)
+    r = np.vstack(rows)
+    keep = np.ones(len(t), bool)
+    if t_start is not None:
+        keep &= t >= t_start
+    if t_end is not None:
+        keep &= t <= t_end
+    t, r = t[keep], r[keep]
+    width = (r.shape[1] // bin_px) * bin_px
+    with np.errstate(all="ignore"):
+        rb = np.nanmedian(r[:, :width].reshape(len(r), -1, bin_px), axis=2)
+    px = x0 + (np.arange(rb.shape[1]) + 0.5) * bin_px
+    good = np.mean(np.isnan(rb), axis=0) < 0.2
+    rb, px = rb[:, good], px[good]
+    eta_f = (np.nanmedian(rb, axis=0) - rb) * MM_PER_PX
+    eta_f = _hampel(eta_f)
+    origin = t[0]
+    grid = np.arange(0, t[-1] - origin, DT)
+    eta = np.full((len(grid), eta_f.shape[1]), np.nan)
+    idx = np.floor((t - origin) / DT).astype(int)
+    counts = np.bincount(idx, minlength=len(grid))[:len(grid)]
+    for s in range(eta_f.shape[1]):
+        sums = np.bincount(idx, weights=eta_f[:, s], minlength=len(grid))[:len(grid)]
+        with np.errstate(all="ignore"):
+            eta[:, s] = np.where(counts > 0, sums / np.maximum(counts, 1), np.nan)
+    centres = grid + DT / 2
+    runs = []
+    log = Path(runs_log) if runs_log else folder / "runs.jsonl"
+    disp: Dict[int, np.ndarray] = {}
+    notes = {}
+    for line in log.read_text().splitlines():
+        entry = json.loads(line)
+        fire = entry["fire_sent"] - origin
+        if fire < 0 or fire > centres[-1]:
+            continue
+        # The samples are in epoch seconds; the grid counts from origin.
+        d, n = motion_from(entry["reply"], entry["run"], centres + origin, 0.0)
+        for p, series in d.items():
+            disp[p] = disp.get(p, 0) + series
+        runs.append({"name": entry["run"]["name"], "fire": fire, "run": entry["run"],
+                     "motion": n})
+        notes[entry["run"]["name"]] = n
+    probe = Probe(folder, {"name": "rig"}, centres, eta, px, disp, {"motion": notes})
+    return probe, runs
 
 
 def all_probes(folder, names: Optional[Sequence[str]] = None) -> List[Probe]:
