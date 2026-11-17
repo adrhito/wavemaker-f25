@@ -31,3 +31,7 @@ analytics/probes/
 
 # What a wavectl session writes: its own log and position samples.
 logs/wavectl/
+
+# The camera rig's recordings, caches and fits (tens of GB); see
+# docs/VISION_HANDOFF.md. The fitting scripts worth keeping are in tools/analysis/.
+analytics/rig/
