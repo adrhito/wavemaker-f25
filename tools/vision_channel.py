@@ -41,7 +41,7 @@ CACHE = ROOT / "analytics" / "rig" / "channel_cache"
 RUNS = ROOT / "analytics" / "rig" / "runs.jsonl"
 WIDTH = 0.74295          # channel inside width, m (taped)
 DT = 0.1                 # model grid, s
-NFFT = 8192              # 819 s: room for the input history and the window
+NFFT = 8192              # 819 s at 0.1 s: room for 5 minutes of history and the window
 ROWS = 6
 #: Camera data before this is unusable (the first tracker).
 GOOD_FROM = datetime(2026, 11, 16, 20, 25).timestamp()
@@ -80,7 +80,84 @@ def load_case(name, depth=None, after=40.0):
     return case
 
 
+# ------------------------------------------------------------------ flux, once per run
+
+FLUX = ROOT / "analytics" / "rig" / "flux_cache"
+FLUX_DT = 0.04
+
+
+def run_flux(entry, depth=0.406):
+    """This run's own per-row water flux on its own stretch of the shared clock.
+
+    Computed once from its position samples (through the air model) and
+    cached; any window then sums the runs that overlap it, before and after.
+    """
+    FLUX.mkdir(parents=True, exist_ok=True)
+    name = entry["run"]["name"]
+    path = FLUX / ("%s_%03d.npz" % (name, round(depth * 1000)))
+    if path.exists():
+        z = np.load(path)
+        return float(z["t0"]), z["Q"]
+    from vision_physics import flux_from_samples, load_geometry
+    from vision import wavefit
+    times, _, _ = wavefit._read_samples(Path(entry["reply"]["data"]["samples"]["file"]))
+    t0 = float(times[0]) - 2.0
+    n = int(np.ceil((times[-1] + 4.0 - t0) / FLUX_DT))
+    g = load_geometry()
+    Q = flux_from_samples(entry, t0, n, FLUX_DT, depth, g)
+    rows = np.array([Q[3 * r:3 * r + 3].sum(axis=0) for r in range(ROWS)])
+    np.savez_compressed(path, t0=t0, Q=rows)
+    return t0, rows
+
+
+def load_case2(name, entries, depth=0.406, before=8.0, after=40.0, history=300.0):
+    """Measured surface for one run's window, with every run's flux around it."""
+    from vision import wavefit
+    e = [x for x in entries if x["run"]["name"] == name][-1]
+    fire = e["fire_sent"]
+    meas_path = CACHE / (name + ".npz")
+    if meas_path.exists():
+        z = np.load(meas_path)
+        t, meas, x = z["t"], z["meas"], z["x"]
+    else:
+        one = ROOT / "analytics" / "rig" / ("_one_%s.jsonl" % name)
+        one.write_text(json.dumps(e) + chr(10))
+        probe, runs = wavefit.load_rig(ROOT / "analytics/rig", runs_log=one,
+                                       t_start=fire - before, t_end=fire + after)
+        one.unlink()
+        if not runs:
+            raise ValueError("camera did not record %s" % name)
+        from vision_physics import STATION_PX, station_x_m
+        cols = np.array([int(np.argmin(np.abs(probe.stations_px - w))) for w in STATION_PX])
+        t = probe.t - runs[0]["fire"]
+        meas, x = probe.eta[:, cols], station_x_m(np.array(STATION_PX))
+    grid_t = np.arange(fire - history, fire + after + 1.0, FLUX_DT)
+    Q = np.zeros((ROWS, len(grid_t)))
+    for other in entries:
+        if not (fire - history - 60 < other["fire_sent"] < fire + after):
+            continue
+        t0, rows = run_flux(other, depth)
+        tt = t0 + np.arange(rows.shape[1]) * FLUX_DT
+        for r in range(ROWS):
+            Q[r] += np.interp(grid_t, tt, rows[r], left=0.0, right=0.0)
+    return {"t": t, "meas": meas, "x": x, "depth": np.array(depth),
+            "tq": grid_t - fire, "Qrows": Q}
+
+
 # ------------------------------------------------------------------ model
+
+def wavenumbers(w, h):
+    """Linear dispersion w^2 = g k tanh(k h), solved for every w at once."""
+    w = np.asarray(w, float)
+    k = np.maximum(w / np.sqrt(linear.G * h), 1e-12)          # shallow-water start
+    k = np.maximum(k, w ** 2 / linear.G)                      # deep-water bound
+    for _ in range(30):
+        th = np.tanh(k * h)
+        f = linear.G * k * th - w ** 2
+        df = linear.G * th + linear.G * k * h * (1 - th ** 2)
+        k = np.maximum(k - f / df, 1e-12)
+    return np.where(w > 0, k, 0.0)
+
 
 NAMES = (["g%d" % (r + 1) for r in range(ROWS)] + ["tau%d" % (r + 1) for r in range(ROWS)]
          + ["L", "Re", "Rh", "tau_h", "log_d0", "log_d1", "log_d2", "h_scale"])
@@ -106,7 +183,7 @@ def predict(case, p, x=None):
     grid = t0 + np.arange(NFFT) * DT
     q = np.array([np.interp(grid, tq, row, left=0.0, right=0.0) for row in Qr])
     w = 2 * np.pi * np.fft.rfftfreq(NFFT, DT)
-    k = np.array([linear.wavenumber(wi, h) if wi > 0 else 0.0 for wi in w])
+    k = wavenumbers(w, h)
     c = np.where(w > 0, w / np.maximum(k, 1e-9), np.sqrt(linear.G * h))
     delta = np.exp(p["log_d0"]) + np.exp(p["log_d1"]) * w + np.exp(p["log_d2"]) * w ** 2
     kc = k - 1j * delta
@@ -127,9 +204,27 @@ def predict(case, p, x=None):
 
 
 def window(case, after=40.0):
+    """From a second before firing until the next test's waves could arrive.
+
+    The model knows only the runs fired up to this one, so the window ends
+    4 s after the next run fired (waves need at least 5 s to reach the
+    camera), or ``after`` seconds, whichever comes first.
+    """
     t = case["t"]
-    ok = (t >= -1.0) & (t <= after) & ~np.any(np.isnan(case["meas"]), axis=1)
+    end = min(after, float(case.get("next_fire", np.inf)) + 4.0)
+    ok = (t >= -1.0) & (t <= end) & ~np.any(np.isnan(case["meas"]), axis=1)
     return ok
+
+
+def attach_next_fire(cases, names):
+    """Seconds from each run's fire to the next logged run's fire."""
+    fires = sorted(json.loads(l)["fire_sent"] for l in RUNS.read_text().splitlines())
+    by_name = {json.loads(l)["run"]["name"]: json.loads(l)["fire_sent"]
+               for l in RUNS.read_text().splitlines()}
+    for c, n in zip(cases, names):
+        f = by_name[n]
+        later = [x for x in fires if x > f + 0.5]
+        c["next_fire"] = (later[0] - f) if later else np.inf
 
 
 def score(case, p):
