@@ -198,6 +198,7 @@ def main() -> None:
     zero_centre = None
     recent = []  # the fitted line's median row over the last two seconds
     motion_log = []  # (time, line at ten stations) for the stillness signal
+    snapped, snap_n = 0.0, 0
     published = 0.0
     zero_row = None
     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], time.time()
@@ -253,7 +254,7 @@ def main() -> None:
                         np.save(OUT / "weak_columns.npy", weak)
                 if weak is not None:
                     rows[weak] = np.nan
-                fitted = glassline.fit_line(rows)
+                fitted = glassline.fit_line(rows, window=151)
                 if not np.all(np.isnan(fitted)):
                     # Bridge any gap so every column keeps a nearby search.
                     ok = ~np.isnan(fitted)
@@ -404,6 +405,12 @@ def main() -> None:
                     patch, (960, 540), interpolation=cv2.INTER_NEAREST)
                 cv2.rectangle(view, (bx0, by0), (bx0 + 959, by0 + 539), (0, 255, 255), 2)
                 magnifier["box"] = (bx0, by0, px0, py0)
+            if time.time() - snapped > 5.0:
+                # What the operator sees, for checking the line from afar.
+                snapped = time.time()
+                snap_n = (snap_n + 1) % 20
+                cv2.imwrite(str(OUT / "snapshot.png"), view)
+                cv2.imwrite(str(OUT / "snapshot_{0:02d}.png".format(snap_n)), view)
             cv2.imshow(WINDOW, cv2.resize(view, (1280, 720), interpolation=cv2.INTER_AREA))
             key = cv2.waitKey(1) & 0xFF
             if key == 255:

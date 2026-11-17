@@ -20,8 +20,13 @@
    622
   ],
   [
+   835,
+   915
+  ],
+  [
    1301,
    1311
   ]
- ]
+ ],
+ "ignored_why": "548-622: pale object behind the far wall below the waterline; 835-915: white object just above the waterline whose lower edge out-competes the water's; 1301-1311: post"
 }
