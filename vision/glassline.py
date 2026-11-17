@@ -62,7 +62,8 @@ def edge_rows(gray: np.ndarray, lo: int, hi: int, bin_px: int = 1,
     return rows
 
 
-def tape_mask(bgr: np.ndarray, redness: float = 30.0, grow: int = 4) -> np.ndarray:
+def tape_mask(bgr: np.ndarray, redness: float = 30.0, grow: int = 4,
+              grow_rows: int = 10) -> np.ndarray:
     """Where the red measuring tapes are, grown by ``grow`` pixels.
 
     The tapes are opaque: behind them the waterline cannot be seen, and
@@ -71,9 +72,12 @@ def tape_mask(bgr: np.ndarray, redness: float = 30.0, grow: int = 4) -> np.ndarr
     """
     a = np.asarray(bgr, dtype=np.float32)
     red = (a[..., 2] - np.maximum(a[..., 0], a[..., 1])) > redness
-    if grow:
+    if grow or grow_rows:
+        # Taller than wide: the tape's soft top and bottom fringes are what
+        # a tracker sticks to (16 Nov 2026), so they go too.
         from scipy.ndimage import binary_dilation
-        red = binary_dilation(red, iterations=grow)
+        shape = np.ones((2 * max(grow_rows, grow) + 1, 2 * grow + 1), bool)
+        red = binary_dilation(red, structure=shape)
     return red
 
 
