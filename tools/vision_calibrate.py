@@ -14,7 +14,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
-from vision_physics import compare, rel_error, tank  # noqa: E402
+from vision_physics import prepared, synth, rel_error, tank  # noqa: E402
 
 
 def main() -> None:
@@ -30,7 +30,7 @@ def main() -> None:
     for d, h in itertools.product([float(v) for v in a.damping.split(",")],
                                   [float(v) for v in a.head.split(",")]):
         hp = tank.HydroParams(channel_damping=d, head_absorption=h)
-        comps = {r: compare(r, a.depth, hp) for r in a.train + a.test}
+        comps = {r: synth(prepared(r, a.depth), hp) for r in a.train + a.test}
         # one gain for all training runs, least squares
         num = sum(np.nansum(c["pred"] * c["meas"]) for r, c in comps.items() if r in a.train)
         den = sum(np.nansum(c["pred"] ** 2 * ~np.isnan(c["meas"])) for r, c in comps.items() if r in a.train)

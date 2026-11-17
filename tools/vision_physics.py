@@ -121,6 +121,66 @@ def compare(run_name, depth=None, hp=None, seal="tight", before=15.0, after=85.0
             "depth": depth, "used": [e["run"]["name"] for e in used]}
 
 
+_PREP = {}
+
+
+def prepared(run_name, depth=None, seal="tight", before=15.0, after=85.0, n_stations=5):
+    """Everything about a run that does not depend on the tank's settings.
+
+    The measured surface and each piston's flux (motion through the air
+    model) are worked out once; ``synth`` then applies any tank settings.
+    """
+    key = (run_name, depth, seal, before, after, n_stations)
+    if key in _PREP:
+        return _PREP[key]
+    entries = [json.loads(l) for l in (ROOT / "analytics/rig/runs.jsonl").read_text().splitlines()]
+    entry = [e for e in entries if e["run"]["name"] == run_name and e["reply"].get("ok")][-1]
+    fire = entry["fire_sent"]
+    one = ROOT / "analytics" / "rig" / "_one_run.jsonl"
+    one.write_text(json.dumps(entry) + chr(10))
+    probe, runs = wavefit.load_rig(ROOT / "analytics/rig", runs_log=one,
+                                   t_start=fire - before, t_end=fire + after)
+    if not runs:
+        raise ValueError("the record does not cover %s's start" % run_name)
+    origin = fire - runs[0]["fire"]
+    used = [e for e in entries if e["reply"].get("ok")
+            and e.get("reply", {}).get("data", {}).get("samples")
+            and origin - 120 < e["fire_sent"] <= fire]
+    if depth is None:
+        base = wavefit.baseline_at(ROOT / "analytics/rig", fire)
+        depth = (base or {}).get("depth_mm", RIG["still_water_depth_mm"]) / 1000.0
+    want = np.array(STATION_PX[:n_stations])
+    cols = np.array([int(np.argmin(np.abs(probe.stations_px - w))) for w in want])
+    lead = max(0.0, origin - min(e.get("watch_started", e["fire_sent"]) for e in used) + 5.0)
+    g = load_geometry()
+    dt = tm_predict.DT
+    n = int(round(tm_predict.WINDOW / dt))
+    Q = sum(flux_from_samples(e, origin - lead, n, dt, depth, g, seal) for e in used)
+    out = {"t_rec": probe.t, "fire_rec": runs[0]["fire"], "meas": probe.eta[:, cols],
+           "x": station_x_m(want), "depth": depth, "Q": Q, "lead": lead, "n": n, "dt": dt,
+           "used": [e["run"]["name"] for e in used]}
+    _PREP[key] = out
+    return out
+
+
+def synth(prep, hp=None):
+    """The model's surface at the stations for prepared flux and tank settings."""
+    g = load_geometry()
+    hp = hp or tank.HydroParams()
+    n, dt = prep["n"], prep["dt"]
+    t = np.arange(n) * dt
+    sigma = tm_predict.SIGMA_DECADES / tm_predict.WINDOW
+    freqs = np.fft.rfftfreq(n, dt)
+    QF = np.fft.rfft(prep["Q"] * np.exp(-sigma * t), axis=1)
+    tfn = tank.transfer(prep["depth"], list(prep["x"]), freqs, g, hp, sigma=sigma)
+    EF = np.einsum("fps,pf->sf", np.conj(tfn.H), QF)
+    eta = np.fft.irfft(EF, n=n, axis=1) * np.exp(sigma * t) * hp.gain * 1000.0
+    t = t - prep["lead"]
+    pred = np.array([np.interp(prep["t_rec"], t, e) for e in eta]).T
+    return {"t": prep["t_rec"] - prep["fire_rec"], "meas": prep["meas"], "pred": pred,
+            "x": prep["x"], "depth": prep["depth"], "used": prep["used"]}
+
+
 def rel_error(c, gain=1.0):
     ok = ~np.any(np.isnan(c["meas"]), axis=1)
     m, p = c["meas"][ok], c["pred"][ok] * gain

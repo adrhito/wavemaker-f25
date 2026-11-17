@@ -492,7 +492,15 @@ def load_rig(folder, runs_log=None, t_start=None, t_end=None,
     ts, rows = [], []
     # Pieces may cover different columns; place each on picture columns.
     X0, X1 = 400, 1500
-    for path in sorted(folder.glob("edges-*.npz")):
+    paths = sorted(folder.glob("edges-*.npz"))
+    if t_start is not None or t_end is not None:
+        # Each piece is named by its first picture's local time and holds
+        # about a minute: read only the pieces that can overlap the window.
+        stamps = [datetime.strptime(p.stem[6:], "%Y%m%d-%H%M%S").timestamp() for p in paths]
+        lo = (t_start if t_start is not None else -np.inf) - 120
+        hi = t_end if t_end is not None else np.inf
+        paths = [p for p, s in zip(paths, stamps) if lo <= s <= hi]
+    for path in paths:
         z = np.load(path)
         # The fitted line where the recorder saved one, else raw edges.
         key = "line50" if "line50" in z.files else "rows50"
