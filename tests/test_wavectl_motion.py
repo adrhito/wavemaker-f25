@@ -79,6 +79,14 @@ class TestChecksBeforeMotion:
         assert "--ignore-warnings" in reply["text"]
         assert plc.history == []
 
+    def test_ignore_hot_passes_only_controller_hot(self, still, plc):
+        plc.write(tags.axis_field(1, tags.WARN_WORD), 1 << 6)
+        still._refuse_if_troubled(False, ignore_hot=True)  # no refusal
+        plc.write(tags.axis_field(1, tags.WARN_WORD), (1 << 6) | (1 << 0))
+        with pytest.raises(Exception) as caught:
+            still._refuse_if_troubled(False, ignore_hot=True)
+        assert "Motor Hot Sensor" in str(caught.value)
+
     def test_a_selection_changed_on_the_controller_stops_the_command(self, still, plc):
         plc.write(tags.live_motor(axis(5)), 1)
         plc.clear_history()

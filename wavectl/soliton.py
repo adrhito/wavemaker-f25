@@ -124,7 +124,8 @@ class SolitonOperations:
                       width_mm: Optional[float] = None,
                       lift_mm: Optional[int] = None, prepare: bool = False,
                       wait: bool = True,
-                      patience: float = PREPARE_SECONDS) -> Result:
+                      patience: float = PREPARE_SECONDS,
+                      ignore_hot: bool = False) -> Result:
         """Lower the selected floor sections gently, ready for one pulse.
 
         Homes them first if they need it and ``prepare`` allows it. The
@@ -138,7 +139,7 @@ class SolitonOperations:
         trial, note = self._build(crest_mm, depth_mm, width_mm, lift_mm)
         self._refuse_unless_at_rest("staging")
         self._refuse_if_driven()
-        self._refuse_if_troubled(False)
+        self._refuse_if_troubled(False, ignore_hot)
         self._refuse_unless_homed(prepare)
         job = self._start_job("staging", lambda job: self._stage_work(job, trial, note))
         return self._answer(job, wait, patience)

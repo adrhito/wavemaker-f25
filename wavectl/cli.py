@@ -358,7 +358,8 @@ def _soliton_plan(args) -> int:
 
 def _soliton_stage(args) -> int:
     return _waited(args, "soliton_stage", dict(
-        _trial_numbers(args), prepare=args.prepare, wait=not args.no_wait),
+        _trial_numbers(args), prepare=args.prepare, wait=not args.no_wait,
+        ignore_hot=args.ignore_hot),
         args.timeout or timing.PREPARE_SECONDS)
 
 
@@ -624,6 +625,8 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--prepare", action="store_true",
                        help="boot and home first if the pistons need it")
     stage.add_argument("--no-wait", action="store_true")
+    stage.add_argument("--ignore-hot", action="store_true",
+                       help="go on when a drive's only problem is 'Controller Hot'")
     stage.set_defaults(run=_soliton_stage)
 
     fire = moves.add_parser("fire", parents=[common, slow],

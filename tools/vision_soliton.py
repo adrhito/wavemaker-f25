@@ -51,15 +51,14 @@ def main() -> None:
                                   "--hz", "30", "--json"], cwd=str(ROOT),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         started = time.time()
-        extra = ["--ignore-warnings"] if a.ignore_hot else []
         stage = wm("soliton", "stage", "--crest", str(crest), "--depth", str(a.depth),
-                   *a.extra, *extra, timeout=200)
+                   *a.extra, *(["--ignore-hot"] if a.ignore_hot else []), timeout=200)
         if not stage.get("ok"):
             watch.terminate()
             raise SystemExit("stage refused: {0}".format(stage.get("text")))
         time.sleep(a.settle)
         fire_sent = time.time()
-        fire = wm("soliton", "fire", *extra, timeout=120)
+        fire = wm("soliton", "fire", timeout=120)
         time.sleep(a.hold)
         park = wm("park", timeout=120)
         out, err = watch.communicate(timeout=total + 60)
@@ -68,7 +67,7 @@ def main() -> None:
         except (ValueError, IndexError):
             reply = {"ok": False, "text": out + err}
         data = reply.get("data") or {}
-        if "file" in data and "samples" not in data:
+        if "file" in data:
             # watch answers with the samples themselves; a run nests them.
             reply["data"] = {"samples": data}
         entry = {"run": {"name": name, "pistons": a.pistons, "crest_mm": crest,

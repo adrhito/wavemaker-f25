@@ -92,9 +92,19 @@ class MotionOperations:
                 "it: something else is driving the machine. Nothing was "
                 "commanded.".format(" and ".join(high)), {"bits_high": high})
 
-    def _refuse_if_troubled(self, ignore: bool) -> None:
-        """Refuse if a selected drive reports a fault, unless told to go on."""
+    def _refuse_if_troubled(self, ignore: bool, ignore_hot: bool = False) -> None:
+        """Refuse if a selected drive reports a fault, unless told to go on.
+
+        ``ignore_hot`` passes drives whose only complaint is "Controller
+        Hot": on 16 Nov 2026 that warning stayed on idle, parked drives for
+        an hour and the operator judged the sensor unreliable.  Any other
+        problem still refuses.
+        """
         problems = self.model.check_drives(self.model.live_axes)
+        if ignore_hot:
+            problems = {axis: why for axis, why in problems.items()
+                        if any(part.strip() and "Controller Hot" not in part
+                               for part in str(why).split(";"))}
         if not problems or ignore:
             return
         named = "; ".join("piston {0}: {1}".format(tags.display_number(axis), why)
