@@ -163,9 +163,16 @@ def prepared(run_name, depth=None, seal="tight", before=15.0, after=85.0, n_stat
     return out
 
 
-def synth(prep, hp=None):
-    """The model's surface at the stations for prepared flux and tank settings."""
+def synth(prep, hp=None, channel_length=None):
+    """The model's surface at the stations for prepared flux and tank settings.
+
+    ``channel_length`` overrides the channel's length: with the gate open the
+    waves run on into the reservoir before they reflect (16 Nov 2026).
+    """
+    import dataclasses
     g = load_geometry()
+    if channel_length is not None:
+        g = dataclasses.replace(g, channel_length=float(channel_length))
     hp = hp or tank.HydroParams()
     n, dt = prep["n"], prep["dt"]
     t = np.arange(n) * dt
