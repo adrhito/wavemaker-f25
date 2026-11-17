@@ -221,7 +221,9 @@ def legs_from_samples(ts: np.ndarray, pos: np.ndarray, still: float = 0.4,
     moving = np.zeros(n, bool)
     moving[1:] |= np.abs(np.diff(lift)) > still
     moving[:-1] |= np.abs(np.diff(lift)) > still
-    legs = []
+    # Moving stretches, each split where the piston reverses: in a
+    # continuous run it turns round without ever standing still.
+    spans = []
     k = 0
     while k < n:
         if not moving[k]:
@@ -231,10 +233,24 @@ def legs_from_samples(ts: np.ndarray, pos: np.ndarray, still: float = 0.4,
         while j < n and moving[j]:
             j += 1
         a_i, b_i = max(k - 1, 0), min(j, n - 1)
+        step = np.sign(np.diff(lift[a_i:b_i + 1]))
+        step[np.abs(np.diff(lift[a_i:b_i + 1])) <= still * 0.25] = 0
+        cuts = [a_i]
+        last = 0
+        for i, sgn in enumerate(step):
+            if sgn == 0:
+                continue
+            if last and sgn != last:
+                cuts.append(a_i + i)  # the extreme sample, where it turned
+            last = sgn
+        cuts.append(b_i)
+        spans.extend(zip(cuts[:-1], cuts[1:]))
+        k = j
+    legs = []
+    for a_i, b_i in spans:
         level_a, level_b = lift[a_i], lift[b_i]
         length = level_b - level_a
-        if abs(length) < 1.0 or b_i - a_i < 2:
-            k = j
+        if abs(length) < 1.0 or b_i - a_i < 1:
             continue
         t_win, y_win = ts[a_i:b_i + 1], lift[a_i:b_i + 1]
         span = max(t_win[-1] - t_win[0], 1e-3)
@@ -252,7 +268,6 @@ def legs_from_samples(ts: np.ndarray, pos: np.ndarray, still: float = 0.4,
         legs.append({"from": float(level_a), "to": float(level_b),
                      "start": float(fit.x[0]), "speed": float(fit.x[1]),
                      "accel": float(fit.x[2]), "smooth": float(fit.x[3])})
-        k = j
     return legs
 
 
@@ -504,6 +519,9 @@ def load_rig(folder, runs_log=None, t_start=None, t_end=None,
     notes = {}
     for line in log.read_text().splitlines():
         entry = json.loads(line)
+        samples = entry.get("reply", {}).get("data", {}).get("samples")
+        if not entry.get("reply", {}).get("ok") or not samples:
+            continue  # refused or unrecorded: nothing moved, or nothing known
         fire = entry["fire_sent"] - origin
         if fire < 0 or fire > centres[-1]:
             continue

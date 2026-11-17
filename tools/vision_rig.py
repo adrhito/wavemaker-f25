@@ -100,23 +100,30 @@ class Annotations:
         self.marks = []
         if path.exists():
             self.marks = json.loads(path.read_text()).get("marks", [])
-        self.pending = None   # (x, y) waiting for a height
+        self.pending = None   # (x, y) waiting for a value
         self.typed = ""
+        self.mode = "height"  # or "along": inches along the chamber
 
     def save(self) -> None:
         fit = self.fit()
+        along = [m for m in self.marks if m.get("axis") == "along"]
+        along_fit = None
+        if len({m["inches"] for m in along}) >= 2:
+            b, a = np.polyfit([m["x"] for m in along], [m["inches"] for m in along], 1)
+            along_fit = {"inches_at_col0": float(a), "inches_per_col": float(b)}
         self.path.write_text(json.dumps({
-            "marks": self.marks,
+            "marks": self.marks, "along_fit": along_fit,
             "fit": None if fit is None else {"inches_at_row0": fit[0],
                                              "inches_per_row": fit[1]},
             "saved": datetime.now().isoformat(timespec="seconds")}, indent=1))
 
     def fit(self):
         """Height in inches as a + b * row, from the marks; None if too few."""
-        if len({m["inches"] for m in self.marks}) < 2:
+        marks = [m for m in self.marks if m.get("axis", "height") == "height"]
+        if len({m["inches"] for m in marks}) < 2:
             return None
-        rows = np.array([m["y"] for m in self.marks])
-        inches = np.array([m["inches"] for m in self.marks])
+        rows = np.array([m["y"] for m in marks])
+        inches = np.array([m["inches"] for m in marks])
         b, a = np.polyfit(rows, inches, 1)
         return float(a), float(b)
 
@@ -275,6 +282,12 @@ def main() -> None:
                     x0 + centre, height), (x0 + centre + 25, cy - 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
             for m in notes.marks:
+                if m.get("axis") == "along":
+                    cv2.line(view, (int(m["x"]), 0), (int(m["x"]), 1079), (255, 128, 0), 1)
+                    cv2.putText(view, '{0:g}" along'.format(m["inches"]),
+                                (int(m["x"]) + 6, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                                (255, 128, 0), 2)
+                    continue
                 cv2.drawMarker(view, (int(m["x"]), int(m["y"])), (0, 0, 255),
                                cv2.MARKER_CROSS, 24, 1)
                 cv2.putText(view, '{0:g}"'.format(m["inches"]),
@@ -284,7 +297,8 @@ def main() -> None:
                 px, py = notes.pending
                 cv2.drawMarker(view, (int(px), int(py)), (0, 255, 255),
                                cv2.MARKER_CROSS, 30, 1)
-                cv2.putText(view, 'height (in): {0}_  Enter to keep, Esc to drop'.format(
+                cv2.putText(view, '{0} (in): {1}_  Enter to keep, Esc to drop'.format(
+                    "height" if notes.mode == "height" else "distance along chamber",
                     notes.typed), (int(px) + 10, int(py) + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
             mean_row = np.nanmedian(line) if pts else np.nan
@@ -302,6 +316,9 @@ def main() -> None:
             cv2.putText(view, "green: fitted waterline  yellow ticks: measuring stations  "
                         "magenta: main point  red dots: raw edges  grey: ignored",
                         (20, 1025), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(view, "MODE: {0}   (h switches height / along-the-chamber)".format(
+                "HEIGHT marks" if notes.mode == "height" else "ALONG-CHAMBER marks"),
+                (20, 990), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 128, 0), 2)
             cv2.putText(view, "click=mark  type inches+Enter  z=magnify  u=undo  r=zero  Q=quit",
                         (20, 1060), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
             if zoom:
@@ -329,7 +346,8 @@ def main() -> None:
                     except ValueError:
                         continue
                     notes.marks.append({"x": notes.pending[0], "y": notes.pending[1],
-                                        "inches": inches, "at": time.time()})
+                                        "inches": inches, "axis": notes.mode,
+                                        "at": time.time()})
                     notes.pending, notes.typed = None, ""
                     notes.save()
                 elif key == 27:
@@ -341,6 +359,8 @@ def main() -> None:
                 continue
             if key == ord("z"):
                 zoom = not zoom
+            elif key == ord("h"):
+                notes.mode = "along" if notes.mode == "height" else "height"
             elif key == ord("u") and notes.marks:
                 notes.marks.pop()
                 notes.save()

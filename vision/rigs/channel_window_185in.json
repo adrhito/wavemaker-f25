@@ -1,0 +1,27 @@
+{
+ "what": "NexiGo webcam looking across the channel at one side window, black sheet on the far wall",
+ "measured": "16 Nov 2026, operator's marks in tools/vision_rig.py",
+ "along_inches": {
+  "at_col0": 241.0543,
+  "per_col": -0.0379453,
+  "how": "four marks on the window: 185.5 in at x=1458 (left edge of the beam on the picture's right, where the window starts), 205.5 at 948, 220.5 at 546, 224.5 at 427; distance along the channel from the operator's start near the piston array; residuals under 0.4 in"
+ },
+ "piston_side": "right of the picture (first arrivals reach the right ~0.45 s before the left)",
+ "height": {
+  "mm_per_px": 0.9845,
+  "floor_row": 1017,
+  "still_row": 605,
+  "how": "red tapes 6 in apart on the glass (bottom edges 243.3, 397.0, 553.4, 707.8, 861.8 px; 154.8 px per 6 in) and the operator's 0-36 in marks; the 36 in tape is off-plane and not used"
+ },
+ "still_water_depth_mm": 406,
+ "ignored_columns": [
+  [
+   548,
+   622
+  ],
+  [
+   1301,
+   1311
+  ]
+ ]
+}

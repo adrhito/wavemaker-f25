@@ -26,10 +26,24 @@ from vision_campaign import LOG, _batched, _set_args  # noqa: E402
 from vision_probe import wm  # noqa: E402
 
 
+#: Pistons left out of every plan because their drives are locked off.
+EXCLUDED = {1, 2, 3, 8, 9, 19, 26}
+
+
 def _problems(status: dict) -> list:
+    """Drive errors on the pistons in use.
+
+    "Controller Hot" alone does not pause the plan: on 16 Nov 2026 it stayed
+    on a dozen parked drives for over ten minutes, and the operator judged
+    the controllers were not actually hot.
+    """
     drives = status.get("data", {}).get("drives", [])
-    return [(d["piston"], d["problems"]) for d in drives
-            if d.get("problems") and d["piston"] != 26]
+    out = []
+    for d in drives:
+        real = [p for p in d.get("problems", []) if "Controller Hot" not in p]
+        if real and d["piston"] not in EXCLUDED:
+            out.append((d["piston"], real))
+    return out
 
 
 def main() -> None:
@@ -38,6 +52,8 @@ def main() -> None:
     parser.add_argument("plan")
     parser.add_argument("--seconds", type=float, default=40.0)
     parser.add_argument("--rest", type=float, default=40.0)
+    parser.add_argument("--ignore-hot", action="store_true",
+                        help="run through 'Controller Hot' (only that) on the operator's word")
     args = parser.parse_args()
     done = set()
     if LOG.exists():
@@ -57,9 +73,17 @@ def main() -> None:
         if bad:
             raise SystemExit("wavectl refused for {0}: {1}".format(item["name"], bad[0].get("text")))
         params = wm("params")
+        extra = []
+        if args.ignore_hot:
+            trouble = _problems(wm("status", "-p"))
+            if trouble:
+                raise SystemExit("drive errors, not running: {0}".format(trouble))
+            # Only "Controller Hot" is left, which the operator has judged
+            # spurious; wavectl refuses on it unless told.
+            extra = ["--ignore-warnings"]
         fire = time.time()
         reply = wm("run", "--seconds", str(int(seconds)), "--sample", "30", "--wait",
-                   timeout=seconds + 120)
+                   *extra, timeout=seconds + 120)
         entry = {"run": item, "kind": "continuous", "fire_sent": fire,
                  "fire_answered": time.time(), "params": params.get("text"),
                  "reply": reply}
