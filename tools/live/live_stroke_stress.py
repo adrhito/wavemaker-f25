@@ -1,7 +1,7 @@
 ﻿"""Bounded live stroke update test for warning-free pistons 1..9."""
 import json, time, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from Model import Model, NullBridge, RunMode, MachineState
 from app import params, tags, drive_status
 from app.plc import PlcClient

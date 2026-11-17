@@ -1,6 +1,6 @@
 {
  "what": "NexiGo webcam looking across the channel at one side window, black sheet on the far wall",
- "measured": "16 Nov 2026, operator's marks in tools/vision_rig.py",
+ "measured": "16 Nov 2026, operator's marks in tools/camera/vision_rig.py",
  "along_inches": {
   "at_col0": 241.0543,
   "per_col": -0.0379453,

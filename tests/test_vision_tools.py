@@ -11,7 +11,7 @@ np = pytest.importorskip("numpy")
 cv2 = pytest.importorskip("cv2")
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 import vision_markers  # noqa: E402
 import vision_measure  # noqa: E402
@@ -66,7 +66,7 @@ def test_a_recorded_clip_is_measured_and_its_evidence_saved(tmp_path):
     tank.rig.save(tmp_path / "rig.json")
 
     done = subprocess.run(
-        [sys.executable, str(ROOT / "tools" / "vision_measure.py"), str(clip),
+        [sys.executable, str(ROOT / "tools" / "camera" / "vision_measure.py"), str(clip),
          "--rig", str(tmp_path / "rig.json"), "--depth-mm", "150"],
         capture_output=True, text=True, check=True)
     record = json.loads(done.stdout)

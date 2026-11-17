@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, tags
 from app.plc import PlcClient
@@ -43,7 +43,7 @@ def main():
                 time.sleep(2)
     finally:
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         output = folder / ("survey-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         output.write_text(json.dumps(records, indent=2), encoding="utf-8")

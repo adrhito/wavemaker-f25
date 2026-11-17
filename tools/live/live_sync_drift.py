@@ -9,10 +9,10 @@ speed and a Curve Offset of zero, so the array is *commanded* to move in
 unison. Any spread between the pistons is therefore drift, not design -- which
 is what makes this preset the right instrument for the question.
 
-    python tools/live_sync_drift.py                       BIGGER WAVE, 90 s
-    python tools/live_sync_drift.py --seconds 240         a longer soak
-    python tools/live_sync_drift.py --preset "Preset 1-Big Wave Demo.csv"
-    python tools/live_sync_drift.py --dry-run             no PLC, no motion
+    python tools/live/live_sync_drift.py                       BIGGER WAVE, 90 s
+    python tools/live/live_sync_drift.py --seconds 240         a longer soak
+    python tools/live/live_sync_drift.py --preset "Preset 1-Big Wave Demo.csv"
+    python tools/live/live_sync_drift.py --dry-run             no PLC, no motion
 
 It moves real pistons through their full stroke. It drops every run bit and
 parks the array on the way out, including on Ctrl-C.
@@ -29,7 +29,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, tags
 from app.plc import PlcClient
@@ -182,7 +182,7 @@ def judge(result: dict, stroke: float) -> List[dict]:
             "what": "cycle times differ by {0:.4f} s across the array. That is "
                     "an estimate from direction reversals and is only as good "
                     "as the run is long -- for the drift itself run "
-                    "tools/analyse_sync_drift.py against this file, which "
+                    "tools/live/analyse_sync_drift.py against this file, which "
                     "measures phase lag early against late.".format(gap),
         })
 
@@ -207,7 +207,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     preset = PresetProcessor().load(str(root / "Presets" / args.preset))
     axes = moving_axes(preset)
     if not axes:

@@ -1,6 +1,6 @@
 """Run a test plan as fast as the water allows: fire as soon as the camera sees it still.
 
-``tools/vision_rig.py`` writes ``analytics/rig/live.json`` twice a second
+``tools/camera/vision_rig.py`` writes ``analytics/rig/live.json`` twice a second
 with ``moving_mm``, the largest peak-to-peak surface movement over ten
 stations in the last three seconds.  Before each test this waits until that
 falls below ``--still-mm`` (or ``--max-wait`` passes), then fires.  Kinds:
@@ -17,7 +17,7 @@ water was when it fired.  Only wavectl is used; this never touches the PLC.
 on the operator's judgement that the sensor is unreliable; any other drive
 problem stops the plan.
 
-    python tools/vision_fast.py analytics/rig/plans/fast1.json
+    python tools/camera/vision_fast.py analytics/rig/plans/fast1.json
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision_campaign import LOG, _batched, _set_args  # noqa: E402
 from vision_continuous import _baseline, _problems  # noqa: E402

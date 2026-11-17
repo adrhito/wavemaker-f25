@@ -5,6 +5,15 @@ by an Allen-Bradley ControlLogix PLC, in three rows of ten.
 
 - **Operators** — read [docs/OPERATING.md](docs/OPERATING.md).
 - **Developers** — read [docs/DEVELOPING.md](docs/DEVELOPING.md).
+- **Driving it from a terminal or an agent** — read [wavectl/README.md](wavectl/README.md).
+
+![The camera's view through the tank's side wall, with the waterline it found drawn in green](docs/media/waterline-demo.gif)
+
+*The camera measurement (`vision/`) watching a run of pistons 1-12 through the
+side wall: the waterline it detects is drawn in green, and the inset traces the
+height at the middle of the window. Recorded 16 Nov 2026;
+[full-quality MP4](docs/media/waterline-demo.mp4). How this footage is turned
+into a model of the water is in [docs/VISION_HANDOFF.md](docs/VISION_HANDOFF.md).*
 
 ## Running it
 
@@ -73,7 +82,7 @@ confirm them. If you need two lots of pistons running with different parameters
 at the same time, press **Add group**; only then does the idea of a group appear
 at all.
 
-## Running it
+## A first run
 
 1. **Click or drag on the tank** to choose pistons.
 2. Set **stroke** and **speed**. Everything else is behind *All parameters*.
@@ -91,19 +100,29 @@ they are moving there leaves them where they are.
 ## Folders
 
 ```
-main.py             entry point
-Model.py            application state and every machine command
-Motor.py            one piston: its parameters and drive state
-View.py             the window; routes worker callbacks onto the Tk thread
-app/                paths, PLC tags, transport, parameters, patterns, the mock
-operate/            the Operate screen and its two dialogs
-preset_options/     Preset Options tab and the preset file reader/writer
-feedback/           Feedback tab
-modules/            vendored pylogix, the tank drawing, drawn widgets, logging
-tests/              test suite; runs with no hardware
-Presets/            saved parameter files
-logs/  analytics/   written at run time
-archive/            superseded documentation and the old test scripts
+main.py               entry point (plus the three .cmd launchers for the lab PC)
+Model.py              application state and every machine command
+Motor.py              one piston: its parameters and drive state
+View.py               the window; routes worker callbacks onto the Tk thread
+app/                  paths, PLC tags, transport, parameters, patterns, solitons, the mock
+operate/  wave/       the Operate and Wave/Soliton tabs
+preset_options/       Preset Options tab and the preset file reader/writer
+diagnostics/ feedback/  the remaining tabs
+modules/              vendored pylogix, the tank drawing, drawn widgets, logging
+Presets/              saved parameter files
+wavectl/              command-line control of the array, one long-lived session
+vision/               camera measurement of the water (needs NumPy/OpenCV)
+tank-model/           approximate model of the tank, blueprints, photos (own .venv)
+tools/
+  live/               hardware experiments -- these MOVE REAL PISTONS
+  camera/             camera rig, recording, fitting (never contact the PLC)
+  analysis/           one-off fitting scripts
+  make_presets.py     regenerates Presets/ from app/patterns.py
+  make_usb_copy.ps1   builds the offline copy for the lab PC
+tests/                test suite; runs with no hardware
+docs/                 operating, developing, lab notes; findings/ and media/
+logs/  analytics/     written at run time (not committed)
+archive/              superseded code, documentation and 2022 logs
 ```
 
 ## Credits

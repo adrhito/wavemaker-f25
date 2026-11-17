@@ -10,7 +10,7 @@ whether somebody loaded them in Studio 5000.
 This answers it without moving anything: it reads the Curve_<n> structure for
 every piston and reports what is there. It writes nothing and sets no run bit.
 
-    python tools/live_curve_probe.py
+    python tools/live/live_curve_probe.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import params, tags
 from app.plc import PlcClient
@@ -74,7 +74,7 @@ def main() -> int:
               "tag that does not exist, means Start Curve has nothing to run.")
     finally:
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / ("curve-probe-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         target.write_text(json.dumps(found, indent=2, default=str),

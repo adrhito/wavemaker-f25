@@ -282,7 +282,7 @@ calibrates":
   than their neighbours** — whenever they appear in a warning, so does
   everyone else selected that run. Confirming (or ruling out) 10/11/12 as
   genuinely different needs either a longer-running log with more samples, or
-  a live, read-only survey (`tools/live_survey.py`) comparing their status/warn
+  a live, read-only survey (`tools/live/live_survey.py`) comparing their status/warn
   words against the rest of the array.
 - Given there is no evidence in this log of `calibrate_all()` ever being run
   or failing, "it barely even calibrates" cannot be substantiated or refuted

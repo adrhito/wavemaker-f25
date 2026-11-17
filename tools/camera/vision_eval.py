@@ -1,7 +1,7 @@
 """How well does the tank model predict the camera's waves?  Cross-validated.
 
 For every usable logged run (``analytics/rig/runs.jsonl``) the physics model
-(``tools/vision_physics.py``: piston motion -> air model -> water flux ->
+(``tools/camera/vision_physics.py``: piston motion -> air model -> water flux ->
 ``tank.transfer``) is synthesised once per row of pistons, so that each
 row's contribution to the surface at the camera's five stations is known
 separately.  Two models are then scored by K-fold cross-validation over runs:
@@ -21,7 +21,7 @@ predictions are cached in ``analytics/rig/eval_cache/`` so that reruns only
 synthesise new runs; ``--refresh`` recomputes them.  Nothing here contacts
 the PLC.
 
-    python tools/vision_eval.py [--folds 5] [--refresh]
+    python tools/camera/vision_eval.py [--folds 5] [--refresh]
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 RIGDIR = ROOT / "analytics" / "rig"
 CACHE = RIGDIR / "eval_cache"
 #: Records before this local time have bad camera data.

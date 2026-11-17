@@ -1,6 +1,6 @@
 ---
 name: wavemaker
-description: Operating, testing and debugging the UNC Fluids Lab wavemaker - 30 LinMot pistons on an Allen-Bradley PLC. Use for any work in this repo: running the app or the mock, driving the real array over Ethernet, the piston numbering and front/back convention, the Prepare/boot/home sequence, live stress testing, and the drift behaviour. Load this before touching Model.py, app/, or anything in tools/live_*.py.
+description: Operating, testing and debugging the UNC Fluids Lab wavemaker - 30 LinMot pistons on an Allen-Bradley PLC. Use for any work in this repo: running the app or the mock, driving the real array over Ethernet, the piston numbering and front/back convention, the Prepare/boot/home sequence, live stress testing, and the drift behaviour. Load this before touching Model.py, app/, or anything in tools/live/live_*.py.
 ---
 
 # Wavemaker
@@ -20,7 +20,7 @@ thread; `app/` holds paths, tags, transport, parameters, patterns and the mock.
 
 ## Safety rules for the real machine
 
-1. Anything in `tools/live_*.py` **moves real pistons**. So does
+1. Anything in `tools/live/live_*.py` **moves real pistons**. So does
    `python main.py` without `--mock`.
 2. Never run two live tools at once, and never let a subagent near the PLC.
    Fan agents out over the simulator; drive the real array yourself, serially.
@@ -38,7 +38,7 @@ thread; `app/` holds paths, tags, transport, parameters, patterns and the mock.
 4. Gate before starting: refuse if a run bit is already high (something else is
    driving the machine), and refuse if a selected drive reports a problem.
 5. Running a live tool needs a permission rule in `.claude/settings.local.json`
-   (`Bash(python tools/live_*.py:*)`). The model cannot add it -- ask the user.
+   (`Bash(python tools/live/live_*.py:*)`). The model cannot add it -- ask the user.
 
 ## The sequence that actually works
 
@@ -71,7 +71,7 @@ select (_mark_live_motors)  ->  clear_faults  ->  boot_motors  ->  home  ->  run
 
 Check in this order:
 
-1. `python tools/live_survey.py` -- read-only, contacts nothing else.
+1. `python tools/live/live_survey.py` -- read-only, contacts nothing else.
 2. `enabled: false` (status bit 0 clear) means the power stage is off. Prepare.
 3. `homed: false` means it needs homing, which Prepare also does.
 4. A run bit already high means another session owns the machine.
@@ -144,7 +144,7 @@ envelope is -57..453 mm with home at 390 mm. Speeds are 0..900 mm/s.
 
 ## Known machine behaviour: the pistons drift apart
 
-Measured with `tools/live_sync_drift.py` on `BIGGER WAVE.csv` (pistons 1-9,
+Measured with `tools/live/live_sync_drift.py` on `BIGGER WAVE.csv` (pistons 1-9,
 350 mm stroke, 500 mm/s, Curve Offset 0, so they are commanded to move as one),
 over a clean 900 s run of 234 cycles with the machine to itself:
 
@@ -174,7 +174,7 @@ Three traps when measuring this, all of which caught an attempt here:
   instead of a number when that happens.
 
 Measure phase lag against a reference piston, early versus late, with
-`tools/analyse_sync_drift.py` -- it re-analyses a saved run, so it costs no
+`tools/live/analyse_sync_drift.py` -- it re-analyses a saved run, so it costs no
 machine time.
 
 This is inherent to free-running independent axes, not a software fault, but it
@@ -221,9 +221,9 @@ Measured through `wavectl` on 12 October 2026, positions recorded at 25 to
 | Tool | What it does |
 |---|---|
 | `wavectl/wm` | The command line for driving the array: a session process holds the connection, and each command answers on one line. Select, set, prepare, timed runs, stop, soliton trials. Start here rather than writing a new live script; see `wavectl/README.md`. |
-| `tools/live_survey.py` | Read-only. Status, warn, position, homed for pistons 1-12. Safe. |
-| `tools/live_sync_drift.py` | Runs a big-wave preset and measures cycle time and spread over the run. `--dry-run` contacts nothing. |
-| `tools/live_motion_campaign.py` | Staged home -> stroke -> speed -> wave -> stop-abuse, aborting on any new drive fault. |
+| `tools/live/live_survey.py` | Read-only. Status, warn, position, homed for pistons 1-12. Safe. |
+| `tools/live/live_sync_drift.py` | Runs a big-wave preset and measures cycle time and spread over the run. `--dry-run` contacts nothing. |
+| `tools/live/live_motion_campaign.py` | Staged home -> stroke -> speed -> wave -> stop-abuse, aborting on any new drive fault. |
 | `tools/make_presets.py` | Regenerates the shipped `Presets/*.csv` from `app/patterns.py`. |
 
 `wavectl` applies rules 2 to 4 itself: one session at a time, the run bits

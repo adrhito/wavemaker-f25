@@ -1,6 +1,6 @@
 """From probe recordings to a model of the waves the pistons make.
 
-A probe (``tools/vision_probe.py``) leaves a lossless clip of the waterline
+A probe (``tools/camera/vision_probe.py``) leaves a lossless clip of the waterline
 band, the arrival time of every picture, the settings of every piston, and
 the piston positions ``wavectl`` sampled.  This module turns those into:
 
@@ -467,7 +467,7 @@ def score(model: Model, probe: Probe, t0: float = 0.0,
 def baseline_at(folder, when: float) -> Optional[dict]:
     """The still-water baseline the operator set last before ``when``.
 
-    Baselines are marked in ``tools/vision_rig.py`` and kept, with their
+    Baselines are marked in ``tools/camera/vision_rig.py`` and kept, with their
     times and depths, in ``annotations.json``.  The water level changes
     over days, so each record is measured from the baseline in force then.
     """
@@ -483,7 +483,7 @@ def baseline_at(folder, when: float) -> Optional[dict]:
 
 def load_rig(folder, runs_log=None, t_start=None, t_end=None,
              bin_px: int = BIN_PX) -> tuple:
-    """The continuous record from ``tools/vision_rig.py`` as one Probe.
+    """The continuous record from ``tools/camera/vision_rig.py`` as one Probe.
 
     Returns the probe (its ``t`` in seconds since the first picture used)
     and the list of runs, each with ``fire`` on the same clock.

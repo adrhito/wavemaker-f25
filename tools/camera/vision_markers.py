@@ -1,7 +1,7 @@
 """Write the sheet of markers that gets printed and taped to the tank wall.
 
-    python tools/vision_markers.py                 markers 0-5 to vision/markers.pdf
-    python tools/vision_markers.py --first 6       the next six, for a second view
+    python tools/camera/vision_markers.py                 markers 0-5 to vision/markers.pdf
+    python tools/camera/vision_markers.py --first 6       the next six, for a second view
 
 Each marker sits in a cell with tick marks at the middle of its four edges.
 Cut along the dashed lines, tape the cell to the outside of the glass, and
@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2  # noqa: E402
 
@@ -119,7 +119,7 @@ def main():
     parser.add_argument("--first", type=int, default=0, help="number of the first marker")
     parser.add_argument("--count", type=int, default=6, help="how many markers")
     parser.add_argument("--out", default=str(
-        Path(__file__).resolve().parent.parent / "vision" / "markers.pdf"))
+        Path(__file__).resolve().parents[2] / "vision" / "markers.pdf"))
     args = parser.parse_args()
     write_sheet(args.out, args.first, args.count)
     print("Wrote " + args.out)

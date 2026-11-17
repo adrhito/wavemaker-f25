@@ -1,6 +1,6 @@
 """Calibrate the tank model's damping and gain on camera runs; score held-out runs.
 
-    python tools/vision_calibrate.py --train E_bigwave_1 D_250_v400 --test D_150_v300 D_350_v300
+    python tools/camera/vision_calibrate.py --train E_bigwave_1 D_250_v400 --test D_150_v300 D_350_v300
 """
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 from vision_physics import prepared, synth, rel_error, tank  # noqa: E402
 
 

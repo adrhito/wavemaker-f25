@@ -16,7 +16,7 @@ What a probe leaves in ``analytics/probes/``:
 
 Example::
 
-    python tools/vision_probe.py --pistons 1 2 3 --stroke 30 --speed 150
+    python tools/camera/vision_probe.py --pistons 1 2 3 --stroke 30 --speed 150
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "analytics" / "probes"
 WM = ROOT / "wavectl" / "wm"
 #: Where the pistons rest after homing; strokes end here unless told otherwise.

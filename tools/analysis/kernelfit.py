@@ -1,6 +1,6 @@
 """Empirical per-row response kernels from the recorded runs; held-out score."""
 import sys, pickle, json, numpy as np
-sys.path.insert(0,'tools')
+sys.path.insert(0,'tools/camera')
 import vision_channel as vc
 store=pickle.load(open('analytics/rig/cases.pkl','rb'))
 entries=vc.usable_runs()

@@ -9,8 +9,8 @@ Pistons 1, 2 and 3 are one column -- the front one -- so they are the case to
 watch. This applies a row stagger, runs continuously, and reports how far apart
 the rows stay.
 
-    python tools/live_row_cascade.py
-    python tools/live_row_cascade.py --seconds 60 --dry-run
+    python tools/live/live_row_cascade.py
+    python tools/live/live_row_cascade.py --seconds 60 --dry-run
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, patterns, tags
 from app.plc import PlcClient
@@ -190,7 +190,7 @@ def main(argv=None) -> int:
             except Exception:  # noqa: BLE001
                 pass
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / ("row-cascade-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         target.write_text(json.dumps(record, indent=2, default=str),

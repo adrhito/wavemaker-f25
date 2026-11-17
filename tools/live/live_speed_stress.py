@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from Model import MachineState, Model, NullBridge, RunMode  # noqa: E402
 from app import drive_status, params, tags  # noqa: E402
@@ -163,7 +163,7 @@ def main():
         print(json.dumps(evidence, indent=2))
         return 0
     finally:
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         output = folder / ("live-speed-stress-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         output.write_text(json.dumps(evidence, indent=2), encoding="utf-8")

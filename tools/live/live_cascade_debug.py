@@ -17,8 +17,8 @@ This walks the same sequence by hand with everything recorded at each step:
 status word, the enabled and homed bits, position, the run bits, and what the
 drive is actually holding for Position 1 and Position 2. It moves pistons.
 
-    python tools/live_cascade_debug.py
-    python tools/live_cascade_debug.py --pistons 1-3 --dry-run
+    python tools/live/live_cascade_debug.py
+    python tools/live/live_cascade_debug.py --pistons 1-3 --dry-run
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, patterns, tags
 from app.plc import PlcClient
@@ -215,7 +215,7 @@ def main(argv=None) -> int:
             except Exception:  # noqa: BLE001
                 pass
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         out = folder / ("cascade-debug-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         out.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")

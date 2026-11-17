@@ -1,13 +1,13 @@
 """Fit and cross-validate the wave model on the continuous rig record.
 
-The record from ``tools/vision_rig.py`` and the strokes logged by
-``tools/vision_campaign.py`` are loaded as one long series.  For each fold,
+The record from ``tools/camera/vision_rig.py`` and the strokes logged by
+``tools/camera/vision_campaign.py`` are loaded as one long series.  For each fold,
 the windows after some strokes (from just before firing to the next
 stroke) are left out of the fit, and the model, which still knows every
 piston's motion, must predict them.  The score is the RMS error over a
 held-out window and the stations, over the RMS of the measured wave there.
 
-    python tools/vision_fit_rig.py --models shared column piston
+    python tools/camera/vision_fit_rig.py --models shared column piston
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision import wavefit  # noqa: E402
 from vision_fit import WORKING, groupings  # noqa: E402

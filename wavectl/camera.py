@@ -72,12 +72,12 @@ def _vision():
 
 
 def _measure_clip_tool():
-    """``tools/vision_measure.py``, which holds the clip-measuring function.
+    """``tools/camera/vision_measure.py``, which holds the clip-measuring function.
 
     Loaded by path because ``tools/`` is a folder of scripts, not a package.
     Measuring is kept there, in one place, rather than copied here.
     """
-    path = paths.APP_DIR / "tools" / "vision_measure.py"
+    path = paths.APP_DIR / "tools" / "camera" / "vision_measure.py"
     spec = importlib.util.spec_from_file_location("wavectl_vision_measure", str(path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -166,7 +166,7 @@ class Recorder:
             except ValueError:
                 raise Unavailable(
                     'A camera is named by its number, or "synthetic" for the '
-                    "drawn tank; not {0!r}. tools/vision_preview.py --list "
+                    "drawn tank; not {0!r}. tools/camera/vision_preview.py --list "
                     "says which number is which.".format(self.source)) from None
             if self.rig_path:
                 try:
@@ -358,7 +358,7 @@ def measure(clip: Path, rig, depth_mm: Optional[float],
             station_mm: Optional[float], still_seconds: float) -> dict:
     """Measure the wave in a clip and save the evidence beside it.
 
-    The same call, and the same two files, as ``tools/vision_measure.py``:
+    The same call, and the same two files, as ``tools/camera/vision_measure.py``:
     every surface reading in ``.surface.npz`` and the crest picture in
     ``.crest.png``. Look at the picture before believing the numbers.
     """

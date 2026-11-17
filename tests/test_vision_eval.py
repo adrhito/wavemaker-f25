@@ -1,4 +1,4 @@
-"""Row gain and shift fitting in tools/vision_eval.py, on synthetic data."""
+"""Row gain and shift fitting in tools/camera/vision_eval.py, on synthetic data."""
 
 import sys
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "camera"))
 vision_eval = pytest.importorskip("vision_eval")
 
 

@@ -167,7 +167,7 @@ What a trial writes:
 | `analytics/soliton-trials/trial-*.json` | The application's own record of the pulse: what was commanded, start and end positions, timing. |
 | `analytics/vision/trial-*.mp4` | The clip. |
 | `analytics/vision/trial-*.json` | Beside the clip: the camera, the arrival time of every picture, when the pulse went relative to the first picture, the measurement, and the path of the record above. |
-| `analytics/vision/trial-*.surface.npz`, `.crest.png` | What `tools/vision_measure.py` writes: every surface reading, and the crest picture. Look at the picture before believing the numbers. |
+| `analytics/vision/trial-*.surface.npz`, `.crest.png` | What `tools/camera/vision_measure.py` writes: every surface reading, and the crest picture. Look at the picture before believing the numbers. |
 
 The measurement is reported and saved beside the clip. It is entered in the
 trial's own record, where `app/soliton_calibration.py` would use it, only

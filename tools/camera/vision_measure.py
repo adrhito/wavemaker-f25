@@ -1,6 +1,6 @@
 """Measure the wave in a recorded clip.
 
-    python tools/vision_measure.py clip.mov --rig vision/rigs/tank.json --depth-mm 406
+    python tools/camera/vision_measure.py clip.mov --rig vision/rigs/tank.json --depth-mm 406
 
 The clip must start with still water: the first ``--still-seconds`` of it are
 taken as the level everything else is measured from.  Prints the measurement
@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402

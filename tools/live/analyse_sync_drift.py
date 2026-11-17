@@ -16,8 +16,8 @@ directly, once near the start and once near the end, and reports how much it
 *moved*. A lag that holds steady is a fixed offset and harmless. A lag that
 grows is real drift, and its slope says how fast.
 
-    python tools/analyse_sync_drift.py                    the newest run
-    python tools/analyse_sync_drift.py logs/verification/sync-drift-....json
+    python tools/live/analyse_sync_drift.py                    the newest run
+    python tools/live/analyse_sync_drift.py logs/verification/sync-drift-....json
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ def main(argv=None) -> int:
 
     # Display numbers, since that is what the operator sees.
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from app import tags
         name = tags.display_number
     except Exception:  # noqa: BLE001 - fall back to the raw axis

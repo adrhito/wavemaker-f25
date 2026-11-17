@@ -1,9 +1,9 @@
 """Live view from the camera with the measurement drawn on it.
 
-    python tools/vision_preview.py --list                    which camera is which
-    python tools/vision_preview.py --camera 1                aim: shows every marker it can see
-    python tools/vision_preview.py --camera 1 --rig vision/rigs/tank.json --depth-mm 406
-    python tools/vision_preview.py --synthetic               rehearse with a drawn tank
+    python tools/camera/vision_preview.py --list                    which camera is which
+    python tools/camera/vision_preview.py --camera 1                aim: shows every marker it can see
+    python tools/camera/vision_preview.py --camera 1 --rig vision/rigs/tank.json --depth-mm 406
+    python tools/camera/vision_preview.py --synthetic               rehearse with a drawn tank
 
 For aiming the tripod and checking a rig before a session.  With a rig, press
 R once the water is still: the still level is drawn in blue and the live
@@ -22,7 +22,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
@@ -136,7 +136,7 @@ def main():
                 except ValueError as problem:
                     print(problem, flush=True)
             if key == ord("s"):
-                folder = Path(__file__).resolve().parent.parent / "logs" / "vision"
+                folder = Path(__file__).resolve().parents[2] / "logs" / "vision"
                 folder.mkdir(parents=True, exist_ok=True)
                 saved = folder / ("preview-" + time.strftime("%Y%m%d-%H%M%S") + ".png")
                 cv2.imwrite(str(saved), picture)

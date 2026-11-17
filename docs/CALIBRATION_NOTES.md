@@ -7,7 +7,7 @@ These notes record the starting point for a feature that accepts a desired water
 - The Wave tab's **Height** value is piston stroke in millimetres, not measured water-surface height. `app/waves.py` converts it to motor positions, and converts period to motor speed. `wave/WaveDesigner.py` sends those parameters to selected pistons.
 - `Model.py` can record commanded and actual *motor positions* during a run. That log does not contain water height.
 - `Presets/*.csv` store commanded motor positions, speeds, acceleration, deceleration, and curve settings. Their values are starting recipes, not measured relationships between piston motion and water height. `tools/make_presets.py` says this explicitly.
-- The current PLC interface sets fixed motion parameters and a `Curve ID`, then can assert `Run_Curve`. The application does not upload an arbitrary time-varying piston trajectory. Before designing soliton control, inspect the controller's stored curves and confirm what trajectory interface the lab PLC actually supports. `tools/live_curve_probe.py` is a read-only inspection aid for the lab computer.
+- The current PLC interface sets fixed motion parameters and a `Curve ID`, then can assert `Run_Curve`. The application does not upload an arbitrary time-varying piston trajectory. Before designing soliton control, inspect the controller's stored curves and confirm what trajectory interface the lab PLC actually supports. `tools/live/live_curve_probe.py` is a read-only inspection aid for the lab computer.
 
 ## Soliton trial feature
 

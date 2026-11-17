@@ -1,5 +1,5 @@
 import sys, json, time, numpy as np
-sys.path.insert(0,'tools')
+sys.path.insert(0,'tools/camera')
 import vision_channel as vc
 entries=vc.usable_runs()
 t=time.time()

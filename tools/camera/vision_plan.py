@@ -8,7 +8,7 @@ rest is shuffled with ``--seed``.
 Only display pistons 1-18 (rows 1-6) are used. Pistons 1-12 currently reach
 the water, so they are weighted heavily. Nothing here contacts the machine.
 
-    python tools/vision_plan.py --out analytics/rig/plans/fast1.json --seed 1
+    python tools/camera/vision_plan.py --out analytics/rig/plans/fast1.json --seed 1
 """
 
 import argparse

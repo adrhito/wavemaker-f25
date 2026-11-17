@@ -100,7 +100,7 @@ Recorded so nobody spends time on them again:
 
 ## Notes for whoever picks this up
 
-- Live tools need `Bash(python tools/live_*.py:*)` in
+- Live tools need `Bash(python tools/live/live_*.py:*)` in
   `.claude/settings.local.json`. It is there now.
 - `tools/`, `tests/` and `pytest.ini` were missing from this working copy and
   were restored from `github.com/adrhito/wavemaker-f25`. That repo is **behind**

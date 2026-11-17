@@ -10,10 +10,10 @@ actually did matched what was asked for.
 This runs the stages in order, refuses to go on when a stage fails, and writes
 everything it saw to ``logs/verification/``. It moves real pistons.
 
-    python tools/live_motion_campaign.py                  every stage
-    python tools/live_motion_campaign.py --stage stroke   one stage
-    python tools/live_motion_campaign.py --pistons 1-9    a subset
-    python tools/live_motion_campaign.py --dry-run        no PLC, no motion
+    python tools/live/live_motion_campaign.py                  every stage
+    python tools/live/live_motion_campaign.py --stage stroke   one stage
+    python tools/live/live_motion_campaign.py --pistons 1-9    a subset
+    python tools/live/live_motion_campaign.py --dry-run        no PLC, no motion
 
 Safety
 ------
@@ -38,7 +38,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, tags
 from app.plc import PlcClient
@@ -84,7 +84,7 @@ class Recorder:
         print("  !! {0} {1}: {2}".format(severity, stage, what), flush=True)
 
     def save(self) -> Path:
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / ("live-campaign-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         target.write_text(

@@ -15,7 +15,7 @@ run it:
 The depth is a variable: the still-water baseline marked in the window, or
 ``--depth``.  Nothing here contacts the PLC.
 
-    python tools/vision_physics.py E_bigwave_1 --plot out.png
+    python tools/camera/vision_physics.py E_bigwave_1 --plot out.png
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tank-model"))
 

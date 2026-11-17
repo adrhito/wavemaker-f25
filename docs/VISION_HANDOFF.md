@@ -23,7 +23,7 @@ Wanted later: a tab in the app (stdlib only, lab Windows 7 PC) and a laptop tool
   553.4, 707.8, 861.8; 154.8 px per 6 in, so 0.9845 mm/px). The 0 in (floor) mark is at
   row 1017. The 36 in tape stands off the glass and is not used. All of this is in
   `vision/rigs/channel_window_185in.json`.
-- **`tools/vision_rig.py`:** the live window and recorder. It finds the waterline
+- **`tools/camera/vision_rig.py`:** the live window and recorder. It finds the waterline
   edge in every column and fits one smooth line (`vision/glassline.py`). It ignores
   the tapes plus 10 px either side, and columns 548-622 and 835-914 (white object
   above the waterline) and 1301-1311 (`analytics/rig/weak_fixed.npy`). It saves
@@ -49,9 +49,9 @@ Wanted later: a tab in the app (stdlib only, lab Windows 7 PC) and a laptop tool
 
 | Tool | What it does |
 |---|---|
-| `tools/vision_fast.py PLAN` | Fires each test as soon as `live.json` says the water is still. Kinds: `single`, `continuous`, `pulse_down`. Logs every test to `analytics/rig/runs.jsonl`. |
-| `tools/vision_plan.py --out P --seed N` | Generates test plans over pistons 1-18. Names repeat across seeds, so make them unique before reusing. |
-| `tools/vision_soliton_down.py` | Elevation pulse: raise slowly, settle, push down (via `park`). |
+| `tools/camera/vision_fast.py PLAN` | Fires each test as soon as `live.json` says the water is still. Kinds: `single`, `continuous`, `pulse_down`. Logs every test to `analytics/rig/runs.jsonl`. |
+| `tools/camera/vision_plan.py --out P --seed N` | Generates test plans over pistons 1-18. Names repeat across seeds, so make them unique before reusing. |
+| `tools/camera/vision_soliton_down.py` | Elevation pulse: raise slowly, settle, push down (via `park`). |
 | `wavectl soliton stage --ignore-hot` | Added 16 Nov: passes "Controller Hot" only. |
 
 Only one process may drive the machine. Rows 1-6 (pistons 1-18) are the ones in
@@ -91,7 +91,7 @@ use. Ignore piston 26 and rows 7-10.
 
 ## Analysis code
 
-- `tools/vision_channel.py`: the fast 1-D channel model, with:
+- `tools/camera/vision_channel.py`: the fast 1-D channel model, with:
   - per-row gain and delay;
   - dispersion at the marked depth;
   - damping;
@@ -103,8 +103,8 @@ use. Ignore piston 26 and rows 7-10.
   (`stations_only`, about 28 MB per run).
 - `tools/analysis/quickfit2.py` (fit on 70%, score 30%) and `tools/analysis/kernelfit.py`
   (empirical kernels). Fitted parameters are in `analytics/rig/channel_params.json`.
-- `tools/vision_physics.py` drives `tank-model` with the measured motion.
-- `tools/vision_eval.py` is the K-fold evaluator.
+- `tools/camera/vision_physics.py` drives `tank-model` with the measured motion.
+- `tools/camera/vision_eval.py` is the K-fold evaluator.
 
 ## Next steps, in order
 
@@ -127,4 +127,4 @@ use. Ignore piston 26 and rows 7-10.
 - The controller cable read "Media disconnected" on this laptop.
 - The water was at about 833 mm.
 - The user had said not to run trials at this level.
-- `tools/vision_rig.py` was open for viewing.
+- `tools/camera/vision_rig.py` was open for viewing.

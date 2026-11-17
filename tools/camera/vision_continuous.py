@@ -8,7 +8,7 @@ dying away.  A drive reporting a problem pauses the plan until it clears.
 Everything is logged to ``analytics/rig/runs.jsonl`` like the single
 strokes.  Only wavectl is used.
 
-    python tools/vision_continuous.py analytics/rig/plans/continuous1.json
+    python tools/camera/vision_continuous.py analytics/rig/plans/continuous1.json
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision_campaign import LOG, _batched, _set_args  # noqa: E402
 from vision_probe import wm  # noqa: E402

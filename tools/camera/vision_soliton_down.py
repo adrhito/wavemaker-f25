@@ -15,7 +15,7 @@ and ``rest=up`` puts that place at each piston's Position 1.  So:
 
 Each pulse is logged to ``analytics/rig/runs.jsonl`` with the watch's samples.
 
-    python tools/vision_soliton_down.py --pistons 1-12 --lifts 60 120 --decel 150
+    python tools/camera/vision_soliton_down.py --pistons 1-12 --lifts 60 120 --decel 150
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision_campaign import LOG  # noqa: E402
 from vision_probe import WM, wm  # noqa: E402

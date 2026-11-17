@@ -15,8 +15,8 @@ Everything goes through ``Model.prepare`` and ``Model.start`` rather than
 writing tags directly, because the fault being chased only appears when the
 application drives it: staging by hand works every time.
 
-    python tools/live_cascade_matrix.py
-    python tools/live_cascade_matrix.py --only rows --dry-run
+    python tools/live/live_cascade_matrix.py
+    python tools/live/live_cascade_matrix.py --only rows --dry-run
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, patterns, tags
 from app.plc import PlcClient
@@ -227,7 +227,7 @@ def main(argv=None) -> int:
             except Exception:  # noqa: BLE001
                 pass
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         out = folder / ("cascade-matrix-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         out.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")

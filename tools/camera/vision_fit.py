@@ -10,8 +10,8 @@ Scores are leave-one-out: each run is predicted by a model fitted to all the
 others.  The score is the RMS error over the record and the stations,
 divided by the RMS of the measured wave.
 
-    python tools/vision_fit.py                       # every probe with a plan
-    python tools/vision_fit.py --models shared column --taps 400
+    python tools/camera/vision_fit.py                       # every probe with a plan
+    python tools/camera/vision_fit.py --models shared column --taps 400
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from vision import wavefit  # noqa: E402

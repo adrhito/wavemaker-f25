@@ -23,7 +23,7 @@ Marks are saved at once to ``analytics/rig/annotations.json`` with the pixel
 and the height, and the readout uses them as soon as two have different
 heights.  Nothing here contacts the PLC.
 
-    python tools/vision_rig.py              # until the window is closed with Q
+    python tools/camera/vision_rig.py              # until the window is closed with Q
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from vision import glassline  # noqa: E402

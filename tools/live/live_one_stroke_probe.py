@@ -11,10 +11,10 @@ This settles it by running one stroke on ONE piston and recording where it goes,
 leg by leg. It moves that piston through the stroke you give it -- 120 mm at a
 gentle 150 mm/s by default -- and parks it afterwards.
 
-    python tools/live_one_stroke_probe.py
-    python tools/live_one_stroke_probe.py --piston 5 --stroke 120
-    python tools/live_one_stroke_probe.py --piston 1 2 3     three together
-    python tools/live_one_stroke_probe.py --mock             no PLC, no motion
+    python tools/live/live_one_stroke_probe.py
+    python tools/live/live_one_stroke_probe.py --piston 5 --stroke 120
+    python tools/live/live_one_stroke_probe.py --piston 1 2 3     three together
+    python tools/live/live_one_stroke_probe.py --mock             no PLC, no motion
 
 Several pistons run the same stroke together and each is judged on its own.
 One stroke ends by itself, which is why this is also the first thing to run
@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import drive_status, params, tags
 from app.plc import PlcClient
@@ -199,7 +199,7 @@ def main(argv=None) -> int:
             except Exception:  # noqa: BLE001
                 pass
         client.close()
-        folder = Path(__file__).resolve().parent.parent / "logs" / "verification"
+        folder = Path(__file__).resolve().parents[2] / "logs" / "verification"
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / ("one-stroke-" + time.strftime("%Y%m%d-%H%M%S") + ".json")
         target.write_text(json.dumps(record, indent=2, default=str),

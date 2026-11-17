@@ -8,7 +8,7 @@ sample file for the model.  Each trial is logged to
 ``analytics/rig/runs.jsonl`` like the other runs, with the watch's reply.
 Only wavectl is used.
 
-    python tools/vision_soliton.py --pistons 4-7,10-12 --crests 20 40 --depth 406
+    python tools/camera/vision_soliton.py --pistons 4-7,10-12 --crests 20 40 --depth 406
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision_campaign import LOG  # noqa: E402
 from vision_probe import WM, wm  # noqa: E402

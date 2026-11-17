@@ -8,7 +8,7 @@ is appended to ``analytics/rig/runs.jsonl`` with wavectl's reply, which
 names the position samples.  Only wavectl is used; the PLC is never touched
 here.
 
-    python tools/vision_campaign.py analytics/rig/plans/batch2.json --interval 35
+    python tools/camera/vision_campaign.py analytics/rig/plans/batch2.json --interval 35
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 
 from vision_probe import REST_MM, wm  # noqa: E402
 

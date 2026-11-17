@@ -17,8 +17,8 @@ model carries to other depths and other windows.  Evaluating it costs an
 FFT, so every parameter is fitted at once by least squares, and scored by
 leaving runs out.
 
-    python tools/vision_channel.py fit          # fit on all usable runs, K-fold scores
-    python tools/vision_channel.py fit --plot   # plus a picture of the worst held-out runs
+    python tools/camera/vision_channel.py fit          # fit on all usable runs, K-fold scores
+    python tools/camera/vision_channel.py fit --plot   # plus a picture of the worst held-out runs
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "camera"))
 sys.path.insert(0, str(ROOT / "tank-model"))
 
 from wavemodel import linear  # noqa: E402

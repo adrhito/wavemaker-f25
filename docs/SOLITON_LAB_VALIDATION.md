@@ -75,6 +75,6 @@ mechanical review before making either claim.
   operator before editing `app/solitons.py`. A drive software limit is not a
   structural rating for the floor assembly.
 - On the offline computer, inspect stored PLC curves with the read-only
-  `tools/live_curve_probe.py`. A calculated time-varying floor trajectory
+  `tools/live/live_curve_probe.py`. A calculated time-varying floor trajectory
   requires a verified controller interface. Do not stream sample-by-sample
   position changes over the network as a substitute for controller motion.
