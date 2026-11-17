@@ -62,9 +62,25 @@ def edge_rows(gray: np.ndarray, lo: int, hi: int, bin_px: int = 1,
     return rows
 
 
+def tape_mask(bgr: np.ndarray, redness: float = 30.0, grow: int = 4) -> np.ndarray:
+    """Where the red measuring tapes are, grown by ``grow`` pixels.
+
+    The tapes are opaque: behind them the waterline cannot be seen, and
+    their own edges are as sharp as the water's.  Edges found there are
+    never believed.
+    """
+    a = np.asarray(bgr, dtype=np.float32)
+    red = (a[..., 2] - np.maximum(a[..., 0], a[..., 1])) > redness
+    if grow:
+        from scipy.ndimage import binary_dilation
+        red = binary_dilation(red, iterations=grow)
+    return red
+
+
 def edge_rows_near(gray: np.ndarray, lo: int, hi: int, last: np.ndarray,
                    track: float, min_step: float = MIN_STEP,
-                   strength_out: Optional[list] = None) -> np.ndarray:
+                   strength_out: Optional[list] = None,
+                   forbid: Optional[np.ndarray] = None) -> np.ndarray:
     """``edge_rows`` searching only ``track`` rows either side of ``last``.
 
     Columns whose ``last`` is NaN search the whole band.  Vectorised, for
@@ -77,6 +93,8 @@ def edge_rows_near(gray: np.ndarray, lo: int, hi: int, last: np.ndarray,
     ys = np.arange(lo, hi, dtype=np.float32)[:, None]
     near = np.abs(ys - last[None, :]) <= track
     near |= np.isnan(last)[None, :]
+    if forbid is not None:
+        near &= ~forbid[lo:hi]
     masked = np.where(near, band, -np.inf)
     peak = np.argmax(masked, axis=0)
     cols = np.arange(band.shape[1])
@@ -88,7 +106,7 @@ def edge_rows_near(gray: np.ndarray, lo: int, hi: int, last: np.ndarray,
     with np.errstate(divide="ignore", invalid="ignore"):
         shift = np.where(np.abs(denom) > 1e-6, 0.5 * (a - c) / denom, 0.0)
     rows = (lo + peak + np.where(inner, np.clip(shift, -0.5, 0.5), 0.0)).astype(np.float64)
-    rows[(strength < min_step) | ~inner] = np.nan
+    rows[(strength < min_step) | ~inner | ~np.isfinite(strength)] = np.nan
     if strength_out is not None:
         strength_out.append(np.where(np.isfinite(strength), strength, 0.0))
     return rows

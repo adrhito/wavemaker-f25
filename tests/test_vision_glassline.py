@@ -68,3 +68,15 @@ def test_kernel_fit_recovers_a_known_response():
         probes.append(wavefit.Probe(None, {}, t, eta, np.array([500.0]), {1: d1}))
     model = wavefit.fit(probes[:5], {"all": [1]}, taps=200, ridge=1e-3, smooth=1e-3)
     assert wavefit.score(model, probes[5])["rel_rms"] < 0.03
+
+
+def test_tape_edges_are_never_taken_for_the_waterline():
+    truth = np.full(200, 120.0)
+    img = _picture(truth)
+    img[100:106, 50:150] = 20.0  # an opaque dark tape just above the water
+    bgr = np.repeat(img[..., None], 3, axis=2).astype(np.float32)
+    bgr[100:106, 50:150] = (40, 40, 200)  # red
+    forbid = glassline.tape_mask(bgr, grow=2)
+    last = np.full(200, 104.0)  # as if the tracker had been pulled onto the tape
+    rows = glassline.edge_rows_near(img, 20, 180, last, track=25, forbid=forbid)
+    assert np.nanmax(np.abs(rows - 120.0)) < 0.5

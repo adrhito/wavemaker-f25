@@ -191,6 +191,7 @@ def main() -> None:
     line = np.full(x1 - x0, float(args.start_row))
     lost = 0
     weak, learning = None, []
+    tapes = None  # where the opaque measuring tapes hide the water
     if args.weak_file:
         weak = np.load(args.weak_file)
         print("ignoring columns from {0}: {1}".format(
@@ -234,6 +235,10 @@ def main() -> None:
             if not items:
                 continue
             for stamp, frame in items:
+                if tapes is None:
+                    # Found once, on the first picture: the tapes do not move.
+                    tapes = glassline.tape_mask(frame[lo - 2:hi + 2, x0:x1])
+                    print("tape pixels ignored: {0}".format(int(tapes.sum())), flush=True)
                 gray = cv2.cvtColor(frame[lo - 2:hi + 2, x0:x1], cv2.COLOR_BGR2GRAY)
                 # Averaging along each row first steadies weak columns
                 # without blurring the waterline's height.
@@ -244,7 +249,7 @@ def main() -> None:
                 reach = args.track * (1 + min(lost, 60) / 15.0)
                 rows = glassline.edge_rows_near(gray, 2, hi - lo + 2, line - (lo - 2),
                                                 reach, args.min_step,
-                                                strengths) + (lo - 2)
+                                                strengths, forbid=tapes) + (lo - 2)
                 if weak is None:
                     learning.append(strengths[0])
                     if len(learning) >= 60:  # two seconds of pictures
