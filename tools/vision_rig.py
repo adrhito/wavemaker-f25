@@ -197,6 +197,8 @@ def main() -> None:
             args.weak_file, _spans(np.flatnonzero(weak) + x0)), flush=True)
     zero_centre = None
     recent = []  # the fitted line's median row over the last two seconds
+    motion_log = []  # (time, line at ten stations) for the stillness signal
+    published = 0.0
     zero_row = None
     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], time.time()
     video, video_start = None, 0.0
@@ -264,6 +266,9 @@ def main() -> None:
                 if not np.all(np.isnan(line)):
                     recent.append(float(np.nanmedian(line)))
                     del recent[:-60]
+                    stations = line[STILL_COLS]
+                    motion_log.append((stamp, stations))
+                    del motion_log[:-200]
                 chunk_t.append(stamp)
                 chunk_rows.append(np.where(np.isnan(rows), -1,
                                            np.round(rows * 50)).astype(np.int16))
@@ -283,6 +288,9 @@ def main() -> None:
                 if stamp - chunk_start >= 60:
                     _save_chunk(chunk_t, chunk_rows, chunk_line, x0)
                     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], stamp
+            if time.time() - published > 0.5 and len(motion_log) > 20:
+                published = time.time()
+                _publish(motion_log, notes, line, k_mm=notes.mm_per_row())
             if args.no_window or time.time() - shown < 1 / 15:
                 continue
             shown = time.time()
@@ -464,6 +472,46 @@ def limits(depth_mm: float, base_row: float, lo: int, hi: int, mm_per_row: float
     return {"crest_mm": candidates[by], "crest_by": by,
             "trough_mm": min((hi - base_row) * mm_per_row, depth_mm),
             "height_mm": BREAKING * depth_mm}
+
+
+#: Ten stations across the window for the stillness signal (window columns).
+STILL_COLS = np.linspace(20, 960, 10).astype(int)
+#: How long the surface must have been quiet to count as still, s.
+STILL_WINDOW = 3.0
+
+
+def _publish(motion_log, notes, line, k_mm) -> None:
+    """Write ``live.json``: how much the surface moved in the last seconds.
+
+    ``moving_mm`` is the largest, over ten stations, of the peak-to-peak
+    height in the last ``STILL_WINDOW`` seconds; a campaign waits for it to
+    fall below its threshold before firing the next test.
+    """
+    now = motion_log[-1][0]
+    recent = np.array([v for t, v in motion_log if t >= now - STILL_WINDOW])
+    if len(recent) < 10:
+        return
+    with np.errstate(all="ignore"):
+        # Robust: each station's 5-95 % spread, then the median station, so
+        # a glitch at one station or one picture cannot hold the test back.
+        span = np.nanpercentile(recent, 95, axis=0) - np.nanpercentile(recent, 5, axis=0)
+        std = np.nanstd(recent, axis=0)
+        span = np.array([np.nanmedian(span)])
+        std = np.array([np.nanmedian(std)])
+    base = notes.baseline
+    level = None
+    if base is not None:
+        level = float((base["row"] - np.nanmedian(line)) * k_mm)
+    state = {"t": now, "moving_mm": float(np.nanmax(span) * k_mm),
+             "std_mm": float(np.nanmax(std) * k_mm), "window_s": STILL_WINDOW,
+             "level_mm_above_baseline": level,
+             "baseline_row": None if base is None else base["row"]}
+    tmp = OUT / "live.json.tmp"
+    tmp.write_text(json.dumps(state))
+    try:
+        tmp.replace(OUT / "live.json")
+    except OSError:
+        pass
 
 
 def _spans(cols) -> str:
