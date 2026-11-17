@@ -110,6 +110,58 @@ def run_flux(entry, depth=0.406):
     return t0, rows
 
 
+def stations_only(fire, before=8.0, after=40.0, half=5):
+    """The surface at the five stations around one run, reading little memory.
+
+    Reads only the record pieces that overlap the window and, from each, only
+    ``half`` columns either side of each station, so a window costs a few
+    megabytes instead of hundreds.
+    """
+    from vision import wavefit
+    from vision_physics import STATION_PX, station_x_m
+    folder = ROOT / "analytics" / "rig"
+    paths = sorted(folder.glob("edges-*.npz"))
+    stamps = [datetime.strptime(p.stem[6:], "%Y%m%d-%H%M%S").timestamp() for p in paths]
+    ts, cols = [], []
+    for path, st in zip(paths, stamps):
+        if not (fire - before - 120 <= st <= fire + after):
+            continue
+        z = np.load(path)
+        key = "line50" if "line50" in z.files else "rows50"
+        raw = z[key]
+        x0 = int(z["x0"])
+        t = z["t"]
+        keep = (t >= fire - before) & (t <= fire + after)
+        if not keep.any():
+            continue
+        block = []
+        for px in STATION_PX:
+            c = int(round(px)) - x0
+            a, b = max(c - half, 0), min(c + half + 1, raw.shape[1])
+            v = raw[keep, a:b].astype(np.float64) / 50.0
+            v[raw[keep, a:b] < 0] = np.nan
+            with np.errstate(all="ignore"):
+                block.append(np.nanmedian(v, axis=1) if b > a else np.full(keep.sum(), np.nan))
+        ts.append(t[keep])
+        cols.append(np.array(block).T)
+    if not ts:
+        raise ValueError("camera did not record this window")
+    t = np.concatenate(ts)
+    rows = np.vstack(cols)
+    base = wavefit.baseline_at(folder, t[0])
+    still = base["row"] if base else np.nanmedian(rows, axis=0)
+    eta = (still - rows) * wavefit.MM_PER_PX
+    grid = np.arange(-before, after, DT) + DT / 2
+    out = np.full((len(grid), eta.shape[1]), np.nan)
+    idx = np.floor((t - fire + before) / DT).astype(int)
+    for k in range(len(grid)):
+        sel = idx == k
+        if sel.any():
+            with np.errstate(all="ignore"):
+                out[k] = np.nanmean(eta[sel], axis=0)
+    return grid, out, station_x_m(np.array(STATION_PX))
+
+
 def load_case2(name, entries, depth=0.406, before=8.0, after=40.0, history=300.0):
     """Measured surface for one run's window, with every run's flux around it."""
     from vision import wavefit
@@ -120,17 +172,7 @@ def load_case2(name, entries, depth=0.406, before=8.0, after=40.0, history=300.0
         z = np.load(meas_path)
         t, meas, x = z["t"], z["meas"], z["x"]
     else:
-        one = ROOT / "analytics" / "rig" / ("_one_%s.jsonl" % name)
-        one.write_text(json.dumps(e) + chr(10))
-        probe, runs = wavefit.load_rig(ROOT / "analytics/rig", runs_log=one,
-                                       t_start=fire - before, t_end=fire + after)
-        one.unlink()
-        if not runs:
-            raise ValueError("camera did not record %s" % name)
-        from vision_physics import STATION_PX, station_x_m
-        cols = np.array([int(np.argmin(np.abs(probe.stations_px - w))) for w in STATION_PX])
-        t = probe.t - runs[0]["fire"]
-        meas, x = probe.eta[:, cols], station_x_m(np.array(STATION_PX))
+        t, meas, x = stations_only(fire, before, after)
     grid_t = np.arange(fire - history, fire + after + 1.0, FLUX_DT)
     Q = np.zeros((ROWS, len(grid_t)))
     for other in entries:
