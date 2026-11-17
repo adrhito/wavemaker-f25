@@ -203,6 +203,22 @@ def predict(case, p, x=None):
     return np.array(out).T
 
 
+#: Readings above this (mm over still water) are not trusted in records made
+#: before 16 Nov 23:40: the "18 in" tape sits about 51 mm up and the line
+#: stuck to its edge.  Later records mask the tapes properly.
+TAPE_SAFE_MM = 40.0
+
+
+def valid(case):
+    """Per-reading trust: measured, and not where the line could have stuck."""
+    m = case["meas"]
+    ok = ~np.isnan(m)
+    base = np.nanmean(m[(case["t"] >= -1.0) & (case["t"] < 0)], axis=0)
+    with np.errstate(invalid="ignore"):
+        ok &= (m - base) < TAPE_SAFE_MM
+    return ok
+
+
 def window(case, after=40.0):
     """From a second before firing until the next test's waves could arrive.
 
@@ -212,7 +228,7 @@ def window(case, after=40.0):
     """
     t = case["t"]
     end = min(after, float(case.get("next_fire", np.inf)) + 4.0)
-    ok = (t >= -1.0) & (t <= end) & ~np.any(np.isnan(case["meas"]), axis=1)
+    ok = (t >= -1.0) & (t <= end)
     return ok
 
 
@@ -253,20 +269,20 @@ def fit(cases, start=None, free=None):
         if n.startswith("log_d"):
             lo[n], hi[n] = -12.0, 1.0
 
-    bases = []
+    bases, oks = [], []
     for c in cases:
         b = np.nanmean(c["meas"][(c["t"] >= -1.0) & (c["t"] < 0)], axis=0)
         bases.append(b)
+        oks.append(window(c)[:, None] & valid(c))
 
     def resid(v):
         p = dict(p0)
         p.update(zip(free, v))
         out = []
-        for c, b in zip(cases, bases):
-            ok = window(c)
-            m = c["meas"][ok] - b
+        for c, b, ok in zip(cases, bases, oks):
+            m = (c["meas"] - b)[ok]
             scale = np.sqrt(np.mean(m ** 2)) + 1.0
-            out.append(((predict(c, p)[ok] - m) / scale).ravel())
+            out.append((predict(c, p)[ok] - m) / scale)
         return np.concatenate(out)
 
     v0 = [p0[n] for n in free]
