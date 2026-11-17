@@ -171,6 +171,8 @@ def main() -> None:
     parser.add_argument("--track", type=float, default=14.0)
     parser.add_argument("--weak-file", default=str(OUT / "weak_fixed.npy"),
                         help="columns to ignore, learnt on calm water; '' to learn now")
+    parser.add_argument("--auto-baseline", action="store_true",
+                        help="set the baseline by itself once the water is still")
     parser.add_argument("--start-row", type=float, default=605.0,
                         help="the still waterline's row, where tracking begins")
     parser.add_argument("--hblur", type=int, default=15,
@@ -200,6 +202,7 @@ def main() -> None:
     recent = []  # the fitted line's median row over the last two seconds
     motion_log = []  # (time, line at ten stations) for the stillness signal
     snapped, snap_n = 0.0, 0
+    auto_done = False
     published = 0.0
     zero_row = None
     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], time.time()
@@ -296,7 +299,13 @@ def main() -> None:
                     chunk_t, chunk_rows, chunk_line, chunk_start = [], [], [], stamp
             if time.time() - published > 0.5 and len(motion_log) > 20:
                 published = time.time()
-                _publish(motion_log, notes, line, k_mm=notes.mm_per_row())
+                state = _publish(motion_log, notes, line, k_mm=notes.mm_per_row())
+                if (args.auto_baseline and not auto_done and state
+                        and state["moving_mm"] < 1.0 and len(recent) >= 60):
+                    entry = notes.set_baseline(float(np.median(recent)),
+                                               "automatic: first 3 s of still water after start")
+                    auto_done = True
+                    print("baseline set automatically: {0}".format(entry), flush=True)
             if args.no_window or time.time() - shown < 1 / 15:
                 continue
             shown = time.time()
@@ -502,7 +511,7 @@ def _publish(motion_log, notes, line, k_mm) -> None:
     now = motion_log[-1][0]
     recent = np.array([v for t, v in motion_log if t >= now - STILL_WINDOW])
     if len(recent) < 10:
-        return
+        return None
     with np.errstate(all="ignore"):
         # Robust: each station's 5-95 % spread, then the median station, so
         # a glitch at one station or one picture cannot hold the test back.
@@ -524,6 +533,7 @@ def _publish(motion_log, notes, line, k_mm) -> None:
         tmp.replace(OUT / "live.json")
     except OSError:
         pass
+    return state
 
 
 def _spans(cols) -> str:
