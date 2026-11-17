@@ -25,6 +25,7 @@ logs/verification/*.json
 # trial they belong to rather than in the repository.
 logs/vision/
 analytics/vision/
+analytics/probes/
 *.surface.npz
 *.crest.png
 
