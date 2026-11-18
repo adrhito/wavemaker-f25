@@ -106,6 +106,18 @@ use. Ignore piston 26 and rows 7-10.
 - `tools/camera/vision_physics.py` drives `tank-model` with the measured motion.
 - `tools/camera/vision_eval.py` is the K-fold evaluator.
 
+## The flow simulator (added 17 Nov, evening)
+
+- `tank-model/wavemodel/flow.py` chains commanded motion, the air model and the
+  camera-fitted channel, and gives the surface and the velocity field.
+- `flow.js` is the same engine in the 3D viewer, with a Simulate panel and
+  recorded-run comparison.
+- Held-out error end to end is 77% (5-fold, 43 runs), in line with the 65-80% above.
+- Refit with `wm.py flow-calibrate` after each clean campaign (see the tank-model
+  README, "Simulating the water").
+- Item 3 below now means: `python calibration/build_validation.py`, then
+  `wm.py flow-calibrate`.
+
 ## Next steps, in order
 
 1. Raise or tilt the camera so the still waterline sits mid-picture (the water is

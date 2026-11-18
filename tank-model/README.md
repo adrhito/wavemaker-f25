@@ -184,6 +184,70 @@ object per part. The bank is as drawn:
 
 The tank's posts, the motors' flanges and connectors, and where the rails end are approximate.
 
+## Simulating the water (`flow`)
+
+`wavemodel/flow.py` simulates the water in time for any piston command, using the
+channel fitted to the camera. Pistons rest at the bottom (370 mm), so a `single` run
+strokes up and back down. `continuous` repeats that. `push_down` starts raised (slowly,
+then settled) and makes one down leg, which is what makes a clean crest. `raise` makes
+one up leg, which makes a trough.
+
+The chain is:
+
+1. LinMot motion (`motion.py`).
+2. Water out of each pipe through the trapped air (`air.pipe_flux`). A dry row moves none.
+3. The linear dispersive channel, with the per-row gains and delays, damping, the far
+   echo and the head reflection fitted to the camera (`calibration/channel.json`). It is
+   solved by FFT at a complex frequency, so a permanent level change is kept.
+4. The velocity field through the depth from linear potential theory:
+   `u = q k cosh k(z+h) / sinh kh`, `w = (d eta/dt) sinh k(z+h) / sinh kh`.
+
+It is linear because the waves are 5-30 mm on 400-830 mm of water (a/h about
+0.01-0.05). The solver is not what limits accuracy: the forcing and the data are. It
+warns past a/h = 0.1.
+
+```bash
+python wm.py flow --pistons 1-12 --kind push_down --stroke 180 --speed 200 --accel 50 --jerk 150 --depth 0.406
+python wm.py flow --pistons row1-4 --kind continuous --stroke 200 --speed 300 --seconds 12 --json run.json
+python wm.py flow-check        # every recorded run against the camera
+python wm.py flow-calibrate    # refit the channel, K-fold held-out error, append calibration/history.json
+```
+
+The 3D viewer (`model/tank_viewer.html`, rebuilt by `wm.py model3d --depth 0.406`)
+runs the same engine in the browser. `wavemodel/flow.js` is checked against
+`flow.py` to 0.1% by `tests/test_flow.py`. Its **Simulate the water** panel takes
+pistons, kind, stroke, speed, accel, jerk and depth. It animates:
+
+* the channel's surface, coloured by height;
+* tracers and velocity arrows in three planes;
+* every disc and the water in every pipe;
+* a trace at the camera window.
+
+**Recorded run** loads one the camera measured, together with the runs before it (their
+sloshing was in the measurement), overlays the measurement and gives that run's error.
+
+**How accurate it is**, and how to make it better. `calibration/history.json` keeps
+every refit's held-out error: the median, over runs the fit never saw, of
+RMS(prediction - measurement) / RMS(measurement).
+
+| Date | Held-out error | What |
+|---|---|---|
+| 17 Nov 2026 | 65-80% | `vision_channel.py` on the measured motion (handoff) |
+| 17 Nov 2026 | 77% (push-down 67%, single 74%, continuous 85%) | the whole simulator, 43 runs, 5-fold |
+
+The 16 Nov runs were fired into 5-30 mm of leftover sloshing. Identical strokes
+measured up to 200% apart, so this is close to what that data can show. To bring it
+down:
+
+1. Record clean runs (still water, whole rows, each repeated 3 times; see
+   `docs/VISION_HANDOFF.md`).
+2. `python calibration/build_validation.py` on the rig laptop (it needs `analytics/rig/`).
+3. `python wm.py flow-calibrate --note "what changed"`.
+4. `python wm.py model3d --depth 0.406` to put the new calibration in the viewer.
+
+Rows 5-10 have no camera fit yet and take the fitted rows' mean gain. The fit is at
+406 mm. Other depths use the same gains, unverified.
+
 ## Calibration loop
 
 1. `.venv/bin/python wm.py template` writes `observations_template.csv`. Its five
@@ -254,6 +318,9 @@ difference.
 | `wavemodel/tank.py` | the plan-view wave solver (transfer functions cached in `cache/`) |
 | `wavemodel/predict.py` | run -> piston flux (with the water's inertia) -> waves at stations, motor force, metrics |
 | `wavemodel/calibrate.py` | template, fit, compare |
+| `wavemodel/flow.py`, `flow.js` | the time-domain water simulation (Python, and the same engine for the viewer) |
+| `calibration/` | the camera-fitted channel (`channel.json`), its error history, the recorded runs it is scored on |
+| `tests/test_flow.py` | physics checks of the simulator, and flow.js against flow.py |
 | `wavemodel/charts.py`, `drawings.py`, `model3d.py` | charts, drawings, 3D model |
 | `photos/` | the 11 photos (HEIC originals, JPEG copies) the geometry came from |
 | `results/`, `drawings/`, `model/` | generated output |

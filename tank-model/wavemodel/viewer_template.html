@@ -49,6 +49,22 @@
   .lbl { position: fixed; pointer-events: none; font-size: 11px; background: var(--panel); color: var(--ink);
          padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap;
          transform: translate(-50%, -50%); }
+  details { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
+  summary { cursor: pointer; font-weight: 600; margin: 0 0 8px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 0 0 10px; }
+  .grid2 label { display: flex; flex-direction: column; font-size: 11.5px; color: var(--ink-2); gap: 2px; }
+  .grid2 input, .txt { width: 100%; font: inherit; color: var(--ink); background: var(--chip);
+                       border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .btn { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px;
+         padding: 5px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: wait; }
+  #chart { width: 100%; height: 120px; display: block; background: var(--chip); border-radius: 6px; margin: 6px 0 4px; }
+  .stat { font-variant-numeric: tabular-nums; font-size: 12px; margin: 2px 0; }
+  .warn { color: var(--dry); font-size: 11.5px; margin: 2px 0; }
+  .acc { font-size: 11.5px; color: var(--ink-2); background: var(--chip); border-radius: 6px; padding: 6px 8px; margin: 8px 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 11px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 14px; height: 2px; }
   #err { position: fixed; bottom: 12px; right: 12px; color: var(--ink-2); font-size: 12px; }
   @media (max-width: 600px) {
     #panel { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 46vh; padding: 10px 12px; }
@@ -62,6 +78,60 @@
 <div id="panel">
   <h1>UNC wave tank and piston bank</h1>
   <p class="sub">Built from geometry.json. Drag to orbit, scroll to zoom, right-drag to pan.</p>
+  <div class="row views">
+    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank</button>
+    <button data-view="side">Bank side-on</button><button data-view="outlets">Outlets</button>
+    <button data-view="channel">Down the channel</button><button data-view="waves">The waves</button>
+  </div>
+  <details id="simBox" open>
+    <summary>Simulate the water</summary>
+    <div class="ctl" style="margin-bottom:8px">
+      <div class="top"><span>Recorded run</span></div>
+      <select id="example" class="txt"><option value="">— your own settings —</option></select>
+      <div class="hint">Pick one the camera measured to load its settings and compare.</div>
+    </div>
+    <div class="row">
+      <div class="seg" id="kind">
+        <button data-kind="single" class="on">Single</button><button data-kind="continuous">Continuous</button>
+        <button data-kind="push_down">Push down</button><button data-kind="raise">Raise</button>
+      </div>
+    </div>
+    <div class="grid2">
+      <label>Pistons<input id="pistons" value="1-12" title="1-30, 1,4,7, row1-4, lane2, all"></label>
+      <label>Stroke, mm<input id="stroke" type="number" value="250" min="5" max="390" step="5"></label>
+      <label>Speed, mm/s<input id="speed" type="number" value="400" min="10" max="900" step="10"></label>
+      <label>Accel, mm/s²<input id="accel" type="number" value="10000" min="10" max="20000" step="10"></label>
+      <label>Jerk, mm/s³<input id="jerk" type="number" value="2000" min="10" max="100000" step="10"></label>
+      <label>Runs for, s (continuous)<input id="seconds" type="number" value="10" min="1" max="60" step="1"></label>
+      <label>Still water, mm<input id="depthSim" type="number" min="50" max="1000" step="1"></label>
+    </div>
+    <div class="row">
+      <button class="btn" id="simulate">Simulate</button>
+      <button class="btn ghost" id="play" disabled>Pause</button>
+      <span class="hint" id="simMsg"></span>
+    </div>
+    <div class="ctl">
+      <div class="top"><span>Time</span><span class="val" id="tv">0.0 s</span></div>
+      <input type="range" id="time" min="0" max="60" step="0.05" value="0">
+    </div>
+    <div class="ctl">
+      <div class="top"><span>Heights drawn ×</span><span class="val" id="xv"></span></div>
+      <input type="range" id="exag" min="1" max="60" step="1" value="20">
+      <div class="hint">The waves are millimetres on a 17.8 m channel, so heights and the water's motion are
+        drawn exaggerated. The numbers below are real.</div>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="showTracers" checked> flow tracers</label>
+      <label><input type="checkbox" id="showArrows" checked> velocity arrows</label>
+      <select id="speedPlay" class="txt" style="width:auto"><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    </div>
+    <canvas id="chart"></canvas>
+    <div class="legend"><span><i style="background:var(--accent)"></i>simulated at the camera window</span><span id="measLeg" style="display:none"><i style="background:var(--ink)"></i>measured</span></div>
+    <div id="stats"></div>
+    <div class="acc" id="accuracy"></div>
+  </details>
+  <details id="tankBox">
+    <summary>The tank and the pistons</summary>
   <div class="ctl">
     <div class="top"><span>Still-water depth</span><span class="val" id="dv"></span></div>
     <input type="range" id="depth" min="0.05" max="1.0" step="0.005">
@@ -78,11 +148,7 @@
     <label><input type="checkbox" id="showStack" checked> duct block</label>
     <label><input type="checkbox" id="showLabels" checked> labels</label>
   </div>
-  <div class="row views">
-    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank</button>
-    <button data-view="side">Bank side-on</button><button data-view="outlets">Outlets</button>
-    <button data-view="channel">Down the channel</button>
-  </div>
+
   <table>
     <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Outlet</th><th>Under water</th><th>Air</th><th>Rings</th></tr></thead>
     <tbody id="rows"></tbody>
@@ -93,8 +159,10 @@
     the disc parked at 370 mm, then moved slowly here (tight seal). Rings: the frequency at which the air under the
     disc and the water in pipe and duct swing after a stroke. From the 2013-15 design drawings; the tank's posts and
     the motors' flanges are approximate.</p>
+  </details>
 </div>
 <div id="err"></div>
+<script>/*FLOWJS*/</script>
 <script>
 const DATA = /*DATA*/null;
 (function () {
@@ -102,10 +170,12 @@ const DATA = /*DATA*/null;
     document.getElementById("err").textContent = "three.js did not load (offline?). The .glb and .obj files open in Blender.";
     return;
   }
-  const G = DATA.g;
+  const G = DATA.g, FL = DATA.flow;
   const P0 = 101325, RG = 1000 * 9.81;
   const state = { depth: DATA.start.depth, disc: DATA.start.disc_mm,
-                  water: true, xray: true, stack: true, labels: true };
+                  water: true, xray: true, stack: true, labels: true,
+                  exag: 20, tracers: true, arrows: true, playing: false, rate: 1, time: 0 };
+  let sim = null, example = null;
 
   const view = document.getElementById("view");
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -158,6 +228,13 @@ const DATA = /*DATA*/null;
   let bank = new THREE.Group(), water = new THREE.Group();
   scene.add(bank, water);
 
+  // the camera's window on the channel's side (vision/rigs/channel_window_185in.json)
+  const winX0 = 185.5 * 0.0254, winX1 = 224.5 * 0.0254;
+  const winMesh = make({ kind: "box", p: [(winX0 + winX1) / 2, -G.channel_width / 2 - 0.035, 0.45],
+                         s: [winX1 - winX0, 0.01, 0.9] },
+    new THREE.MeshBasicMaterial({ color: "#eb6834", transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+  scene.add(winMesh);
+
   function discZ(mm) { return G.disc_zero - mm / 1000; }
   function inner(zb, h, zd) {               // tight seal, isothermal, from the park position
     if (zb >= h) return null;
@@ -169,33 +246,169 @@ const DATA = /*DATA*/null;
     return { z: zd - L, air: L };
   }
 
+  // ---- the bank: built once per depth, then discs and pipe water are moved in place
+  let refs = [];
   function buildBank() {
     scene.remove(bank);
     bank = new THREE.Group();
-    const ro = G.od / 2, ri = G.bore / 2, zd = discZ(state.disc), h = state.depth;
+    refs = [];
+    const ro = G.od / 2, ri = G.bore / 2, h = state.depth;
     DATA.pistons.forEach(p => {
-      const x = p.x, wet = p.bottom < h;
+      const wet = p.bottom < h;
       const pipeMat = state.xray ? mat("steel", wet ? "wet" : "") :
         (mats["steel_solid" + wet] || (mats["steel_solid" + wet] = new THREE.MeshStandardMaterial({
           color: wet ? "#7fb2ee" : "#c9ccd1", metalness: 0.25, roughness: 0.45, side: THREE.DoubleSide })));
-      bank.add(make({ kind: "tube", p: [x, p.y, p.bottom], r: ro, h: G.pipe_top - p.bottom }, pipeMat));
-      bank.add(make({ kind: "cyl", p: [x, p.y, zd - 0.01], r: ri * 0.995, h: 0.02 }, mat("disc")));
-      bank.add(make({ kind: "cyl", p: [x, p.y, zd + 0.01], r: G.slider_r, h: G.slider_l }, mat("slider")));
-      const st = inner(p.bottom, h, zd);
-      if (st && st.z - p.bottom > 0.002)
-        bank.add(make({ kind: "cyl", p: [x, p.y, p.bottom], r: ri * 0.99, h: st.z - p.bottom }, mat("pipe_water")));
+      bank.add(make({ kind: "tube", p: [p.x, p.y, p.bottom], r: ro, h: G.pipe_top - p.bottom }, pipeMat));
+      const disc = make({ kind: "cyl", p: [p.x, p.y, 0], r: ri * 0.995, h: 0.02 }, mat("disc"));
+      const slider = make({ kind: "cyl", p: [p.x, p.y, 0], r: G.slider_r, h: G.slider_l }, mat("slider"));
+      const wat = make({ kind: "cyl", p: [p.x, p.y, 0], r: ri * 0.99, h: 1 }, mat("pipe_water"));
+      bank.add(disc, slider, wat);
+      refs[p.n - 1] = { p, disc, slider, wat };
     });
     scene.add(bank);
+    setBank(null);
   }
 
+  // discs (mm) and pipe water levels (m) for every piston, or the slider's static state
+  function setBank(frame) {
+    const np = refs.length;
+    refs.forEach((r, i) => {
+      let mm, zin;
+      if (frame !== null && sim) {
+        mm = sim.disc[frame * np + i];
+        zin = sim.inner[frame * np + i];
+      } else {
+        mm = state.disc;
+        const st = inner(r.p.bottom, state.depth, discZ(mm));
+        zin = st ? st.z : NaN;
+      }
+      const zd = discZ(mm);
+      r.disc.position.z = zd;
+      r.slider.position.z = zd + 0.01 + G.slider_l / 2;
+      const col = zin - r.p.bottom;
+      r.wat.visible = !isNaN(zin) && col > 0.002;
+      if (r.wat.visible) { r.wat.scale.y = col; r.wat.position.z = r.p.bottom + col / 2; }
+    });
+  }
+
+  // ---- the water: the head as a box, the channel as a surface that moves
+  const surf = { geo: null, mesh: null, nx: 0, x: null };
   function buildWater() {
     scene.remove(water);
     water = new THREE.Group();
     const h = state.depth;
     water.add(make({ kind: "box", p: [-G.head_length / 2, 0, h / 2], s: [G.head_length, G.head_width, h] }, mat("water")));
-    water.add(make({ kind: "box", p: [G.channel_length / 2, 0, h / 2], s: [G.channel_length, G.channel_width, h] }, mat("water")));
+    const xs = sim ? sim.x : Array.from({ length: Math.round(G.channel_length / 0.1) + 1 }, (_, j) => j * 0.1);
+    const nx = xs.length, b = G.channel_width / 2;
+    const pos = new Float32Array(nx * 4 * 3), colr = new Float32Array(nx * 4 * 3), idx = [];
+    for (let j = 0; j < nx; j++) {
+      const v = [[xs[j], -b, h], [xs[j], b, h], [xs[j], -b, 0], [xs[j], b, 0]];
+      v.forEach((q, k) => pos.set(q, (j * 4 + k) * 3));
+      if (j < nx - 1) {
+        const a = j * 4, c = (j + 1) * 4;
+        idx.push(a, a + 1, c, a + 1, c + 1, c);            // top
+        idx.push(a + 2, a, c + 2, a, c, c + 2);            // near side (-y)
+        idx.push(a + 1, a + 3, c + 1, a + 3, c + 3, c + 1); // far side (+y)
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colr, 3));
+    geo.setIndex(idx);
+    const m = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.55,
+      roughness: 0.15, metalness: 0, side: THREE.DoubleSide, depthWrite: false });
+    surf.geo = geo; surf.mesh = new THREE.Mesh(geo, m); surf.nx = nx; surf.x = xs;
+    water.add(surf.mesh);
     water.visible = state.water;
     scene.add(water);
+    setWater(null);
+  }
+
+  const cLow = new THREE.Color("#1c5cab"), cMid = new THREE.Color("#2a78d6"), cHigh = new THREE.Color("#e8f3ff");
+  const tmpC = new THREE.Color();
+  function heightColor(e, scale) {           // e in m; scale: the run's largest wave
+    const s = Math.max(-1, Math.min(1, e / Math.max(scale, 1e-6)));
+    return s >= 0 ? tmpC.copy(cMid).lerp(cHigh, s) : tmpC.copy(cMid).lerp(cLow, -s);
+  }
+
+  function setWater(frame) {
+    if (!surf.geo) return;
+    const pos = surf.geo.attributes.position.array, col = surf.geo.attributes.color.array;
+    const h = state.depth, nx = surf.nx;
+    const peak = sim ? sim.metrics.largest_anywhere_mm / 1000 : 1;
+    for (let j = 0; j < nx; j++) {
+      const e = frame !== null && sim ? sim.eta[frame * sim.nx + j] : 0;
+      const zt = h + state.exag * e;
+      pos[(j * 4) * 3 + 2] = zt; pos[(j * 4 + 1) * 3 + 2] = zt;
+      const c = heightColor(e, peak);
+      for (let k = 0; k < 4; k++) col.set([c.r, c.g, c.b], (j * 4 + k) * 3);
+    }
+    surf.geo.attributes.position.needsUpdate = true;
+    surf.geo.attributes.color.needsUpdate = true;
+    surf.geo.computeVertexNormals();
+  }
+
+  // ---- tracers: water particles in three planes along the channel, moved by the simulated flow
+  const tr = { pts: null, lines: null, rest: null, xi: null, zeta: null, n: 0 };
+  function buildTracers() {
+    if (tr.pts) { scene.remove(tr.pts); scene.remove(tr.lines); }
+    tr.pts = tr.lines = null;
+    if (!sim || !sim.u) return;
+    const nz = sim.z.length, nv = sim.xv.length, nt = sim.nt, ys = [-0.22, 0, 0.22];
+    const cols = [];
+    for (let j = 1; j < nv - 1; j += 2) cols.push(j);           // every 0.5 m
+    const n = cols.length * nz * ys.length;
+    const rest = new Float32Array(n * 3), map = new Int32Array(n * 2);
+    let i = 0;
+    ys.forEach(y => cols.forEach(j => { for (let k = 0; k < nz; k++) {
+      rest.set([sim.xv[j], y, state.depth + sim.z[k]], i * 3); map[i * 2] = j; map[i * 2 + 1] = k; i++; } }));
+    // displacement from rest: the velocity integrated in time (linear, at the rest point)
+    const xi = new Float32Array(nt * n), ze = new Float32Array(nt * n);
+    for (let p = 0; p < n; p++) {
+      const j = map[p * 2], k = map[p * 2 + 1];
+      let a = 0, b = 0;
+      for (let f = 0; f < nt; f++) {
+        const o = (f * nz + k) * nv + j;
+        a += sim.u[o] * FLOW.DT; b += sim.w[o] * FLOW.DT;
+        xi[f * n + p] = a; ze[f * n + p] = b;
+      }
+    }
+    Object.assign(tr, { rest, xi, zeta: ze, n, map });
+    const g1 = new THREE.BufferGeometry();
+    g1.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    g1.setAttribute("color", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    tr.pts = new THREE.Points(g1, new THREE.PointsMaterial({ size: 0.055, vertexColors: true, sizeAttenuation: true }));
+    const g2 = new THREE.BufferGeometry();
+    g2.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 6), 3));
+    tr.lines = new THREE.LineSegments(g2, new THREE.LineBasicMaterial({ color: "#eb6834" }));
+    scene.add(tr.pts, tr.lines);
+    tr.vmax = 1e-6;
+    for (let q = 0; q < sim.u.length; q++) tr.vmax = Math.max(tr.vmax, Math.hypot(sim.u[q], sim.w[q]));
+    setTracers(0);
+  }
+
+  const cSlow = new THREE.Color("#c3c2b7"), cFast = new THREE.Color("#eb6834");
+  function setTracers(frame) {
+    if (!tr.pts) return;
+    tr.pts.visible = state.tracers;
+    tr.lines.visible = state.arrows;
+    const n = tr.n, nz = sim.z.length, nv = sim.xv.length, X = state.exag;
+    const pp = tr.pts.geometry.attributes.position.array, pc = tr.pts.geometry.attributes.color.array;
+    const lp = tr.lines.geometry.attributes.position.array;
+    const arrow = 0.5 / tr.vmax;            // the fastest water gets a 0.5 m arrow
+    for (let p = 0; p < n; p++) {
+      const x = tr.rest[p * 3] + X * tr.xi[frame * n + p], y = tr.rest[p * 3 + 1];
+      const z = tr.rest[p * 3 + 2] + X * tr.zeta[frame * n + p];
+      pp[p * 3] = x; pp[p * 3 + 1] = y; pp[p * 3 + 2] = z;
+      const o = (frame * nz + tr.map[p * 2 + 1]) * nv + tr.map[p * 2];
+      const u = sim.u[o], w = sim.w[o];
+      const c = tmpC.copy(cSlow).lerp(cFast, Math.min(1, Math.hypot(u, w) / tr.vmax));
+      pc[p * 3] = c.r; pc[p * 3 + 1] = c.g; pc[p * 3 + 2] = c.b;
+      lp.set([x, y, z, x + u * arrow, y, z + w * arrow], p * 6);
+    }
+    tr.pts.geometry.attributes.position.needsUpdate = true;
+    tr.pts.geometry.attributes.color.needsUpdate = true;
+    tr.lines.geometry.attributes.position.needsUpdate = true;
   }
 
   function rings(p, st, h) {                // air spring against the water in pipe and duct (drive.py)
@@ -228,9 +441,10 @@ const DATA = /*DATA*/null;
       "No pipe reaches the water: the pistons move only air.";
     document.getElementById("dv").textContent = Math.round(h * 1000) + " mm";
     document.getElementById("pv").textContent = Math.round(state.disc) + " mm";
+    document.getElementById("depthSim").value = Math.round(h * 1000);
   }
 
-  // labels anchored in the model
+  // ---- labels anchored in the model
   const labels = [];
   function label(text, fn) {
     const el = document.createElement("div");
@@ -241,13 +455,14 @@ const DATA = /*DATA*/null;
   const L = G.channel_length, HL = G.head_length, HW = G.head_width;
   label(() => `Head ${HL.toFixed(2)} x ${HW.toFixed(2)} m`, () => [-HL / 2, -HW / 2 - 0.25, G.rim]);
   label(() => `Channel ${L.toFixed(1)} m x ${Math.round(G.channel_width * 1000)} mm`, () => [L * 0.45, 0, G.rim + 0.25]);
-  label(() => `Reservoir ${G.reservoir_height.toFixed(1)} m tall (gate shut)`, () => [L + G.reservoir_length / 2, 0, G.reservoir_height + 0.2]);
+  label(() => `Reservoir ${G.reservoir_height.toFixed(1)} m tall (gate open for waves)`, () => [L + G.reservoir_length / 2, 0, G.reservoir_height + 0.2]);
   label(() => "Row 1", () => [DATA.pistons.find(p => p.row === 1).x, 0, G.pipe_top + 0.6]);
   label(() => "Row 10", () => [DATA.pistons.find(p => p.row === 10).x, 0, G.pipe_top + 0.6]);
   if (G.ducted) label(() => "30 duct outlets", () => [0.02, -G.bank_width / 2 - 0.12, 0.45]);
   label(() => `Still water ${Math.round(state.depth * 1000)} mm`, () => [L * 0.2, G.channel_width / 2 + 0.1, state.depth]);
   label(() => `Pipe tops ${Math.round(G.pipe_top * 1000)} mm`, () => [G.bank_x0 - 0.2, G.bank_width / 2 + 0.2, G.pipe_top]);
   label(() => "Channel mouth x = 0", () => [0, -G.channel_width / 2 - 0.2, 0.05]);
+  label(() => "Camera window", () => [(winX0 + winX1) / 2, -G.channel_width / 2 - 0.1, 0.95]);
 
   const v = new THREE.Vector3();
   function placeLabels() {
@@ -270,6 +485,7 @@ const DATA = /*DATA*/null;
     side: { pos: [-1.35, -3.1, 0.8], at: [-1.35, 0, 0.75] },
     outlets: { pos: [1.45, -0.1, 0.6], at: [0, 0, 0.43] },
     channel: { pos: [-HL - 0.6, 0, 2.2], at: [L * 0.6, 0, 0.2] },
+    waves: { pos: [2.5, -5.5, 2.4], at: [6.5, 0, 0.3] },
   };
   function go(name) {
     const vw = VIEWS[name];
@@ -283,31 +499,266 @@ const DATA = /*DATA*/null;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    drawChart();
   }
   window.addEventListener("resize", resize);
 
-  const depthIn = document.getElementById("depth"), discIn = document.getElementById("disc");
+  // ---- the simulation panel
+  const $ = id => document.getElementById(id);
+  let kind = "single";
+  document.querySelectorAll("#kind button").forEach(b => b.addEventListener("click", () => {
+    kind = b.dataset.kind;
+    document.querySelectorAll("#kind button").forEach(x => x.classList.toggle("on", x === b));
+  }));
+
+  function parsePistons(spec) {
+    spec = spec.toLowerCase().replace(/\s+/g, "");
+    if (spec === "all" || spec === "*") return Array.from({ length: 30 }, (_, i) => i + 1);
+    const out = [];
+    for (const part of spec.split(",")) {
+      if (!part) continue;
+      let kindP = "p", body = part;
+      if (part.startsWith("row")) { kindP = "c"; body = part.slice(3); }
+      else if (part.startsWith("lane")) { kindP = "r"; body = part.slice(4); }
+      else if ("cr".includes(part[0])) { kindP = part[0]; body = part.slice(1); }
+      const [a, b] = body.includes("-") ? body.split("-").map(Number) : [Number(body), Number(body)];
+      if (!(a >= 1) || !(b >= a)) throw new Error("cannot read pistons '" + part + "'");
+      for (let k = a; k <= b; k++) {
+        if (kindP === "p") out.push(k);
+        else if (kindP === "c") for (let j = 1; j <= 3; j++) out.push(3 * (k - 1) + j);
+        else for (let c = 1; c <= 10; c++) out.push(3 * (c - 1) + k);
+      }
+    }
+    const ok = [...new Set(out)].filter(n => n >= 1 && n <= 30).sort((a, b) => a - b);
+    if (!ok.length) throw new Error("no pistons selected");
+    return ok;
+  }
+
+  // recorded runs to compare with
+  const exSel = $("example");
+  (FL.examples || []).forEach((c, i) => {
+    const o = document.createElement("option");
+    const g0 = c.commands[0];
+    o.value = String(i);
+    o.textContent = `${c.name}: ${c.kind.replace("_", " ")}, ${g0.stroke} mm at ${g0.speed} mm/s`;
+    exSel.appendChild(o);
+  });
+  exSel.addEventListener("change", () => {
+    example = exSel.value === "" ? null : FL.examples[+exSel.value];
+    if (!example) return;
+    const c0 = example.commands[0];
+    kind = c0.kind;
+    document.querySelectorAll("#kind button").forEach(x => x.classList.toggle("on", x.dataset.kind === kind));
+    $("pistons").value = c0.pistons.join(",");
+    $("stroke").value = c0.stroke; $("speed").value = c0.speed; $("accel").value = c0.accel;
+    $("jerk").value = c0.jerk; $("seconds").value = c0.seconds;
+    setDepth(example.depth_m);
+    runSim();
+  });
+  ["pistons", "stroke", "speed", "accel", "jerk", "seconds"].forEach(id => $(id).addEventListener("input", () => {
+    if (example) { example = null; exSel.value = ""; }
+  }));
+
+  let view0 = 0, view1 = 60, lead = 0;
+  function runSim() {
+    const btn = $("simulate");
+    btn.disabled = true;
+    $("simMsg").textContent = "simulating…";
+    setTimeout(() => {
+      try {
+        let cmds, duration;
+        if (example) {
+          const starts = example.history.map(h => h.start_s).concat([example.start_s]);
+          lead = 8 + Math.max(0, -Math.min(...starts));
+          cmds = example.commands.map(c => Object.assign({}, c, { start: example.start_s + lead }));
+          example.history.forEach(h => h.commands.forEach(c => cmds.push(Object.assign({}, c, { start: h.start_s + lead }))));
+          duration = lead + example.t[example.t.length - 1] + 1;
+          view0 = lead - 8; view1 = lead + 40;
+        } else {
+          lead = 0;
+          const cmd = { pistons: parsePistons($("pistons").value), stroke: +$("stroke").value, speed: +$("speed").value,
+                        accel: +$("accel").value, decel: +$("accel").value, jerk: +$("jerk").value, kind,
+                        seconds: +$("seconds").value, start: 1 };
+          cmds = [cmd];
+          duration = 60 + (kind === "continuous" ? cmd.seconds : 0);
+          view0 = 0; view1 = duration;
+        }
+        const t0 = performance.now();
+        sim = FLOW.simulate(cmds, state.depth, FL.geo, FL.cal, { duration, dxFlow: 0.25 });
+        buildWater(); buildTracers();
+        const tin = $("time");
+        tin.min = view0; tin.max = Math.min(view1, sim.t[sim.nt - 1]); tin.step = FLOW.DT;
+        state.time = view0; state.playing = true;
+        $("play").disabled = false; $("play").textContent = "Pause";
+        $("simMsg").textContent = `done in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+        $("measLeg").style.display = example ? "" : "none";
+        stats();
+      } catch (e) {
+        $("simMsg").textContent = e.message;
+      }
+      btn.disabled = false;
+    }, 30);
+  }
+  $("simulate").addEventListener("click", () => { if (example) { example = null; exSel.value = ""; } runSim(); });
+  $("play").addEventListener("click", () => {
+    state.playing = !state.playing;
+    $("play").textContent = state.playing ? "Pause" : "Play";
+  });
+  $("time").addEventListener("input", e => { state.time = +e.target.value; state.playing = false; $("play").textContent = "Play"; });
+  $("exag").addEventListener("input", e => { state.exag = +e.target.value; $("xv").textContent = state.exag; });
+  $("speedPlay").addEventListener("change", e => { state.rate = +e.target.value; });
+  $("showTracers").addEventListener("change", e => { state.tracers = e.target.checked; });
+  $("showArrows").addEventListener("change", e => { state.arrows = e.target.checked; });
+  $("xv").textContent = state.exag;
+
+  function exampleError() {
+    if (!example || !sim) return null;
+    const j = sim.metrics.camera_index;
+    let se = 0, sm = 0;
+    example.t.forEach((tc, i) => {
+      const m = example.eta_mm[i];
+      if (m === null || tc < -1 || tc > example.end_s) return;
+      const f = Math.round((tc + lead) / FLOW.DT);
+      if (f < 0 || f >= sim.nt) return;
+      const p = sim.eta[f * sim.nx + j] * 1000;
+      se += (p - m) ** 2; sm += m * m;
+    });
+    return sm > 0 ? Math.sqrt(se / sm) : null;
+  }
+
+  function stats() {
+    const m = sim.metrics, s = [];
+    const f = (v, d = 1) => (v === null || v === undefined ? "–" : v.toFixed(d));
+    s.push(`<div class="stat">Rows moving water: <b>${m.moving_rows.length ? m.moving_rows.join(", ") : "none"}</b>` +
+           ` (wet at ${Math.round(state.depth * 1000)} mm: ${m.wet_rows.join(", ") || "none"})</div>`);
+    s.push(`<div class="stat">At the camera window (${f(m.camera_x_m, 2)} m): crest <b>${f(m.crest_at_camera_mm)} mm</b>` +
+           ` at ${f(m.crest_time_s - lead)} s, trough ${f(m.trough_at_camera_mm)} mm</div>`);
+    s.push(`<div class="stat">Largest anywhere: ${f(m.largest_anywhere_mm)} mm (a/h ${f(m.a_over_h, 3)})</div>`);
+    const err = exampleError();
+    if (err !== null) s.push(`<div class="stat">This run against the camera: <b>${Math.round(err * 100)}%</b> error</div>`);
+    m.warnings.forEach(w => s.push(`<div class="warn">${w}</div>`));
+    if (!m.moving_rows.length) s.push(`<div class="warn">Nothing selected reaches the water at this depth: the pistons move only air.</div>`);
+    $("stats").innerHTML = s.join("");
+    drawChart();
+  }
+
+  function accuracy() {
+    const he = FL.cal.held_out_error || {}, hist = FL.history || [];
+    const pct = v => Math.round(v * 100) + "%";
+    let t = "";
+    if (he.value !== null && he.value !== undefined) {
+      const bk = he.by_kind || {};
+      t += `<b>How good this is.</b> Calibrated ${FL.cal.fitted} on ${he.n} runs the camera measured. ` +
+           `On runs it was not fitted to, its prediction at the window is off by ${pct(he.value)} of the wave (median` +
+           (Object.keys(bk).length ? "; " + Object.entries(bk).map(([k, v]) => `${k.replace("_", " ")} ${pct(v)}`).join(", ") : "") +
+           `). That is about the scatter of the measurements themselves: on 16 Nov identical strokes measured ` +
+           `up to 200% apart, because the water was never still between runs. It tightens each time cleaner ` +
+           `runs are recorded and <code>wm.py flow-calibrate</code> refits it.`;
+    }
+    if (hist.length) {
+      t += "<br>History: " + hist.map(h => `${h.date}: ` + (h.held_out_median != null ? pct(h.held_out_median) +
+           ` (${h.runs} runs)` : (h.held_out_range ? h.held_out_range.map(pct).join("-") : "–"))).join(" · ");
+    }
+    t += `<br>Depth: fitted at ${Math.round(FL.cal.depth_m * 1000)} mm; other depths use the same gains, unverified.`;
+    $("accuracy").innerHTML = t;
+  }
+
+  function drawChart() {
+    const cv = $("chart"), w = cv.clientWidth, h = cv.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (!w) return;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const c = cv.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const ink2 = css.getPropertyValue("--ink-2").trim(), accent = css.getPropertyValue("--accent").trim(),
+          ink = css.getPropertyValue("--ink").trim(), line = css.getPropertyValue("--line").trim();
+    if (!sim) {
+      c.fillStyle = ink2; c.font = "11px system-ui"; c.fillText("Press Simulate", 8, 16);
+      return;
+    }
+    const j = sim.metrics.camera_index, padL = 30, padB = 14;
+    const sx = t => padL + (t - view0) / (view1 - view0) * (w - padL - 6);
+    let lo = 0, hi = 0;
+    for (let f = 0; f < sim.nt; f++) { const t = sim.t[f]; if (t < view0 || t > view1) continue;
+      const e = sim.eta[f * sim.nx + j] * 1000; lo = Math.min(lo, e); hi = Math.max(hi, e); }
+    if (example) example.eta_mm.forEach(m => { if (m !== null) { lo = Math.min(lo, m); hi = Math.max(hi, m); } });
+    const span = Math.max(hi - lo, 1); lo -= span * 0.08; hi += span * 0.08;
+    const sy = e => 4 + (hi - e) / (hi - lo) * (h - padB - 8);
+    c.strokeStyle = line; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL, sy(0)); c.lineTo(w - 6, sy(0)); c.stroke();
+    c.fillStyle = ink2; c.font = "10px system-ui";
+    c.fillText(hi.toFixed(0) + " mm", 2, sy(hi) + 8); c.fillText(lo.toFixed(0), 2, sy(lo));
+    c.fillText((view0 - lead).toFixed(0) + " s", padL, h - 2);
+    c.fillText((view1 - lead).toFixed(0) + " s", w - 34, h - 2);
+    if (example) {
+      c.strokeStyle = ink; c.lineWidth = 1.2; c.beginPath();
+      let pen = false;
+      example.t.forEach((tc, i) => { const m = example.eta_mm[i];
+        if (m === null) { pen = false; return; }
+        const X = sx(tc + lead), Y = sy(m);
+        if (pen) c.lineTo(X, Y); else c.moveTo(X, Y); pen = true; });
+      c.stroke();
+    }
+    c.strokeStyle = accent; c.lineWidth = 1.6; c.beginPath();
+    let first = true;
+    for (let f = 0; f < sim.nt; f++) { const t = sim.t[f]; if (t < view0 || t > view1) continue;
+      const X = sx(t), Y = sy(sim.eta[f * sim.nx + j] * 1000);
+      if (first) { c.moveTo(X, Y); first = false; } else c.lineTo(X, Y); }
+    c.stroke();
+    c.strokeStyle = "#eb6834"; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(sx(state.time), 2); c.lineTo(sx(state.time), h - padB); c.stroke();
+  }
+
+  function setDepth(h) {
+    state.depth = h;
+    $("depth").value = h;
+    sim = null; $("play").disabled = true;
+    if (tr.pts) { scene.remove(tr.pts); scene.remove(tr.lines); tr.pts = null; }
+    buildBank(); buildWater(); table(); drawChart();
+    $("stats").innerHTML = "";
+  }
+
+  const depthIn = $("depth"), discIn = $("disc");
   depthIn.value = state.depth;
   discIn.value = state.disc;
-  depthIn.addEventListener("input", () => { state.depth = +depthIn.value; buildBank(); buildWater(); table(); });
-  discIn.addEventListener("input", () => { state.disc = +discIn.value; buildBank(); table(); });
-  document.getElementById("showStack").addEventListener("change", e => { state.stack = e.target.checked; stack.visible = state.stack; });
-  document.getElementById("showWater").addEventListener("change", e => { state.water = e.target.checked; water.visible = state.water; });
-  document.getElementById("xray").addEventListener("change", e => { state.xray = e.target.checked; buildBank(); });
-  document.getElementById("showLabels").addEventListener("change", e => { state.labels = e.target.checked; });
+  depthIn.addEventListener("input", () => setDepth(+depthIn.value));
+  $("depthSim").addEventListener("change", e => setDepth(Math.min(1, Math.max(0.05, +e.target.value / 1000))));
+  discIn.addEventListener("input", () => { state.disc = +discIn.value; if (!sim) setBank(null); table(); });
+  $("showStack").addEventListener("change", e => { state.stack = e.target.checked; stack.visible = state.stack; });
+  $("showWater").addEventListener("change", e => { state.water = e.target.checked; water.visible = state.water; });
+  $("xray").addEventListener("change", e => { state.xray = e.target.checked; buildBank(); });
+  $("showLabels").addEventListener("change", e => { state.labels = e.target.checked; });
   document.querySelectorAll(".views button").forEach(b => b.addEventListener("click", () => go(b.dataset.view)));
 
   buildBank();
   buildWater();
   table();
+  accuracy();
   resize();
-  go("bank");
-  (function loop() {
+  go("waves");
+  let last = performance.now();
+  (function loop(now) {
+    now = now || performance.now();
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    if (sim) {
+      if (state.playing) {
+        state.time += dt * state.rate;
+        if (state.time > +$("time").max) state.time = view0;
+        $("time").value = state.time;
+      }
+      const f = Math.max(0, Math.min(sim.nt - 1, Math.round(state.time / FLOW.DT)));
+      setWater(f); setBank(f); setTracers(f);
+      $("tv").textContent = (state.time - lead).toFixed(1) + " s";
+      drawChart();
+    }
     controls.update();
     renderer.render(scene, camera);
     placeLabels();
     requestAnimationFrame(loop);
   })();
+  runSim();
 })();
 </script>
 </body>

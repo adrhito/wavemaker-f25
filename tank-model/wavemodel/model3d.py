@@ -427,7 +427,26 @@ def viewer_data(g: Geometry, depth: float, disc_mm: float) -> Dict:
               "slider_r": sl.get("diameter", 28) / 2000, "slider_l": sl.get("length", 800) / 1000,
               "layout": g.layout},
         "start": {"depth": depth, "disc_mm": disc_mm},
+        "flow": flow_data(g),
     }
+
+
+#: Recorded runs offered in the viewer for comparison (calibration/validation.json).
+EXAMPLES = ["SD_lift180_a50_d50_j150", "SD_lift120_a50_d50_j150", "SD_lift60_a150_d150_j500", "row1", "row2",
+            "row3", "row4", "rows1+2", "all12", "lane2", "cont_all12_s200_v300", "D_250_v400", "mix05", "solo_p01_a"]
+
+
+def flow_data(g: Geometry) -> Dict:
+    """What the viewer's Simulate panel needs: the tank, the channel's calibration, its record, examples."""
+    from . import flow
+    cal_dir = flow.CALIBRATION.parent
+    hist = json.loads(flow.HISTORY.read_text()) if flow.HISTORY.exists() else []
+    val = cal_dir / "validation.json"
+    examples = []
+    if val.exists():
+        cases = {c["name"]: c for c in json.loads(val.read_text())["cases"]}
+        examples = [cases[n] for n in EXAMPLES if n in cases]
+    return {"geo": flow.viewer_geo(g), "cal": flow.load_calibration(), "history": hist, "examples": examples}
 
 
 def export(g: Geometry, depth: float, out: Path, disc_mm: float = 370.0) -> List[Path]:
@@ -437,6 +456,8 @@ def export(g: Geometry, depth: float, out: Path, disc_mm: float = 370.0) -> List
     write_glb(parts, glb)
     write_obj(parts, obj)
     html = out / "tank_viewer.html"
-    tpl = (Path(__file__).parent / "viewer_template.html").read_text()
-    html.write_text(tpl.replace("/*DATA*/null", json.dumps(viewer_data(g, depth, disc_mm), separators=(",", ":"))))
+    tpl = (Path(__file__).parent / "viewer_template.html").read_text(encoding="utf-8")
+    engine = (Path(__file__).parent / "flow.js").read_text(encoding="utf-8")
+    page = tpl.replace("/*DATA*/null", json.dumps(viewer_data(g, depth, disc_mm), separators=(",", ":")))
+    html.write_text(page.replace("/*FLOWJS*/", engine), encoding="utf-8")
     return [glb, obj, obj.with_suffix(".mtl"), html]
