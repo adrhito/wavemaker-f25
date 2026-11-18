@@ -1,0 +1,24 @@
+[
+ {
+  "date": "2026-11-17",
+  "runs": null,
+  "held_out_median": null,
+  "held_out_range": [
+   0.65,
+   0.8
+  ],
+  "note": "tools/camera/vision_channel.py fitted on the measured flux of the 16 Nov campaign (docs/VISION_HANDOFF.md). Not the simulator end to end; the data's own repeat spread was about 200%."
+ },
+ {
+  "date": "2026-11-17",
+  "runs": 43,
+  "held_out_median": 0.765874400309255,
+  "held_out_mean": 0.8009398607498477,
+  "by_kind": {
+   "continuous": 0.8479382510468134,
+   "push_down": 0.6695387341667596,
+   "single": 0.738907578132759
+  },
+  "note": "first fit through wavemodel/flow.py: commanded motion, air model and channel together, 16 Nov campaign"
+ }
+]

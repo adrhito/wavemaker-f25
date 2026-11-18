@@ -1,0 +1,53 @@
+{
+ "what": "The 1-D channel model's parameters, fitted to the camera's measurements by tools/camera/vision_channel.py. wavemodel/flow.py and the 3D viewer read this file.",
+ "fitted": "2026-11-17",
+ "fitted_on": "calibration/validation.json: 43 camera runs, fitted through wavemodel/flow.py (commanded motion -> air model -> channel)",
+ "depth_m": 0.406,
+ "fitted_rows": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "held_out_error": {
+  "value": 0.765874400309255,
+  "mean": 0.8009398607498477,
+  "n": 43,
+  "folds": 5,
+  "by_kind": {
+   "continuous": 0.8479382510468134,
+   "push_down": 0.6695387341667596,
+   "single": 0.738907578132759
+  },
+  "how": "median over runs of RMS(prediction - measurement) / RMS(measurement), each run predicted by a fit that never saw it"
+ },
+ "params": {
+  "g1": 0.3733251375404698,
+  "g2": 0.45496874912354146,
+  "g3": 0.5148591278054676,
+  "g4": 0.448040896396454,
+  "g5": 0.5,
+  "g6": 0.5,
+  "tau1": 0.07851763072642913,
+  "tau2": 0.1670896177990137,
+  "tau3": 0.09667450897269744,
+  "tau4": 0.27174555116017096,
+  "tau5": 0.0,
+  "tau6": 0.0,
+  "L": 27.47847281808755,
+  "Re": 0.7221744420450241,
+  "Rh": 0.15907308413156707,
+  "tau_h": 4.849356713934785,
+  "log_d0": -11.777948025975029,
+  "log_d1": -11.999999999999998,
+  "log_d2": -8.62451520108079,
+  "h_scale": 1.0828076759668004
+ },
+ "notes": {
+  "g1-g4, tau1-tau4": "gain and delay of each row's flux into the channel (rows 5-6 had no usable runs; rows 7-10 were dry at 406 mm)",
+  "L, Re": "effective distance (m) and reflection of the far-end echo; the gate is open, so L is beyond the 17.8 m channel",
+  "Rh, tau_h": "reflection and delay at the head end",
+  "log_d0..2": "damping rate per metre, d0 + d1 w + d2 w^2",
+  "h_scale": "effective depth for the wave speed, as a multiple of the marked depth"
+ }
+}

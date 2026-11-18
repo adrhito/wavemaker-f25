@@ -11,6 +11,9 @@ charts, drawings, 3D model, calibration.
   .venv/bin/python wm.py model3d --depth 0.30
   .venv/bin/python wm.py template            # observations_template.csv to fill in
   .venv/bin/python wm.py calibrate observations.csv [--compare]
+  .venv/bin/python wm.py flow --pistons 1-12 --kind push_down --stroke 180 --speed 200 --depth 0.406
+  .venv/bin/python wm.py flow-check            # score the simulator against the camera
+  .venv/bin/python wm.py flow-calibrate        # refit the channel to the camera, record the error
 
 Pistons: 'all', display numbers '1-30' or '1,4,7', William's rows 'row8-10'
 (also 'c8-10'), lanes across the tank 'lane2' (also 'r2').
@@ -350,6 +353,97 @@ def cmd_calibrate(a):
     print("wrote", out)
 
 
+def cmd_flow(a):
+    from wavemodel import flow
+    g = _geom(a)
+    cmd = flow.Command(pistons=parse_pistons(a.pistons, g), stroke=a.stroke, speed=a.speed, accel=a.accel,
+                       decel=a.decel, jerk=a.jerk, kind=a.kind, seconds=a.seconds, start=1.0)
+    sim = flow.simulate([cmd], a.depth, duration=a.duration, g=g, seal=a.seal, flow=bool(a.json))
+    m = sim["metrics"]
+    cal = flow.load_calibration()
+    print("%s, pistons %s, %g mm at %g mm/s, depth %.3f m" % (a.kind, a.pistons, a.stroke, a.speed, a.depth))
+    print("  rows moving water: %s   (wet at this depth: %s)" % (m["moving_rows"] or "none", m["wet_rows"]))
+    print("  at the camera (x = %.2f m): crest %+.1f mm at %.1f s, trough %+.1f mm, first arrival %s s"
+          % (m["camera_x_m"], m["crest_at_camera_mm"], m["crest_time_s"], m["trough_at_camera_mm"],
+             "%.1f" % m["arrival_at_camera_s"] if m["arrival_at_camera_s"] is not None else "-"))
+    print("  largest anywhere in the channel: %.1f mm (a/h %.3f)" % (m["largest_anywhere_mm"], m["a_over_h"]))
+    for st in a.at or []:
+        j = int(abs(sim["x"] - st).argmin())
+        e = sim["eta"][:, j] * 1000
+        print("  x = %.1f m: crest %+.1f mm at %.1f s" % (sim["x"][j], e.max(), sim["t"][e.argmax()]))
+    for w in m["warnings"]:
+        print("  note:", w)
+    he = cal.get("held_out_error", {})
+    if he.get("value") is not None:
+        print("  calibration: %s, held-out error %.0f%% (median, %d runs)" % (cal["fitted"], 100 * he["value"], he["n"]))
+    if a.json:
+        Path(a.json).write_text(json.dumps(flow.as_json(sim)))
+        print("wrote", a.json)
+
+
+def _validation_cases():
+    from wavemodel import flow
+    path = HERE / "calibration" / "validation.json"
+    return json.loads(path.read_text())["cases"]
+
+
+def cmd_flow_check(a):
+    from wavemodel import flow
+    import numpy as np
+    g = _geom(a)
+    cal = flow.load_calibration()
+    rows = []
+    for c in _validation_cases():
+        r = flow.check_case(c, g, cal)
+        rows.append((r["error"], c["name"], c["kind"], r["rms_mm"]))
+    rows.sort()
+    for e, n, k, rms in rows:
+        print("  %5.0f%%  %-28s %-11s wave rms %5.1f mm" % (100 * e, n, k, rms))
+    e = np.array([r[0] for r in rows])
+    print("%d runs: median %.0f%%, mean %.0f%% (these runs were used in the fit; flow-calibrate gives held-out)"
+          % (len(e), 100 * np.median(e), 100 * e.mean()))
+
+
+def cmd_flow_calibrate(a):
+    import time
+    import numpy as np
+    from wavemodel import flow
+    g = _geom(a)
+    cal = flow.load_calibration()
+    cases = _validation_cases()
+    t0 = time.time()
+    prepared = [flow.prepare_case(c, g) for c in cases]
+    print("prepared %d runs in %.0f s" % (len(prepared), time.time() - t0))
+    before = np.median([s["error"] for s in flow.score(prepared, cal, g.channel_width)])
+    held = flow.held_out(prepared, cal, g.channel_width, folds=a.folds, max_nfev=a.max_nfev)
+    err = np.array([h["error"] for h in held])
+    print("held-out (%d-fold): median %.0f%%, mean %.0f%%" % (a.folds, 100 * np.median(err), 100 * err.mean()))
+    kinds = sorted(set(h["kind"] for h in held))
+    by_kind = {k: float(np.median([h["error"] for h in held if h["kind"] == k])) for k in kinds}
+    for k, v in by_kind.items():
+        print("  %-11s median %.0f%%" % (k, 100 * v))
+    new = flow.fit_channel(prepared, cal, g.channel_width, max_nfev=a.max_nfev)
+    after = np.median([s["error"] for s in flow.score(prepared, new, g.channel_width)])
+    print("in-sample median: before %.0f%%, after %.0f%%" % (100 * before, 100 * after))
+    today = time.strftime("%Y-%m-%d")
+    new["fitted"] = today
+    new["fitted_on"] = ("calibration/validation.json: %d camera runs, fitted through wavemodel/flow.py "
+                        "(commanded motion -> air model -> channel)" % len(prepared))
+    new["held_out_error"] = {"value": float(np.median(err)), "mean": float(err.mean()), "n": len(err),
+                             "folds": a.folds, "by_kind": by_kind,
+                             "how": "median over runs of RMS(prediction - measurement) / RMS(measurement), "
+                                    "each run predicted by a fit that never saw it"}
+    if a.dry_run:
+        print("dry run: calibration not written")
+        return
+    flow.CALIBRATION.write_text(json.dumps(new, indent=1))
+    hist = json.loads(flow.HISTORY.read_text()) if flow.HISTORY.exists() else []
+    hist.append({"date": today, "runs": len(err), "held_out_median": float(np.median(err)),
+                 "held_out_mean": float(err.mean()), "by_kind": by_kind, "note": a.note or ""})
+    flow.HISTORY.write_text(json.dumps(hist, indent=1))
+    print("wrote", flow.CALIBRATION, "and", flow.HISTORY)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -449,6 +543,29 @@ def main():
     p.add_argument("--compare", action="store_true",
                    help="fit both disc seals and rank them by how well they explain the runs")
     p.set_defaults(fn=cmd_calibrate)
+    p = sub.add_parser("flow", help="simulate the water for one piston command, with the camera-fitted channel")
+    p.add_argument("--depth", type=float, default=0.406, help="still-water depth, m")
+    p.add_argument("--pistons", default="1-12")
+    p.add_argument("--kind", default="single", choices=["single", "continuous", "push_down", "raise"])
+    p.add_argument("--stroke", type=float, default=250)
+    p.add_argument("--speed", type=float, default=400)
+    p.add_argument("--accel", type=float, default=10000)
+    p.add_argument("--decel", type=float)
+    p.add_argument("--jerk", type=float, default=2000)
+    p.add_argument("--seconds", type=float, default=10, help="continuous: how long it runs")
+    p.add_argument("--duration", type=float, default=60, help="simulated time, s")
+    p.add_argument("--seal", default="tight", choices=["tight", "leaky"])
+    p.add_argument("--at", type=float, nargs="*", help="also report these stations, m from the mouth")
+    p.add_argument("--json", help="write the whole simulation (surface, flow, pipes) to this file")
+    p.set_defaults(fn=cmd_flow)
+    p = sub.add_parser("flow-check", help="score the simulator against calibration/validation.json")
+    p.set_defaults(fn=cmd_flow_check)
+    p = sub.add_parser("flow-calibrate", help="refit the channel to the camera and record the held-out error")
+    p.add_argument("--folds", type=int, default=5)
+    p.add_argument("--max-nfev", type=int, default=40)
+    p.add_argument("--note", help="what changed since the last calibration (new campaign, ...)")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_flow_calibrate)
     a = ap.parse_args()
     a.fn(a)
 
