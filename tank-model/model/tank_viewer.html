@@ -4,81 +4,181 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wave Tank Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* An instrument console: one control rail, one transport, one strip of live traces. */
   :root {
-    --bg: #eeeeea; --panel: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --line: #e4e3de;
-    --accent: #2a78d6; --dry: #eb6834; --chip: #f0efec;
+    --bg: #e6ebf0; --bg-2: #d3dbe3; --panel: rgba(250, 252, 253, 0.92); --panel-solid: #fafcfd;
+    --ink: #0e151c; --ink-2: #56636f; --ink-3: #8a96a1; --line: #d3dbe2; --chip: #eef2f5;
+    --accent: #0b7bc4; --accent-ink: #ffffff; --motion: #e5612a; --good: #1f9d6c; --dry: #e5612a;
+    --shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 10px 30px -12px rgba(16, 32, 48, 0.25);
+    --ui: "Barlow Semi Condensed", "Segoe UI", system-ui, sans-serif;
+    --num: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --rail: 344px;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #141413; --panel: #1f1f1e; --ink: #f0efec; --ink-2: #c3c2b7; --line: #383835;
-      --accent: #3987e5; --dry: #d95926; --chip: #2a2a28;
+      --bg: #0a0e13; --bg-2: #121a23; --panel: rgba(15, 21, 28, 0.88); --panel-solid: #0f151c;
+      --ink: #e6edf3; --ink-2: #93a1ae; --ink-3: #5f6d7a; --line: #222e3a; --chip: #16202a;
+      --accent: #45b8f5; --accent-ink: #04121c; --motion: #ff7a3d; --good: #4fd29b; --dry: #ff7a3d;
+      --shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 16px 40px -16px rgba(0, 0, 0, 0.7);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #141413; --panel: #1f1f1e; --ink: #f0efec; --ink-2: #c3c2b7; --line: #383835;
-    --accent: #3987e5; --dry: #d95926; --chip: #2a2a28;
+    --bg: #0a0e13; --bg-2: #121a23; --panel: rgba(15, 21, 28, 0.88); --panel-solid: #0f151c;
+    --ink: #e6edf3; --ink-2: #93a1ae; --ink-3: #5f6d7a; --line: #222e3a; --chip: #16202a;
+    --accent: #45b8f5; --accent-ink: #04121c; --motion: #ff7a3d; --good: #4fd29b; --dry: #ff7a3d;
+    --shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 16px 40px -16px rgba(0, 0, 0, 0.7);
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); overflow: hidden;
-         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  html, body { height: 100%; }
+  body { margin: 0; overflow: hidden; color: var(--ink); font: 14px/1.4 var(--ui);
+         background: radial-gradient(1200px 700px at 70% 20%, var(--bg-2), var(--bg) 70%); }
   #view { position: fixed; inset: 0; }
-  #panel { position: fixed; top: 12px; left: 12px; width: 384px; max-width: calc(100vw - 32px);
-           max-height: calc(100vh - 24px); overflow: auto; background: var(--panel);
-           border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; }
-  h1 { font-size: 15px; margin: 0 0 2px; }
-  .sub { color: var(--ink-2); margin: 0 0 12px; font-size: 12px; }
+  button, input, select { font: inherit; color: inherit; }
+  .num { font-family: var(--num); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  /* ---- the rail */
+  #panel { z-index: 5; position: fixed; top: 12px; left: 12px; bottom: 12px; width: var(--rail); display: flex; flex-direction: column;
+           background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+           backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); overflow: hidden; }
+  .rail-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+  .eyebrow { font: 500 10.5px/1 var(--num); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { font: 700 22px/1.05 var(--ui); letter-spacing: -0.01em; margin: 6px 0 10px; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .rail-body { flex: 1; overflow: auto; padding: 4px 16px 16px; scrollbar-width: thin; }
+  section { padding: 14px 0 4px; }
+  section + section { border-top: 1px dashed var(--line); }
+  .sec { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; }
+  .sec b { font: 600 10.5px/1 var(--num); color: var(--accent); letter-spacing: 0.08em; }
+  .sec h2 { font: 600 13px/1 var(--ui); letter-spacing: 0.1em; text-transform: uppercase; margin: 0; }
+  .sec .aside { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+
+  /* segmented switches */
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--chip); border: 1px solid var(--line);
+         border-radius: 9px; padding: 3px; gap: 3px; }
+  .seg button { border: 0; background: transparent; padding: 6px 4px; border-radius: 6px; cursor: pointer;
+                font-weight: 600; font-size: 13px; color: var(--ink-2); transition: background .15s, color .15s; }
+  .seg button:hover { color: var(--ink); }
+  .seg button.on { background: var(--panel-solid); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12), 0 0 0 1px var(--line); }
+  #viewSeg button.on { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+
+  /* fields */
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field > span { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .field > span i { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 10px; margin: 12px 0; }
+  .grid .wide { grid-column: 1 / -1; }
+  .txt, .grid input { width: 100%; background: var(--chip); border: 1px solid var(--line); border-radius: 7px;
+                      padding: 6px 8px; font-family: var(--num); font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  select.txt { font-family: var(--ui); font-size: 13.5px; padding: 6px 8px; cursor: pointer; }
+  .txt:focus, .grid input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .hint { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+  .go { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; cursor: pointer;
+        background: var(--accent); color: var(--accent-ink); border-radius: 9px; padding: 9px 12px; font-weight: 700;
+        font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; transition: transform .08s, filter .15s; }
+  .go:hover { filter: brightness(1.08); } .go:active { transform: translateY(1px); }
+  .go:disabled { opacity: 0.55; cursor: progress; }
+  #simMsg { display: block; text-align: center; font: 11.5px var(--num); color: var(--ink-3); margin-top: 6px; min-height: 1em; }
+
+  /* readout tiles */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { background: var(--chip); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px 7px; min-width: 0; }
+  .tile .k { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); }
+  .tile .v { font: 600 21px/1.15 var(--num); margin-top: 3px; white-space: nowrap; }
+  .tile .v small { font-size: 12px; color: var(--ink-2); font-weight: 500; margin-left: 2px; }
+  .tile .s { font: 11px var(--num); color: var(--ink-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile.hl .v { color: var(--accent); }
+  .tile.err .v { color: var(--motion); }
+  .rowsline { margin: 10px 0 0; font-size: 13px; color: var(--ink-2); }
+  .rowsline b { color: var(--ink); font-family: var(--num); font-weight: 600; }
+  .warn { display: flex; gap: 6px; color: var(--motion); font-size: 12.5px; margin: 6px 0 0; line-height: 1.3; }
+  .warn::before { content: "▲"; font-size: 9px; margin-top: 3px; }
+  details.more { margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--chip); }
+  details.more > summary { list-style: none; cursor: pointer; padding: 7px 10px; font-weight: 600; font-size: 13px;
+                           display: flex; align-items: center; gap: 6px; }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::before { content: "+"; font-family: var(--num); color: var(--accent); width: 10px; }
+  details.more[open] > summary::before { content: "–"; }
+  details.more > div { padding: 0 10px 10px; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+  #accuracy code { font-family: var(--num); font-size: 11.5px; color: var(--ink); }
+
+  /* display controls */
+  .slider { display: flex; align-items: center; gap: 10px; }
+  .slider .num { min-width: 92px; text-align: right; font-size: 12.5px; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: var(--line); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 4px; background: var(--line); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; margin-top: -5px;
+                                            background: var(--accent); border: 2px solid var(--panel-solid); box-shadow: 0 0 0 1px var(--accent); }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
+                                        border: 2px solid var(--panel-solid); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { position: relative; }
+  .chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .chip span { display: inline-block; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); cursor: pointer;
+               font-size: 12.5px; font-weight: 600; color: var(--ink-3); background: transparent; transition: all .15s; user-select: none; }
+  .chip input:checked + span { color: var(--ink); background: var(--chip); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+  .chip input:checked + span::before { content: "● "; color: var(--accent); font-size: 9px; vertical-align: 1px; }
+  .chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* tank details */
+  .views { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .views button { border: 1px solid var(--line); background: var(--panel-solid); border-radius: 6px; padding: 3px 9px; cursor: pointer; font-size: 12.5px; }
+  .views button:hover { border-color: var(--accent); }
   .ctl { margin: 0 0 12px; }
-  .ctl .top { display: flex; justify-content: space-between; align-items: baseline; }
-  .ctl .val { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .ctl .hint { color: var(--ink-2); font-size: 11.5px; }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
-  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-  .seg button { border: 0; background: transparent; color: var(--ink); padding: 4px 10px; font: inherit; cursor: pointer; }
-  .seg button.on { background: var(--accent); color: #fff; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
-  .row label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
-  .views button { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 6px;
-                  padding: 3px 9px; font: inherit; cursor: pointer; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-  th { text-align: right; color: var(--ink-2); font-weight: 500; padding: 2px 4px; border-bottom: 1px solid var(--line); }
-  td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--line); }
+  .ctl .top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+  .ctl .val { font-family: var(--num); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font: 11.5px var(--num); }
+  th { text-align: right; color: var(--ink-3); font: 600 10.5px var(--ui); letter-spacing: 0.05em; text-transform: uppercase;
+       padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  td { text-align: right; padding: 3px 4px; border-bottom: 1px solid var(--line); color: var(--ink); }
   th:first-child, td:first-child { text-align: left; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
-  .note { color: var(--ink-2); font-size: 11.5px; margin: 10px 0 0; }
-  .lbl { position: fixed; pointer-events: none; font-size: 11px; background: var(--panel); color: var(--ink);
-         padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap;
-         transform: translate(-50%, -50%); }
-  details { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
-  summary { cursor: pointer; font-weight: 600; margin: 0 0 8px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 0 0 10px; }
-  .grid2 label { display: flex; flex-direction: column; font-size: 11.5px; color: var(--ink-2); gap: 2px; }
-  .grid2 input, .txt { width: 100%; font: inherit; color: var(--ink); background: var(--chip);
-                       border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
-  .btn { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px;
-         padding: 5px 14px; font: inherit; font-weight: 600; cursor: pointer; }
-  .btn.ghost { background: transparent; color: var(--accent); }
-  .btn:disabled { opacity: 0.5; cursor: wait; }
-  #chart { width: 100%; height: 120px; display: block; background: var(--chip); border-radius: 6px; margin: 6px 0 4px; }
-  .stat { font-variant-numeric: tabular-nums; font-size: 12px; margin: 2px 0; }
-  .warn { color: var(--dry); font-size: 11.5px; margin: 2px 0; }
-  .acc { font-size: 11.5px; color: var(--ink-2); background: var(--chip); border-radius: 6px; padding: 6px 8px; margin: 8px 0 0; }
-  .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 11px; color: var(--ink-2); }
-  .legend i { display: inline-block; width: 14px; height: 2px; }
-  #strip { position: fixed; left: 412px; right: 12px; bottom: 12px; height: 200px; display: flex; gap: 10px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+  .note { font-size: 12px; margin: 10px 0 0; }
+
+  /* labels in the model */
+  .lbl { z-index: 1; position: fixed; pointer-events: none; font: 500 10.5px var(--num); background: var(--panel); color: var(--ink-2);
+         padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap; transform: translate(-50%, -50%); }
+
+  /* ---- the dock: transport and live traces */
+  #dock { z-index: 4; position: fixed; left: calc(var(--rail) + 24px); right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  #dock > * { pointer-events: auto; }
+  .transport { display: flex; align-items: center; gap: 12px; padding: 7px 12px 7px 7px; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+               backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .playbtn { width: 34px; height: 34px; flex: none; border-radius: 50%; border: 0; cursor: pointer; background: var(--accent);
+             color: var(--accent-ink); display: grid; place-items: center; }
+  .playbtn:disabled { opacity: 0.4; cursor: default; }
+  .playbtn svg { width: 14px; height: 14px; fill: currentColor; }
+  .transport .clock { font: 600 15px var(--num); min-width: 74px; text-align: right; }
+  .transport .clock small { font-size: 11px; color: var(--ink-3); font-weight: 500; }
+  .transport input[type=range] { flex: 1; }
+  .transport select { background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px; font: 600 12px var(--num); cursor: pointer; }
+  #strip { display: grid; grid-template-columns: 1fr 1.6fr 1.15fr; gap: 8px; height: 188px; }
   #strip.off { display: none; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px 8px;
-          display: flex; flex-direction: column; min-width: 0; }
-  .card.bankCard { flex: 0 0 36%; }
-  .card.profCard { flex: 1; }
-  .card .ttl { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
-  .card .ttl span { font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .card canvas { flex: 1; width: 100%; min-height: 0; display: block; }
-  @media (max-width: 900px) { #strip { left: 12px; bottom: auto; top: 12px; height: 160px; } }
-  @media (max-width: 600px) { #strip { left: 8px; right: 8px; top: 8px; height: 140px; } .card.bankCard { display: none; } }
-  #err { position: fixed; bottom: 12px; right: 12px; color: var(--ink-2); font-size: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 11px 8px; box-shadow: var(--shadow);
+          display: flex; flex-direction: column; min-width: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .card .ttl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .card .ttl h3 { margin: 0; font: 600 12px/1 var(--ui); letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
+  .card .ttl span { font: 11px var(--num); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plot { flex: 1; position: relative; min-height: 0; }
+  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: 3px; margin-right: 4px; }
+  #err { position: fixed; top: 16px; right: 16px; color: var(--ink-2); font: 12px var(--num); }
+
+  @media (max-width: 1180px) { #strip { grid-template-columns: 1fr 1.4fr; } #strip .camCard { display: none; } }
+  @media (max-width: 860px) {
+    :root { --rail: 300px; }
+    #strip { grid-template-columns: 1fr; height: 140px; } #strip .bankCard { display: none; }
+  }
   @media (max-width: 600px) {
-    #panel { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 46vh; padding: 10px 12px; }
+    #panel { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; height: 48vh; }
+    #dock { left: 8px; right: 8px; bottom: auto; top: 8px; }
+    #strip { height: 120px; }
   }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -86,98 +186,111 @@
 </head>
 <body>
 <div id="view"></div>
-<div id="panel">
-  <h1>UNC wave tank and piston bank</h1>
-  <p class="sub">Built from geometry.json. Drag to orbit, scroll to zoom, right-drag to pan.</p>
-  <div class="row"><div class="seg" id="viewSeg">
-    <button data-view="default" class="on">Default</button><button data-view="pistons">Pistons</button><button data-view="chamber">Chamber</button>
-  </div></div>
-  <details id="simBox" open>
-    <summary>Simulate the water</summary>
-    <div class="ctl" style="margin-bottom:8px">
-      <div class="top"><span>Recorded run</span></div>
-      <select id="example" class="txt"><option value="">— your own settings —</option></select>
-      <div class="hint">Pick one the camera measured to load its settings and compare.</div>
+
+<aside id="panel">
+  <div class="rail-head">
+    <div class="eyebrow">UNC Fluids Lab · 30 pistons</div>
+    <h1>Wave tank <em>model</em></h1>
+    <div class="seg" id="viewSeg" role="tablist" aria-label="View">
+      <button data-view="default" class="on">Default</button><button data-view="pistons">Pistons</button><button data-view="chamber">Chamber</button>
     </div>
-    <div class="row">
-      <div class="seg" id="kind">
+  </div>
+
+  <div class="rail-body">
+    <section>
+      <div class="sec"><b>01</b><h2>Command</h2><span class="aside">drag to orbit · scroll to zoom</span></div>
+      <label class="field"><span>Recorded run <i>— load one the camera measured</i></span>
+        <select id="example" class="txt"><option value="">Your own settings</option></select></label>
+      <div class="seg" id="kind" style="margin-top:12px">
         <button data-kind="single" class="on">Single</button><button data-kind="continuous">Continuous</button>
         <button data-kind="push_down">Push down</button><button data-kind="raise">Raise</button>
       </div>
-    </div>
-    <div class="grid2">
-      <label>Pistons<input id="pistons" value="1-12" title="1-30, 1,4,7, row1-4, lane2, all"></label>
-      <label>Stroke, mm<input id="stroke" type="number" value="250" min="5" max="390" step="5"></label>
-      <label>Speed, mm/s<input id="speed" type="number" value="400" min="10" max="900" step="10"></label>
-      <label>Accel, mm/s²<input id="accel" type="number" value="10000" min="10" max="20000" step="10"></label>
-      <label>Jerk, mm/s³<input id="jerk" type="number" value="2000" min="10" max="100000" step="10"></label>
-      <label>Runs for, s (continuous)<input id="seconds" type="number" value="10" min="1" max="60" step="1"></label>
-      <label>Still water, mm<input id="depthSim" type="number" min="50" max="1000" step="1"></label>
-    </div>
-    <div class="row">
-      <button class="btn" id="simulate">Simulate</button>
-      <button class="btn ghost" id="play" disabled>Pause</button>
-      <span class="hint" id="simMsg"></span>
-    </div>
-    <div class="ctl">
-      <div class="top"><span>Time</span><span class="val" id="tv">0.0 s</span></div>
-      <input type="range" id="time" min="0" max="60" step="0.05" value="0">
-    </div>
-    <div class="ctl">
-      <div class="top"><span>Heights drawn ×</span><span class="val" id="xv"></span></div>
-      <input type="range" id="exag" min="1" max="60" step="1" value="20">
-      <div class="hint">The waves are millimetres on a 17.8 m channel, so heights and the water's motion are
-        drawn exaggerated. The numbers below are real.</div>
-    </div>
-    <div class="row">
-      <label><input type="checkbox" id="showTracers" checked> flow tracers</label>
-      <label><input type="checkbox" id="showArrows" checked> velocity arrows</label>
-      <label><input type="checkbox" id="showStrip" checked> graphs</label>
-      <select id="speedPlay" class="txt" style="width:auto"><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
-    </div>
-    <canvas id="chart"></canvas>
-    <div class="legend"><span><i style="background:var(--accent)"></i>simulated at the camera window</span><span id="measLeg" style="display:none"><i style="background:var(--ink)"></i>measured</span></div>
-    <div id="stats"></div>
-    <div class="acc" id="accuracy"></div>
-  </details>
-  <details id="tankBox">
-    <summary>The tank and the pistons</summary>
-  <div class="row views">
-    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank from the mouth</button>
-    <button data-view="outlets">Outlets</button><button data-view="channel">Down the channel</button>
-  </div>
-  <div class="ctl">
-    <div class="top"><span>Still-water depth</span><span class="val" id="dv"></span></div>
-    <input type="range" id="depth" min="0.05" max="1.0" step="0.005">
-    <div class="hint" id="wetHint"></div>
-  </div>
-  <div class="ctl">
-    <div class="top"><span>Disc position</span><span class="val" id="pv"></span></div>
-    <input type="range" id="disc" min="-20" max="370" step="1">
-    <div class="hint">0 mm is the top, 370 mm the bottom (where the pistons park). Down pushes water out.</div>
-  </div>
-  <div class="row">
-    <label><input type="checkbox" id="showWater" checked> water</label>
-    <label><input type="checkbox" id="xray" checked> see-through pipes</label>
-    <label><input type="checkbox" id="showStack" checked> duct block</label>
-    <label><input type="checkbox" id="showLabels" checked> labels</label>
-  </div>
+      <div class="grid">
+        <label class="field wide"><span>Pistons <i>— 1-12, 1,4,7, row1-4, lane2, all</i></span><input id="pistons" value="1-12"></label>
+        <label class="field"><span>Stroke <i>mm</i></span><input id="stroke" type="number" value="250" min="5" max="390" step="5"></label>
+        <label class="field"><span>Speed <i>mm/s</i></span><input id="speed" type="number" value="400" min="10" max="900" step="10"></label>
+        <label class="field"><span>Accel <i>mm/s²</i></span><input id="accel" type="number" value="10000" min="10" max="20000" step="10"></label>
+        <label class="field"><span>Jerk <i>mm/s³</i></span><input id="jerk" type="number" value="2000" min="10" max="100000" step="10"></label>
+        <label class="field"><span>Still water <i>mm</i></span><input id="depthSim" type="number" min="50" max="1000" step="1"></label>
+        <label class="field" id="secondsWrap" style="visibility:hidden"><span>Runs for <i>s</i></span><input id="seconds" type="number" value="10" min="1" max="60" step="1"></label>
+      </div>
+      <button class="go" id="simulate">Run simulation</button>
+      <span id="simMsg"></span>
+    </section>
 
-  <table>
-    <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Outlet</th><th>Under water</th><th>Air</th><th>Rings</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
-  <p class="note">mm, and Hz. Each cylinder empties into its own duct, which runs to an outlet in the block's face at
-    the channel mouth: row 1's duct is 2.6 m long, row 10's 0.4 m. A row moves water only when its bottom (its duct's
-    ceiling) is under the still water. Air: the column trapped under the disc when the water rose past the bottom with
-    the disc parked at 370 mm, then moved slowly here (tight seal). Rings: the frequency at which the air under the
-    disc and the water in pipe and duct swing after a stroke. From the 2013-15 design drawings; the tank's posts and
-    the motors' flanges are approximate.</p>
-  </details>
-</div>
-<div id="strip">
-  <div class="card bankCard"><div class="ttl">Pistons, side-on <span id="bankT"></span></div><canvas id="bankCv"></canvas></div>
-  <div class="card profCard"><div class="ttl">The wave along the channel <span id="profT"></span></div><canvas id="profCv"></canvas></div>
+    <section>
+      <div class="sec"><b>02</b><h2>Readout</h2><span class="aside">real units, not exaggerated</span></div>
+      <div class="tiles">
+        <div class="tile hl"><div class="k">Crest at camera</div><div class="v" id="tCrest">–</div><div class="s" id="tCrestS"></div></div>
+        <div class="tile"><div class="k">Trough at camera</div><div class="v" id="tTrough">–</div><div class="s" id="tTroughS"></div></div>
+        <div class="tile"><div class="k">Largest anywhere</div><div class="v" id="tLargest">–</div><div class="s" id="tLargestS"></div></div>
+        <div class="tile err"><div class="k">Vs. the camera</div><div class="v" id="tErr">–</div><div class="s" id="tErrS">pick a recorded run</div></div>
+      </div>
+      <div class="rowsline" id="rowsLine"></div>
+      <div id="stats"></div>
+      <details class="more"><summary>How accurate is this?</summary><div id="accuracy"></div></details>
+    </section>
+
+    <section>
+      <div class="sec"><b>03</b><h2>Display</h2></div>
+      <label class="field"><span>Heights drawn</span>
+        <div class="slider"><input type="range" id="exag" min="1" max="60" step="1" value="20"><span class="num" id="xv"></span></div></label>
+      <div class="hint" id="exagHint">Waves are millimetres on a 17.8 m channel, so heights and the water's motion are drawn larger than life — never past the floor or the rim.</div>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" id="showTracers" checked><span>Tracers</span></label>
+        <label class="chip"><input type="checkbox" id="showArrows" checked><span>Velocity</span></label>
+        <label class="chip"><input type="checkbox" id="showStrip" checked><span>Graphs</span></label>
+        <label class="chip"><input type="checkbox" id="showLabels" checked><span>Labels</span></label>
+      </div>
+    </section>
+
+    <section>
+      <details class="more" id="tankBox"><summary>The tank and the pistons</summary><div>
+        <div class="views">
+          <button data-view="all">Whole tank</button><button data-view="bank">Bank from the mouth</button>
+          <button data-view="outlets">Outlets</button><button data-view="channel">Down the channel</button>
+        </div>
+        <div class="ctl">
+          <div class="top"><span>Still-water depth</span><span class="val" id="dv"></span></div>
+          <input type="range" id="depth" min="0.05" max="1.0" step="0.005">
+          <div class="hint" id="wetHint"></div>
+        </div>
+        <div class="ctl">
+          <div class="top"><span>Disc position (no run loaded)</span><span class="val" id="pv"></span></div>
+          <input type="range" id="disc" min="-20" max="370" step="1">
+          <div class="hint">0 mm is the top, 370 mm the bottom, where the pistons park. Down pushes water out.</div>
+        </div>
+        <div class="chips" style="margin:0 0 10px">
+          <label class="chip"><input type="checkbox" id="showWater" checked><span>Water</span></label>
+          <label class="chip"><input type="checkbox" id="xray" checked><span>See-through pipes</span></label>
+          <label class="chip"><input type="checkbox" id="showStack" checked><span>Duct block</span></label>
+        </div>
+        <table>
+          <thead><tr><th>Row</th><th>Pistons</th><th>Bottom</th><th>Outlet</th><th>Under</th><th>Air</th><th>Rings</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p class="note">mm and Hz. Each cylinder empties into its own duct, which runs to an outlet in the block's face at
+          the channel mouth (row 1's duct is 2.6 m long, row 10's 0.4 m). A row moves water only when its bottom is under
+          the still water. Air: the column trapped under the disc (tight seal). Rings: how fast the air and the water in
+          pipe and duct swing after a stroke. From the 2013-15 design drawings; posts and motor flanges are approximate.</p>
+      </div></details>
+    </section>
+  </div>
+</aside>
+
+<div id="dock">
+  <div class="transport">
+    <button class="playbtn" id="play" disabled aria-label="Play or pause"><svg viewBox="0 0 16 16" id="playIcon"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg></button>
+    <span class="clock" id="tv">0.0 <small>s</small></span>
+    <input type="range" id="time" min="0" max="60" step="0.05" value="0" aria-label="Time">
+    <select id="speedPlay" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+  </div>
+  <div id="strip">
+    <div class="card bankCard"><div class="ttl"><h3>Pistons, side-on</h3><span id="bankT"></span></div><div class="plot"><canvas id="bankCv"></canvas></div></div>
+    <div class="card profCard"><div class="ttl"><h3>Wave along the channel</h3><span id="profT"></span></div><div class="plot"><canvas id="profCv"></canvas></div></div>
+    <div class="card camCard"><div class="ttl"><h3>At the camera</h3><span>height vs time</span></div><div class="plot"><canvas id="chart"></canvas></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>simulated</span><span id="measLeg" style="display:none"><i style="background:var(--ink)"></i>measured</span></div></div>
+  </div>
 </div>
 <div id="err"></div>
 <script>/* The water the pistons move: the browser's copy of wavemodel/flow.py.
@@ -862,7 +975,7 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
     const peak = sim ? sim.metrics.largest_anywhere_mm / 1000 : 1;
     for (let j = 0; j < nx; j++) {
       const e = frame !== null && sim ? sim.eta[frame * sim.nx + j] : 0;
-      const zt = h + state.exag * e;
+      const zt = Math.min(G.rim - 0.005, Math.max(0.005, h + exagNow() * e));
       pos[(j * 4) * 3 + 2] = zt; pos[(j * 4 + 1) * 3 + 2] = zt;
       const c = heightColor(e, peak);
       for (let k = 0; k < 4; k++) col.set([c.r, c.g, c.b], (j * 4 + k) * 3);
@@ -916,7 +1029,7 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
     if (!tr.pts) return;
     tr.pts.visible = state.tracers;
     tr.lines.visible = state.arrows;
-    const n = tr.n, nz = sim.z.length, nv = sim.xv.length, X = state.exag;
+    const n = tr.n, nz = sim.z.length, nv = sim.xv.length, X = exagNow();
     const pp = tr.pts.geometry.attributes.position.array, pc = tr.pts.geometry.attributes.color.array;
     const lp = tr.lines.geometry.attributes.position.array;
     const arrow = 0.5 / tr.vmax;            // the fastest water gets a 0.5 m arrow
@@ -1040,6 +1153,7 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
   document.querySelectorAll("#kind button").forEach(b => b.addEventListener("click", () => {
     kind = b.dataset.kind;
     document.querySelectorAll("#kind button").forEach(x => x.classList.toggle("on", x === b));
+    $("secondsWrap").style.visibility = kind === "continuous" ? "visible" : "hidden";
   }));
 
   function parsePistons(spec) {
@@ -1080,6 +1194,7 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
     const c0 = example.commands[0];
     kind = c0.kind;
     document.querySelectorAll("#kind button").forEach(x => x.classList.toggle("on", x.dataset.kind === kind));
+    $("secondsWrap").style.visibility = kind === "continuous" ? "visible" : "hidden";
     $("pistons").value = c0.pistons.join(",");
     $("stroke").value = c0.stroke; $("speed").value = c0.speed; $("accel").value = c0.accel;
     $("jerk").value = c0.jerk; $("seconds").value = c0.seconds;
@@ -1116,11 +1231,11 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
         }
         const t0 = performance.now();
         sim = FLOW.simulate(cmds, state.depth, FL.geo, FL.cal, { duration, dxFlow: 0.25 });
-        buildWater(); buildTracers(); envelope();
+        setExagCap(); buildWater(); buildTracers(); envelope();
         const tin = $("time");
         tin.min = view0; tin.max = Math.min(view1, sim.t[sim.nt - 1]); tin.step = FLOW.DT;
         state.time = view0; state.playing = true;
-        $("play").disabled = false; $("play").textContent = "Pause";
+        $("play").disabled = false; playIcon();
         $("simMsg").textContent = `done in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
         $("measLeg").style.display = example ? "" : "none";
         stats();
@@ -1133,14 +1248,37 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
   $("simulate").addEventListener("click", () => { if (example) { example = null; exSel.value = ""; } runSim(); });
   $("play").addEventListener("click", () => {
     state.playing = !state.playing;
-    $("play").textContent = state.playing ? "Pause" : "Play";
+    playIcon();
   });
-  $("time").addEventListener("input", e => { state.time = +e.target.value; state.playing = false; $("play").textContent = "Play"; });
-  $("exag").addEventListener("input", e => { state.exag = +e.target.value; $("xv").textContent = state.exag; });
+  $("time").addEventListener("input", e => { state.time = +e.target.value; state.playing = false; playIcon(); });
+  function playIcon() {
+    $("playIcon").innerHTML = state.playing ? '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>' : '<path d="M4 2l10 6-10 6z"/>';
+  }
+  // The drawn heights are exaggerated, but the water may never be drawn through the floor or over the rim:
+  // the factor is capped per run so the deepest trough keeps 10% of the depth and the highest crest stays inside.
+  let exagCap = Infinity;
+  function exagNow() { return Math.min(state.exag, exagCap); }
+  function setExagCap() {
+    exagCap = Infinity;
+    if (sim) {
+      let up = 1e-9, down = 1e-9;
+      for (let i = 0; i < sim.eta.length; i++) { const e = sim.eta[i]; if (e > up) up = e; if (-e > down) down = -e; }
+      exagCap = Math.max(1, Math.min(0.9 * state.depth / down, 0.9 * (G.rim - state.depth) / up));
+    }
+    showExag();
+  }
+  function showExag() {
+    const x = exagNow();
+    $("xv").textContent = x < state.exag ? `×${x.toFixed(1)} (cap)` : `×${state.exag}`;
+    $("exagHint").textContent = x < state.exag
+      ? `Capped at ×${x.toFixed(1)} for this run, so the deepest trough stays above the floor and the highest crest below the rim.`
+      : "Waves are millimetres on a 17.8 m channel, so heights and the water's motion are drawn larger than life, never past the floor or the rim.";
+  }
+  $("exag").addEventListener("input", e => { state.exag = +e.target.value; showExag(); });
   $("speedPlay").addEventListener("change", e => { state.rate = +e.target.value; });
   $("showTracers").addEventListener("change", e => { state.tracers = e.target.checked; });
   $("showArrows").addEventListener("change", e => { state.arrows = e.target.checked; });
-  $("xv").textContent = state.exag;
+  showExag();
 
   function exampleError() {
     if (!example || !sim) return null;
@@ -1158,18 +1296,23 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
   }
 
   function stats() {
-    const m = sim.metrics, s = [];
+    const m = sim.metrics;
     const f = (v, d = 1) => (v === null || v === undefined ? "–" : v.toFixed(d));
-    s.push(`<div class="stat">Rows moving water: <b>${m.moving_rows.length ? m.moving_rows.join(", ") : "none"}</b>` +
-           ` (wet at ${Math.round(state.depth * 1000)} mm: ${m.wet_rows.join(", ") || "none"})</div>`);
-    s.push(`<div class="stat">At the camera window (${f(m.camera_x_m, 2)} m): crest <b>${f(m.crest_at_camera_mm)} mm</b>` +
-           ` at ${f(m.crest_time_s - lead)} s, trough ${f(m.trough_at_camera_mm)} mm</div>`);
-    s.push(`<div class="stat">Largest anywhere: ${f(m.largest_anywhere_mm)} mm (a/h ${f(m.a_over_h, 3)})</div>`);
+    const mm = v => `${f(v)}<small>mm</small>`;
+    $("tCrest").innerHTML = mm(m.crest_at_camera_mm);
+    $("tCrestS").textContent = `at ${f(m.crest_time_s - lead)} s · x ${f(m.camera_x_m, 2)} m`;
+    $("tTrough").innerHTML = mm(m.trough_at_camera_mm);
+    $("tTroughS").textContent = m.arrival_at_camera_s !== null ? `first arrival ${f(m.arrival_at_camera_s - lead)} s` : "";
+    $("tLargest").innerHTML = mm(m.largest_anywhere_mm);
+    $("tLargestS").textContent = `a/h ${f(m.a_over_h, 3)}`;
     const err = exampleError();
-    if (err !== null) s.push(`<div class="stat">This run against the camera: <b>${Math.round(err * 100)}%</b> error</div>`);
-    m.warnings.forEach(w => s.push(`<div class="warn">${w}</div>`));
-    if (!m.moving_rows.length) s.push(`<div class="warn">Nothing selected reaches the water at this depth: the pistons move only air.</div>`);
-    $("stats").innerHTML = s.join("");
+    $("tErr").innerHTML = err === null ? "–" : `${Math.round(err * 100)}<small>%</small>`;
+    $("tErrS").textContent = err === null ? "pick a recorded run" : "RMS error at the window";
+    $("rowsLine").innerHTML = `Rows moving water <b>${m.moving_rows.length ? m.moving_rows.join(" ") : "none"}</b>` +
+      ` · wet at ${Math.round(state.depth * 1000)} mm <b>${m.wet_rows.join(" ") || "none"}</b>`;
+    const w = m.warnings.slice();
+    if (!m.moving_rows.length) w.push("Nothing selected reaches the water at this depth: the pistons move only air.");
+    $("stats").innerHTML = w.map(x => `<div class="warn">${x}</div>`).join("");
     drawChart();
   }
 
@@ -1432,7 +1575,7 @@ const DATA = {"tank":[{"name":"head floor","kind":"box","mat":"floor","p":[-4.46
       const f = Math.max(0, Math.min(sim.nt - 1, Math.round(state.time / FLOW.DT)));
       setWater(f); setBank(f); setTracers(f);
       drawBank(f); drawProfile(f);
-      $("tv").textContent = (state.time - lead).toFixed(1) + " s";
+      $("tv").innerHTML = (state.time - lead).toFixed(1) + " <small>s</small>";
       drawChart();
     }
     else { drawBank(null); drawProfile(null); }
