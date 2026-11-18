@@ -221,7 +221,11 @@ pistons, kind, stroke, speed, accel, jerk and depth. It animates:
 * the channel's surface, coloured by height;
 * tracers and velocity arrows in three planes;
 * every disc and the water in every pipe;
-* a trace at the camera window.
+* a trace at the camera window;
+* two moving 2D graphs along the bottom: the piston bank side-on (each disc, the water
+  in each pipe, and arrows for the water leaving or entering each row's outlet), and
+  the wave along the whole channel in real millimetres, with its reach over the run, the
+  camera window, and, for a recorded run, the camera's measurement as a dot.
 
 **Recorded run** loads one the camera measured, together with the runs before it (their
 sloshing was in the measurement), overlays the measurement and gives that run's error.

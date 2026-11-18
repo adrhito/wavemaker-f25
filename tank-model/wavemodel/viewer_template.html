@@ -65,6 +65,17 @@
   .acc { font-size: 11.5px; color: var(--ink-2); background: var(--chip); border-radius: 6px; padding: 6px 8px; margin: 8px 0 0; }
   .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 11px; color: var(--ink-2); }
   .legend i { display: inline-block; width: 14px; height: 2px; }
+  #strip { position: fixed; left: 412px; right: 12px; bottom: 12px; height: 200px; display: flex; gap: 10px; }
+  #strip.off { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px 8px;
+          display: flex; flex-direction: column; min-width: 0; }
+  .card.bankCard { flex: 0 0 36%; }
+  .card.profCard { flex: 1; }
+  .card .ttl { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .card .ttl span { font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .card canvas { flex: 1; width: 100%; min-height: 0; display: block; }
+  @media (max-width: 900px) { #strip { left: 12px; bottom: auto; top: 12px; height: 160px; } }
+  @media (max-width: 600px) { #strip { left: 8px; right: 8px; top: 8px; height: 140px; } .card.bankCard { display: none; } }
   #err { position: fixed; bottom: 12px; right: 12px; color: var(--ink-2); font-size: 12px; }
   @media (max-width: 600px) {
     #panel { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 46vh; padding: 10px 12px; }
@@ -123,6 +134,7 @@
     <div class="row">
       <label><input type="checkbox" id="showTracers" checked> flow tracers</label>
       <label><input type="checkbox" id="showArrows" checked> velocity arrows</label>
+      <label><input type="checkbox" id="showStrip" checked> graphs</label>
       <select id="speedPlay" class="txt" style="width:auto"><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
     </div>
     <canvas id="chart"></canvas>
@@ -160,6 +172,10 @@
     disc and the water in pipe and duct swing after a stroke. From the 2013-15 design drawings; the tank's posts and
     the motors' flanges are approximate.</p>
   </details>
+</div>
+<div id="strip">
+  <div class="card bankCard"><div class="ttl">Pistons, side-on <span id="bankT"></span></div><canvas id="bankCv"></canvas></div>
+  <div class="card profCard"><div class="ttl">The wave along the channel <span id="profT"></span></div><canvas id="profCv"></canvas></div>
 </div>
 <div id="err"></div>
 <script>/*FLOWJS*/</script>
@@ -585,7 +601,7 @@ const DATA = /*DATA*/null;
         }
         const t0 = performance.now();
         sim = FLOW.simulate(cmds, state.depth, FL.geo, FL.cal, { duration, dxFlow: 0.25 });
-        buildWater(); buildTracers();
+        buildWater(); buildTracers(); envelope();
         const tin = $("time");
         tin.min = view0; tin.max = Math.min(view1, sim.t[sim.nt - 1]); tin.step = FLOW.DT;
         state.time = view0; state.playing = true;
@@ -710,6 +726,156 @@ const DATA = /*DATA*/null;
     c.beginPath(); c.moveTo(sx(state.time), 2); c.lineTo(sx(state.time), h - padB); c.stroke();
   }
 
+
+  // ---- 2D graphs: the pistons side-on, and the wave along the channel
+  const css = () => getComputedStyle(document.documentElement);
+  function canvas2d(id) {
+    const cv = $(id), w = cv.clientWidth, h = cv.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (!w || !h) return null;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = w * dpr; cv.height = h * dpr; }
+    const c = cv.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    return { c, w, h };
+  }
+
+  const bankX = DATA.pistons.map(p => p.x), bx0 = Math.min(...bankX) - G.pitch_along * 0.6,
+        bx1 = Math.max(...bankX) + G.pitch_along * 0.9;
+  let qmax = 1e-9;
+  function drawBank(frame) {
+    const k = canvas2d("bankCv");
+    if (!k) return;
+    const { c, w, h } = k, st = css();
+    const ink = st.getPropertyValue("--ink").trim(), ink2 = st.getPropertyValue("--ink-2").trim(),
+          line = st.getPropertyValue("--line").trim(), accent = st.getPropertyValue("--accent").trim();
+    const top = G.pipe_top + 0.12, padB = 12;
+    const sx = x => 6 + (x - bx0) / (bx1 - bx0) * (w - 12);
+    const sz = z => h - padB - z / top * (h - padB - 4);
+    // floor, still water
+    c.fillStyle = "rgba(42,120,214,0.10)";
+    c.fillRect(sx(bx0), sz(state.depth), sx(bx1) - sx(bx0), sz(0) - sz(state.depth));
+    c.strokeStyle = accent; c.setLineDash([4, 3]); c.lineWidth = 1;
+    c.beginPath(); c.moveTo(sx(bx0), sz(state.depth)); c.lineTo(sx(bx1), sz(state.depth)); c.stroke();
+    c.setLineDash([]);
+    c.strokeStyle = ink2; c.beginPath(); c.moveTo(0, sz(0)); c.lineTo(w, sz(0)); c.stroke();
+    const lane = G.pitch_along * 0.82 / 3, np = DATA.pistons.length;
+    DATA.pistons.forEach(p => {
+      const i = p.n - 1, xc = p.x + (p.lane - 2) * lane;
+      const x0 = sx(xc - lane * 0.42), x1 = sx(xc + lane * 0.42);
+      let mm = state.disc, zin;
+      if (frame !== null && sim) { mm = sim.disc[frame * np + i]; zin = sim.inner[frame * np + i]; }
+      else { const s0 = inner(p.bottom, state.depth, discZ(mm)); zin = s0 ? s0.z : NaN; }
+      const zd = discZ(mm);
+      if (!isNaN(zin) && zin > p.bottom) {
+        c.fillStyle = "rgba(28,92,171,0.85)";
+        c.fillRect(x0, sz(zin), x1 - x0, sz(p.bottom) - sz(zin));
+      }
+      c.strokeStyle = line; c.lineWidth = 1;
+      c.strokeRect(x0, sz(G.pipe_top), x1 - x0, sz(p.bottom) - sz(G.pipe_top));
+      const moving = sim && frame !== null && Math.abs(mm - G.park_mm) > 0.5;
+      c.fillStyle = moving ? "#eb6834" : ink;
+      c.fillRect(x0 - 1, sz(zd) - 2, x1 - x0 + 2, 4);                    // the disc
+      c.strokeStyle = moving ? "#eb6834" : ink2;
+      c.beginPath(); c.moveTo((x0 + x1) / 2, sz(zd)); c.lineTo((x0 + x1) / 2, Math.max(sz(zd + G.slider_l), 2)); c.stroke();
+    });
+    // flow out of each row's duct, at the mouth
+    if (sim && frame !== null) {
+      for (let r = 0; r < 10; r++) {
+        const q = sim.Qrows[r][frame];
+        if (Math.abs(q) < qmax * 0.02) continue;
+        const p = DATA.pistons.find(d => d.row === r + 1), y = sz((p.outlet[0] + p.outlet[1]) / 2);
+        const len = 6 + 22 * Math.abs(q) / qmax, xa = sx(bx1) - 30;
+        c.strokeStyle = q > 0 ? "#eb6834" : accent; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(xa, y); c.lineTo(xa + (q > 0 ? len : -len), y); c.stroke();
+        const tip = xa + (q > 0 ? len : -len), d = q > 0 ? -4 : 4;
+        c.beginPath(); c.moveTo(tip, y); c.lineTo(tip + d, y - 3); c.lineTo(tip + d, y + 3); c.closePath();
+        c.fillStyle = c.strokeStyle; c.fill();
+      }
+    }
+    c.fillStyle = ink2; c.font = "10px system-ui";
+    c.fillText("row 1 (head end)", 4, h - 1);
+    const lbl = "row 10, mouth →";
+    c.fillText(lbl, w - c.measureText(lbl).width - 4, h - 1);
+    $("bankT").textContent = sim ? "orange: moving disc; arrows: water out of / into each row's outlet" : "";
+  }
+
+  let env = null;
+  function envelope() {                        // highest and lowest surface over the shown time, per x
+    if (!sim) { env = null; return; }
+    const nx = sim.nx, hi = new Float32Array(nx).fill(-Infinity), lo = new Float32Array(nx).fill(Infinity);
+    for (let f = 0; f < sim.nt; f++) {
+      const t = sim.t[f];
+      if (t < view0 || t > view1) continue;
+      for (let j = 0; j < nx; j++) { const e = sim.eta[f * nx + j]; if (e > hi[j]) hi[j] = e; if (e < lo[j]) lo[j] = e; }
+    }
+    let a = 1e-4;
+    for (let j = 0; j < nx; j++) a = Math.max(a, hi[j], -lo[j]);
+    if (example) example.eta_mm.forEach(m => { if (m !== null) a = Math.max(a, Math.abs(m) / 1000); });
+    qmax = 1e-9;
+    sim.Qrows.forEach(Q => Q.forEach(v => { qmax = Math.max(qmax, Math.abs(v)); }));
+    env = { hi, lo, a: a * 1.15 };
+  }
+
+  function drawProfile(frame) {
+    const k = canvas2d("profCv");
+    if (!k) return;
+    const { c, w, h } = k, st = css();
+    const ink = st.getPropertyValue("--ink").trim(), ink2 = st.getPropertyValue("--ink-2").trim(),
+          line = st.getPropertyValue("--line").trim(), accent = st.getPropertyValue("--accent").trim();
+    if (!sim || frame === null || !env) {
+      c.fillStyle = ink2; c.font = "11px system-ui"; c.fillText("Press Simulate", 8, 16);
+      $("profT").textContent = "";
+      return;
+    }
+    const padL = 40, padB = 14, A = env.a * 1000, Lc = G.channel_length;
+    const sx = x => padL + x / Lc * (w - padL - 8);
+    const sy = e => 6 + (A - e) / (2 * A) * (h - padB - 10);
+    // the camera window
+    c.fillStyle = "rgba(235,104,52,0.14)";
+    c.fillRect(sx(winX0), 4, sx(winX1) - sx(winX0), h - padB - 6);
+    c.strokeStyle = line; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(padL, sy(0)); c.lineTo(w - 8, sy(0)); c.stroke();
+    // reach over the run
+    c.fillStyle = "rgba(42,120,214,0.10)";
+    c.beginPath();
+    for (let j = 0; j < sim.nx; j++) c.lineTo(sx(sim.x[j]), sy(env.hi[j] * 1000));
+    for (let j = sim.nx - 1; j >= 0; j--) c.lineTo(sx(sim.x[j]), sy(env.lo[j] * 1000));
+    c.closePath(); c.fill();
+    // the surface now: filled water under a moving line
+    c.beginPath();
+    c.moveTo(sx(0), sy(-A));
+    for (let j = 0; j < sim.nx; j++) c.lineTo(sx(sim.x[j]), sy(sim.eta[frame * sim.nx + j] * 1000));
+    c.lineTo(sx(sim.x[sim.nx - 1]), sy(-A)); c.closePath();
+    c.fillStyle = "rgba(42,120,214,0.22)"; c.fill();
+    c.strokeStyle = accent; c.lineWidth = 2;
+    c.beginPath();
+    for (let j = 0; j < sim.nx; j++) { const X = sx(sim.x[j]), Y = sy(sim.eta[frame * sim.nx + j] * 1000); j ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+    c.stroke();
+    // what the camera measured at this moment
+    let measTxt = "";
+    if (example) {
+      const tc = sim.t[frame] - lead;
+      let best = -1, bd = Infinity;
+      example.t.forEach((t, i) => { const d = Math.abs(t - tc); if (d < bd) { bd = d; best = i; } });
+      const m = best >= 0 && bd < 0.11 ? example.eta_mm[best] : null;
+      if (m !== null && m !== undefined) {
+        c.fillStyle = ink; c.beginPath(); c.arc(sx(example.x_m), sy(m), 4, 0, 2 * Math.PI); c.fill();
+        measTxt = ` · camera measured ${m.toFixed(1)} mm`;
+      }
+    }
+    c.fillStyle = ink2; c.font = "10px system-ui";
+    c.fillText("+" + A.toFixed(0) + " mm", 2, sy(A) + 8);
+    c.fillText("−" + A.toFixed(0) + " mm", 2, sy(-A));
+    c.fillText("0", padL - 10, sy(0) + 3);
+    c.fillText("mouth 0 m", padL, h - 1);
+    c.fillText("camera", sx(winX0), h - 1);
+    const end = Lc.toFixed(1) + " m";
+    c.fillText(end, w - 8 - c.measureText(end).width, h - 1);
+    const j = sim.metrics.camera_index;
+    $("profT").textContent = `t = ${(sim.t[frame] - lead).toFixed(1)} s · at the camera ${(sim.eta[frame * sim.nx + j] * 1000).toFixed(1)} mm${measTxt}`;
+  }
+  $("showStrip").addEventListener("change", e => $("strip").classList.toggle("off", !e.target.checked));
+
   function setDepth(h) {
     state.depth = h;
     $("depth").value = h;
@@ -750,9 +916,11 @@ const DATA = /*DATA*/null;
       }
       const f = Math.max(0, Math.min(sim.nt - 1, Math.round(state.time / FLOW.DT)));
       setWater(f); setBank(f); setTracers(f);
+      drawBank(f); drawProfile(f);
       $("tv").textContent = (state.time - lead).toFixed(1) + " s";
       drawChart();
     }
+    else { drawBank(null); drawProfile(null); }
     controls.update();
     renderer.render(scene, camera);
     placeLabels();
