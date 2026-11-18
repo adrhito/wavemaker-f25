@@ -214,7 +214,9 @@ python wm.py flow-calibrate    # refit the channel, K-fold held-out error, appen
 ```
 
 The 3D viewer (`model/tank_viewer.html`, rebuilt by `wm.py model3d --depth 0.406`)
-runs the same engine in the browser. `wavemodel/flow.js` is checked against
+runs the same engine in the browser. A switch at the top picks the view: **Default**
+(the bank and the channel together), **Pistons** (the bank side-on; moving discs and
+sliders glow orange) or **Chamber** (the waves down the channel). `wavemodel/flow.js` is checked against
 `flow.py` to 0.1% by `tests/test_flow.py`. Its **Simulate the water** panel takes
 pistons, kind, stroke, speed, accel, jerk and depth. It animates:
 

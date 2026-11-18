@@ -89,11 +89,9 @@
 <div id="panel">
   <h1>UNC wave tank and piston bank</h1>
   <p class="sub">Built from geometry.json. Drag to orbit, scroll to zoom, right-drag to pan.</p>
-  <div class="row views">
-    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank</button>
-    <button data-view="side">Bank side-on</button><button data-view="outlets">Outlets</button>
-    <button data-view="channel">Down the channel</button><button data-view="waves">The waves</button>
-  </div>
+  <div class="row"><div class="seg" id="viewSeg">
+    <button data-view="default" class="on">Default</button><button data-view="pistons">Pistons</button><button data-view="chamber">Chamber</button>
+  </div></div>
   <details id="simBox" open>
     <summary>Simulate the water</summary>
     <div class="ctl" style="margin-bottom:8px">
@@ -144,6 +142,10 @@
   </details>
   <details id="tankBox">
     <summary>The tank and the pistons</summary>
+  <div class="row views">
+    <button data-view="all">Whole tank</button><button data-view="bank">Piston bank from the mouth</button>
+    <button data-view="outlets">Outlets</button><button data-view="channel">Down the channel</button>
+  </div>
   <div class="ctl">
     <div class="top"><span>Still-water depth</span><span class="val" id="dv"></span></div>
     <input type="range" id="depth" min="0.05" max="1.0" step="0.005">
@@ -262,6 +264,11 @@ const DATA = /*DATA*/null;
     return { z: zd - L, air: L };
   }
 
+  const hot = {
+    disc: new THREE.MeshStandardMaterial({ color: "#eb6834", emissive: "#eb6834", emissiveIntensity: 0.6, roughness: 0.4 }),
+    slider: new THREE.MeshStandardMaterial({ color: "#f3a37f", emissive: "#eb6834", emissiveIntensity: 0.35, metalness: 0.5, roughness: 0.3 }),
+  };
+
   // ---- the bank: built once per depth, then discs and pipe water are moved in place
   let refs = [];
   function buildBank() {
@@ -301,6 +308,14 @@ const DATA = /*DATA*/null;
       const zd = discZ(mm);
       r.disc.position.z = zd;
       r.slider.position.z = zd + 0.01 + G.slider_l / 2;
+      // a piston that moved in the last few frames glows
+      let moving = false;
+      if (frame !== null && sim) {
+        const back = Math.max(0, frame - 4);
+        moving = Math.abs(sim.disc[back * np + i] - mm) > 0.05 || Math.abs(sim.disc[Math.min(sim.nt - 1, frame + 4) * np + i] - mm) > 0.05;
+      }
+      r.disc.material = moving ? hot.disc : mat("disc");
+      r.slider.material = moving ? hot.slider : mat("slider");
       const col = zin - r.p.bottom;
       r.wat.visible = !isNaN(zin) && col > 0.002;
       if (r.wat.visible) { r.wat.scale.y = col; r.wat.position.z = r.p.bottom + col / 2; }
@@ -501,13 +516,20 @@ const DATA = /*DATA*/null;
     side: { pos: [-1.35, -3.1, 0.8], at: [-1.35, 0, 0.75] },
     outlets: { pos: [1.45, -0.1, 0.6], at: [0, 0, 0.43] },
     channel: { pos: [-HL - 0.6, 0, 2.2], at: [L * 0.6, 0, 0.2] },
-    waves: { pos: [2.5, -5.5, 2.4], at: [6.5, 0, 0.3] },
+    // the three main views: everything, the pistons up close from inside the head, the chamber's waves
+    default: { pos: [-2.6, -7.4, 3.4], at: [-0.6, 0, 0.4] },
+    pistons: { pos: [(G.bank_x0 + G.bank_x1) / 2 - 1.2, -HW / 2 - 1.6, 1.45],
+               at: [(G.bank_x0 + G.bank_x1) / 2 - 0.75, 0, 0.72], fov: 46 },
+    chamber: { pos: [2.5, -5.5, 2.4], at: [6.5, 0, 0.3] },
   };
   function go(name) {
     const vw = VIEWS[name];
+    camera.fov = vw.fov || 38;
+    camera.updateProjectionMatrix();
     camera.position.set(...vw.pos);
     controls.target.set(...vw.at);
     controls.update();
+    document.querySelectorAll("#viewSeg button").forEach(b => b.classList.toggle("on", b.dataset.view === name));
   }
 
   function resize() {
@@ -895,14 +917,14 @@ const DATA = /*DATA*/null;
   $("showWater").addEventListener("change", e => { state.water = e.target.checked; water.visible = state.water; });
   $("xray").addEventListener("change", e => { state.xray = e.target.checked; buildBank(); });
   $("showLabels").addEventListener("change", e => { state.labels = e.target.checked; });
-  document.querySelectorAll(".views button").forEach(b => b.addEventListener("click", () => go(b.dataset.view)));
+  document.querySelectorAll(".views button, #viewSeg button").forEach(b => b.addEventListener("click", () => go(b.dataset.view)));
 
   buildBank();
   buildWater();
   table();
   accuracy();
   resize();
-  go("waves");
+  go("default");
   let last = performance.now();
   (function loop(now) {
     now = now || performance.now();
